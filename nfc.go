@@ -749,7 +749,7 @@ func searchSectorKey(tag freefare.ClassicTag, sector byte, key *[6]byte, keyType
 	return fmt.Errorf("searchSectorKey error: no known authentication key for sector %d", sector)
 }
 
-func MifareClassicTrailerBlock(block [16]byte, keyA [6]byte, ab0, ab1, ab2, abTb uint8, gpb uint8, keyB [6]byte) {
+func MifareClassicTrailerBlock(block *[16]byte, keyA [6]byte, ab0, ab1, ab2, abTb uint8, gpb uint8, keyB [6]byte) {
 	if len(block) < 16 {
 		panic("block must be at least 16 bytes")
 	}
@@ -787,6 +787,29 @@ func MifareClassicTrailerBlock(block [16]byte, keyA [6]byte, ab0, ab1, ab2, abTb
 		block[6+i] = leBytes[i]
 	}
 	block[9] = gpb
+
+	// Copy Key B
+	for i := 0; i < 6; i++ {
+		block[10+i] = keyB[i]
+	}
+}
+
+func MifareClassicTrailerBlock2(block *[16]byte, keyA [6]byte, ab0, ab1, ab2, gpb uint8, keyB [6]byte) {
+	if len(block) < 16 {
+		panic("block must be at least 16 bytes")
+	}
+
+	// Copy Key A
+	// NOTE: ugly but necessary due to Go's array copy limitations
+	for i := 0; i < 6; i++ {
+		block[i] = keyA[i]
+	}
+
+	// Copy access bytes and GPB
+	leBytes := [4]byte{ab0, ab1, ab2, gpb}
+	for i := 0; i < 4; i++ {
+		block[6+i] = leBytes[i]
+	}
 
 	// Copy Key B
 	for i := 0; i < 6; i++ {
@@ -854,11 +877,13 @@ func writeData(classicTag freefare.ClassicTag, text string) error {
 			if sector == 0 { // MAD sector
 				keyA = defaultKeyA
 				keyB = factoryKey
-				MifareClassicTrailerBlock(trailer, keyA, 0x0, 0x1, 0x1, 0x6, 0x00, keyB)
+				MifareClassicTrailerBlock2(&trailer, keyA, 0x78, 0x77, 0x88, 0xc1, keyB)
+				fmt.Println("MAD sector trailer:", trailer)
 			} else { // Application sectors
 				keyA = publicKey
 				keyB = factoryKey
-				MifareClassicTrailerBlock(trailer, keyA, 0x0, 0x0, 0x0, 0x6, 0x40, keyB)
+				MifareClassicTrailerBlock2(&trailer, keyA, 0x7f, 0x07, 0x88, 0x40, keyB)
+				fmt.Println("Application sector trailer:", trailer)
 			}
 
 			// Write the trailer block
@@ -867,11 +892,11 @@ func writeData(classicTag freefare.ClassicTag, text string) error {
 			}
 
 			// Format data blocks (except sector 0 which needs MAD)
-			if sector != 0 {
-				if err := classicTag.FormatSector(byte(sector)); err != nil {
-					return fmt.Errorf("failed to format sector %d: %v", sector, err)
-				}
-			}
+			// if sector != 0 {
+			// 	if err := classicTag.FormatSector(byte(sector)); err != nil {
+			// 		return fmt.Errorf("failed to format sector %d: %v", sector, err)
+			// 	}
+			// }
 		}
 
 		// For 4K cards, handle MAD2 sector separately
@@ -882,7 +907,7 @@ func writeData(classicTag freefare.ClassicTag, text string) error {
 			}
 
 			trailer := [16]byte{}
-			MifareClassicTrailerBlock(trailer, defaultKeyA, 0x0, 0x1, 0x1, 0x6, 0x00, defaultKeyB)
+			MifareClassicTrailerBlock2(&trailer, defaultKeyA, 0x78, 0x77, 0x88, 0xc1, defaultKeyB)
 			if err := classicTag.WriteBlock(block, trailer); err != nil {
 				return fmt.Errorf("failed to write MAD2 trailer: %v", err)
 			}
@@ -1210,7 +1235,7 @@ func repairMifareClassicSector0(tag freefare.ClassicTag) error {
 	// Using the NFC Forum default keys and access bits
 	fixedTrailer := [16]byte{}
 	MifareClassicTrailerBlock(
-		fixedTrailer,
+		&fixedTrailer,
 		publicKey,   // Key A - NFC Forum default
 		0x7,         // Access bits for block 0 (read-only manufacturer block)
 		0x8,         // Access bits for block 1 (free read/write with key A or B)
