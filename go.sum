@@ -1,0 +1,8 @@
+github.com/clausecker/freefare v0.3.2 h1:5cmjbbILD63t8bOwUYfiHv+4dlypgODfdZWk/oG1v+g=
+github.com/clausecker/freefare v0.3.2/go.mod h1:g3Qg5u/b8F972QHGJzvxHk36u/bTBE2EW0jM/yuv9aY=
+github.com/clausecker/freefare v0.4.1 h1:xW7j7eYGYHlFmS0sSVLuc8K1DE+VT/BaMZaGqdSpz60=
+github.com/clausecker/freefare v0.4.1/go.mod h1:g3Qg5u/b8F972QHGJzvxHk36u/bTBE2EW0jM/yuv9aY=
+github.com/clausecker/nfc/v2 v2.2.0 h1:MM0JUDflK9Z9inzCWT8FlxeRu7EPrBxO39eTjhvWt0U=
+github.com/clausecker/nfc/v2 v2.2.0/go.mod h1:BjRBQUQTQmiwh2tEfQ+xBM5xY05sV2gnZ0JRYEHog/o=
+github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
+github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
