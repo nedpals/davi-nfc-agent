@@ -878,12 +878,10 @@ func writeData(classicTag freefare.ClassicTag, text string) error {
 				keyA = defaultKeyA
 				keyB = factoryKey
 				MifareClassicTrailerBlock2(&trailer, keyA, 0x78, 0x77, 0x88, 0xc1, keyB)
-				fmt.Println("MAD sector trailer:", trailer)
 			} else { // Application sectors
 				keyA = publicKey
 				keyB = factoryKey
 				MifareClassicTrailerBlock2(&trailer, keyA, 0x7f, 0x07, 0x88, 0x40, keyB)
-				fmt.Println("Application sector trailer:", trailer)
 			}
 
 			// Write the trailer block
@@ -1045,22 +1043,36 @@ func encodeTextPayload(text string) []byte {
 	langCode := []byte("en")
 
 	// Calculate total size: 1 (status byte) + len(langCode) + len(text)
-	totalSize := 1 + len(langCode) + len(text)
-	payload := make([]byte, totalSize)
+	textPayloadSize := 1 + len(langCode) + len(text)
+	textPayload := make([]byte, textPayloadSize)
 
 	// Status byte:
 	// - Bit 7: 0 = UTF-8 encoding
 	// - Bit 6: 0 (RFU)
 	// - Bits 5-0: language code length (max 63)
-	payload[0] = byte(len(langCode)) // UTF-8 encoding (bit 7 = 0)
+	textPayload[0] = byte(len(langCode)) // UTF-8 encoding (bit 7 = 0)
 
 	// Copy language code
-	copy(payload[1:], langCode)
+	copy(textPayload[1:], langCode)
 
 	// Copy the text
-	copy(payload[1+len(langCode):], []byte(text))
+	copy(textPayload[1+len(langCode):], []byte(text))
 
-	return payload
+	// Now wrap in NDEF record structure
+	recordHeader := byte(0xD1) // MB=1, ME=1, CF=0, SR=1, IL=0, TNF=001
+	typeLength := byte(1)      // 1 byte for the type
+	payloadLength := byte(textPayloadSize)
+	recordType := byte(0x54) // "T" for Text record
+
+	// Full message size: 3 header bytes + 1 type byte + payload
+	ndefMessage := make([]byte, 3+1+textPayloadSize)
+	ndefMessage[0] = recordHeader
+	ndefMessage[1] = typeLength
+	ndefMessage[2] = payloadLength
+	ndefMessage[3] = recordType
+	copy(ndefMessage[4:], textPayload)
+
+	return ndefMessage
 }
 
 // WriteCardData attempts to write text data to a detected NFC card.
