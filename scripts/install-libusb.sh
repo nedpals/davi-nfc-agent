@@ -12,7 +12,35 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     if command -v apt-get &> /dev/null; then
         echo "Installing libusb using apt..."
         sudo apt-get update
-        sudo apt-get install -y libusb-1.0-0-dev
+        sudo apt-get install -y libusb-1.0-0-dev pkg-config
+        
+        # Verify installation and pkg-config setup
+        echo "Verifying libusb installation..."
+        if pkg-config --exists libusb-1.0; then
+            echo "libusb-1.0 found by pkg-config"
+            echo "CFLAGS: $(pkg-config --cflags libusb-1.0)"
+            echo "LIBS: $(pkg-config --libs libusb-1.0)"
+        else
+            echo "WARNING: pkg-config cannot find libusb-1.0"
+            echo "Creating manual pkg-config file..."
+            
+            # Create a custom .pc file if missing
+            if [ ! -f /usr/lib/pkgconfig/libusb-1.0.pc ]; then
+                sudo tee /usr/lib/pkgconfig/libusb-1.0.pc > /dev/null << 'EOF'
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libusb-1.0
+Description: C API for USB device access
+Version: 1.0.24
+Libs: -L${libdir} -lusb-1.0
+Cflags: -I${includedir}/libusb-1.0
+EOF
+                echo "Created /usr/lib/pkgconfig/libusb-1.0.pc"
+            fi
+        fi
     
     # Check for yum (Red Hat/CentOS)
     elif command -v yum &> /dev/null; then

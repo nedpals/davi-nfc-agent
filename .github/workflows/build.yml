@@ -49,9 +49,16 @@ jobs:
           if [[ "${{ matrix.os }}" == "windows" ]]; then
             sudo apt-get install -y gcc-mingw-w64
           fi
+          
+          # Ensure pkg-config can find libusb
+          echo "PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig" >> $GITHUB_ENV
 
       - name: Build libnfc
         run: |
+          # Check if pkg-config can find libusb-1.0
+          pkg-config --list-all | grep libusb
+          pkg-config --cflags --libs libusb-1.0 || echo "Could not find libusb-1.0 with pkg-config"
+          
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
           tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
           cd libnfc-${{ env.LIBNFC_VERSION }}
@@ -59,9 +66,10 @@ jobs:
           
           if [[ "${{ matrix.os }}" == "windows" ]]; then
             # Configure for cross-compilation to Windows
-            ./configure --host=${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --prefix=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --with-drivers=acr122_usb,arygon,pn53x_usb
+            ./configure --host=${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --prefix=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --with-drivers=acr122_usb,arygon,pn53x_usb LDFLAGS="-L/usr/lib" CPPFLAGS="-I/usr/include/libusb-1.0"
           else
-            ./configure --prefix=/usr --sysconfdir=/etc
+            # Explicitly specify libusb paths
+            ./configure --prefix=/usr --sysconfdir=/etc LDFLAGS="-L/usr/lib" CPPFLAGS="-I/usr/include/libusb-1.0"
           fi
           
           make
@@ -80,7 +88,9 @@ jobs:
             export PKG_CONFIG_PATH=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }}/lib/pkgconfig
             ./configure --host=${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --prefix=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }}
           else
-            ./configure --prefix=/usr --sysconfdir=/etc
+            # Make sure it can find libnfc
+            export PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/share/pkgconfig:$PKG_CONFIG_PATH"
+            ./configure --prefix=/usr --sysconfdir=/etc LDFLAGS="-L/usr/lib" CPPFLAGS="-I/usr/include"
           fi
           
           make
