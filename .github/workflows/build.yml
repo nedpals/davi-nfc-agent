@@ -96,8 +96,14 @@ jobs:
       - name: Set up cross-compilation environment
         run: |
           # Linux cross-compilation using Zig
-          echo "CC=zig cc -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "CXX=zig c++ -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
+          # Use the correct target format for Zig: <arch>-<os>-<abi>
+          if [[ "${{ matrix.arch }}" == "amd64" ]]; then
+            echo "CC=zig cc -target x86_64-linux-gnu" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target x86_64-linux-gnu" >> $GITHUB_ENV
+          elif [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            echo "CC=zig cc -target aarch64-linux-gnu" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target aarch64-linux-gnu" >> $GITHUB_ENV
+          fi
           
       - name: Build
         env:
@@ -161,8 +167,14 @@ jobs:
       - name: Set up Zig as C compiler
         run: |
           # Use Zig as the C compiler for cross-compilation
-          echo "CC=zig cc -target darwin-${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "CXX=zig c++ -target darwin-${{ matrix.arch }}" >> $GITHUB_ENV
+          # Use the correct target format for Zig
+          if [[ "${{ matrix.arch }}" == "amd64" ]]; then
+            echo "CC=zig cc -target x86_64-macos-none" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target x86_64-macos-none" >> $GITHUB_ENV
+          elif [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            echo "CC=zig cc -target aarch64-macos-none" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target aarch64-macos-none" >> $GITHUB_ENV
+          fi
           
       - name: Build with Zig
         env:
@@ -256,9 +268,14 @@ jobs:
           echo "PATH=$PATH:/mingw64/bin" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=/mingw64/lib/pkgconfig" >> $GITHUB_ENV
           
-          # Setup Zig as compiler
-          echo "CC=zig cc -target windows-${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "CXX=zig c++ -target windows-${{ matrix.arch }}" >> $GITHUB_ENV
+          # Setup Zig as compiler with the correct target format
+          if [[ "${{ matrix.arch }}" == "amd64" ]]; then
+            echo "CC=zig cc -target x86_64-windows-gnu" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target x86_64-windows-gnu" >> $GITHUB_ENV
+          elif [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            echo "CC=zig cc -target aarch64-windows-gnu" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target aarch64-windows-gnu" >> $GITHUB_ENV
+          fi
 
       - name: Build with Zig
         shell: bash
