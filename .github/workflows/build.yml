@@ -164,19 +164,53 @@ jobs:
           echo "CGO_LDFLAGS=-L$(brew --prefix libusb)/lib -L$(brew --prefix libnfc)/lib -L$(brew --prefix libfreefare)/lib" >> $GITHUB_ENV
           echo "CGO_CFLAGS=-I$(brew --prefix libusb)/include -I$(brew --prefix libnfc)/include -I$(brew --prefix libfreefare)/include" >> $GITHUB_ENV
       
-      - name: Set up Zig as C compiler
+      - name: Prepare build environment
         run: |
-          # Use Zig as the C compiler for cross-compilation
-          # Use the correct target format for Zig
-          if [[ "${{ matrix.arch }}" == "amd64" ]]; then
-            echo "CC=zig cc -target x86_64-macos-none" >> $GITHUB_ENV
-            echo "CXX=zig c++ -target x86_64-macos-none" >> $GITHUB_ENV
-          elif [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            echo "CC=zig cc -target aarch64-macos-none" >> $GITHUB_ENV
-            echo "CXX=zig c++ -target aarch64-macos-none" >> $GITHUB_ENV
+          # Create cache directories that Zig might need with proper permissions
+          mkdir -p $HOME/.cache/zig
+          chmod 755 $HOME/.cache/zig
+          
+          # Use native compilation for current arch, cross-compile only if needed
+          CURRENT_ARCH=$(uname -m)
+          if [[ "$CURRENT_ARCH" == "x86_64" ]]; then
+            NATIVE_ARCH="amd64"
+          elif [[ "$CURRENT_ARCH" == "arm64" ]]; then
+            NATIVE_ARCH="arm64"
           fi
           
-      - name: Build with Zig
+          echo "NATIVE_ARCH=$NATIVE_ARCH" >> $GITHUB_ENV
+      
+      - name: Set up compilation for amd64
+        if: matrix.arch == 'amd64'
+        run: |
+          if [[ "$NATIVE_ARCH" == "amd64" ]]; then
+            # Native compilation - no need for Zig
+            echo "CC=clang" >> $GITHUB_ENV
+            echo "CXX=clang++" >> $GITHUB_ENV
+            echo "USING_NATIVE=true" >> $GITHUB_ENV
+          else
+            # Cross-compile using Zig with fixed target
+            echo "CC=zig cc -target x86_64-macos" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target x86_64-macos" >> $GITHUB_ENV
+            echo "USING_NATIVE=false" >> $GITHUB_ENV
+          fi
+      
+      - name: Set up compilation for arm64
+        if: matrix.arch == 'arm64'
+        run: |
+          if [[ "$NATIVE_ARCH" == "arm64" ]]; then
+            # Native compilation - no need for Zig
+            echo "CC=clang" >> $GITHUB_ENV
+            echo "CXX=clang++" >> $GITHUB_ENV
+            echo "USING_NATIVE=true" >> $GITHUB_ENV
+          else
+            # Cross-compile using Zig with fixed target
+            echo "CC=zig cc -target aarch64-macos" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target aarch64-macos" >> $GITHUB_ENV
+            echo "USING_NATIVE=false" >> $GITHUB_ENV
+          fi
+          
+      - name: Build
         env:
           GOOS: darwin
           GOARCH: ${{ matrix.arch }}
@@ -186,7 +220,12 @@ jobs:
           pkg-config --modversion libnfc || echo "libnfc not found by pkg-config"
           pkg-config --modversion libfreefare || echo "libfreefare not found by pkg-config"
           
-          # Build using Zig as the C compiler
+          # Report compilation setup
+          echo "Building for darwin-${{ matrix.arch }} using ${USING_NATIVE:+native }compilation"
+          echo "CC: $CC"
+          echo "CXX: $CXX"
+          
+          # Build
           go build -v -o davi-nfc-agent-darwin-${{ matrix.arch }} .
         
       - name: Upload artifact
