@@ -217,14 +217,17 @@ func isDeviceClosedError(err error) bool {
 func isIOError(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "input / output error") ||
 		strings.Contains(err.Error(), "Input/output error") ||
-		strings.Contains(err.Error(), "i/o error"))
+		strings.Contains(err.Error(), "i/o error") ||
+		strings.Contains(err.Error(), "broken pipe") ||
+		strings.Contains(err.Error(), "Operation not permitted"))
 }
 
 // isDeviceConfigError checks if an error is related to device configuration issues
 func isDeviceConfigError(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "device not configured") ||
 		strings.Contains(err.Error(), "Device not configured") ||
-		strings.Contains(err.Error(), "Unable to write to USB"))
+		strings.Contains(err.Error(), "Unable to write to USB") ||
+		strings.Contains(err.Error(), "RDR_to_PC_DataBlock"))
 }
 
 // reconnect attempts to re-establish connection with the NFC device.
@@ -265,11 +268,42 @@ func (r *NFCReader) forceReconnectDevice() error {
 	if r.hasDevice {
 		r.device.Close()
 		r.hasDevice = false
-		// Add a small delay to allow device to reset
-		time.Sleep(time.Second)
+
+		// Add a longer delay for ACR122 readers to fully reset
+		log.Println("Waiting for device to reset completely...")
+		time.Sleep(time.Second * 3)
 	}
 
-	return r.tryConnect()
+	// Clear all state
+	r.cache.clear()
+	r.setCardPresent(false)
+
+	// Try to reconnect with multiple attempts
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		log.Printf("Force reconnect attempt %d/3...", attempt+1)
+
+		if err := r.tryConnect(); err != nil {
+			lastErr = err
+			time.Sleep(time.Second)
+			continue
+		}
+
+		// If we successfully reconnected, try to initialize device
+		if err := r.device.InitiatorInit(); err != nil {
+			log.Printf("Device initialized but InitiatorInit failed: %v", err)
+			r.device.Close()
+			r.hasDevice = false
+			lastErr = err
+			time.Sleep(time.Second)
+			continue
+		}
+
+		log.Println("Force reconnect successful")
+		return nil
+	}
+
+	return fmt.Errorf("force reconnect failed after multiple attempts: %v", lastErr)
 }
 
 // worker is the main processing loop for reading NFC tags.
@@ -278,15 +312,20 @@ func (r *NFCReader) worker() {
 	retryCount := 0
 	deviceCheckTicker := time.NewTicker(deviceCheckInterval)
 	cardCheckTicker := time.NewTicker(100 * time.Millisecond)
+	cooldownTimer := time.NewTimer(0)
+	<-cooldownTimer.C // Consume the initial timer event
+	inCooldown := false
+
 	defer deviceCheckTicker.Stop()
 	defer cardCheckTicker.Stop()
+	defer cooldownTimer.Stop()
 
 	for {
 		select {
 		case <-r.stopChan:
 			return
 		case <-deviceCheckTicker.C:
-			if !r.hasDevice {
+			if !r.hasDevice && !inCooldown {
 				if err := r.tryConnect(); err != nil {
 					continue
 				}
@@ -296,8 +335,14 @@ func (r *NFCReader) worker() {
 			// Check card presence based on cache
 			cardPresent := r.cache.isCardPresent()
 			r.setCardPresent(cardPresent)
+		case <-cooldownTimer.C:
+			inCooldown = false
+			log.Println("Device cooldown period ended, attempting to reconnect")
+			if err := r.forceReconnectDevice(); err != nil {
+				log.Printf("Reconnection after cooldown failed: %v", err)
+			}
 		default:
-			if !r.hasDevice {
+			if !r.hasDevice || inCooldown {
 				time.Sleep(deviceCheckInterval)
 				continue
 			}
@@ -318,6 +363,17 @@ func (r *NFCReader) worker() {
 					r.device.Close()
 					r.setDeviceStatus(false, fmt.Sprintf("Device error: %v", err))
 					r.isWriting = false // Reset writing state on disconnect
+
+					// Enable cooldown to avoid rapid reconnection attempts with ACR122
+					if strings.Contains(err.Error(), "Operation not permitted") ||
+						strings.Contains(err.Error(), "broken pipe") ||
+						strings.Contains(err.Error(), "RDR_to_PC_DataBlock") {
+						inCooldown = true
+						cooldownPeriod := time.Second * 10 // Longer cooldown for ACR122 specific errors
+						log.Printf("ACR122 specific error detected. Entering cooldown for %v", cooldownPeriod)
+						cooldownTimer.Reset(cooldownPeriod)
+						continue
+					}
 
 					// Force reconnection attempt with delay
 					time.Sleep(time.Second * 2)
