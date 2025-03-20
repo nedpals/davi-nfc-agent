@@ -11,7 +11,7 @@ env:
   LIBFREEFARE_VERSION: "0.4.0"
 
 jobs:
-  build-linux-windows:
+  build-linux:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -19,10 +19,6 @@ jobs:
           - os: linux
             arch: amd64
           - os: linux
-            arch: arm64
-          - os: windows
-            arch: amd64
-          - os: windows
             arch: arm64
 
     steps:
@@ -46,16 +42,9 @@ jobs:
           # Install libusb for all builds
           sudo apt-get install -y libusb-1.0-0-dev
           
-          # For local (Linux) builds, try to use package manager versions
-          if [[ "${{ matrix.os }}" == "linux" ]]; then
-            sudo apt-get install -y libnfc-dev libfreefare-dev
-            echo "Using package manager versions of libnfc and libfreefare for Linux builds"
-          fi
-          
-          # For Windows builds, install cross-compilation tools
-          if [[ "${{ matrix.os }}" == "windows" ]]; then
-            sudo apt-get install -y gcc-mingw-w64
-          fi
+          # Try to use package manager versions
+          sudo apt-get install -y libnfc-dev libfreefare-dev
+          echo "Using package manager versions of libnfc and libfreefare for Linux builds"
           
           # Ensure pkg-config can find libusb
           echo "PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig" >> $GITHUB_ENV
@@ -63,12 +52,8 @@ jobs:
       - name: Check if package manager versions are sufficient
         id: check_pkgs
         run: |
-          if [[ "${{ matrix.os }}" == "linux" ]]; then
-            if dpkg -l | grep -q libnfc-dev && dpkg -l | grep -q libfreefare-dev; then
-              echo "USE_PKG_MANAGER=true" >> $GITHUB_OUTPUT
-            else
-              echo "USE_PKG_MANAGER=false" >> $GITHUB_OUTPUT
-            fi
+          if dpkg -l | grep -q libnfc-dev && dpkg -l | grep -q libfreefare-dev; then
+            echo "USE_PKG_MANAGER=true" >> $GITHUB_OUTPUT
           else
             echo "USE_PKG_MANAGER=false" >> $GITHUB_OUTPUT
           fi
@@ -85,13 +70,8 @@ jobs:
           cd libnfc-${{ env.LIBNFC_VERSION }}
           autoreconf -vis
           
-          if [[ "${{ matrix.os }}" == "windows" ]]; then
-            # Configure for cross-compilation to Windows
-            ./configure --host=${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --prefix=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --with-drivers=acr122_usb,arygon,pn53x_usb LDFLAGS="-L/usr/lib" CPPFLAGS="-I/usr/include/libusb-1.0"
-          else
-            # Explicitly specify libusb paths
-            ./configure --prefix=/usr --sysconfdir=/etc LDFLAGS="-L/usr/lib" CPPFLAGS="-I/usr/include/libusb-1.0"
-          fi
+          # Explicitly specify libusb paths
+          ./configure --prefix=/usr --sysconfdir=/etc LDFLAGS="-L/usr/lib" CPPFLAGS="-I/usr/include/libusb-1.0"
           
           make
           sudo make install
@@ -105,15 +85,9 @@ jobs:
           cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
           autoreconf -vis
           
-          if [[ "${{ matrix.os }}" == "windows" ]]; then
-            # Configure for cross-compilation to Windows
-            export PKG_CONFIG_PATH=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }}/lib/pkgconfig
-            ./configure --host=${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --prefix=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }}
-          else
-            # Make sure it can find libnfc
-            export PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/share/pkgconfig:$PKG_CONFIG_PATH"
-            ./configure --prefix=/usr --sysconfdir=/etc LDFLAGS="-L/usr/lib" CPPFLAGS="-I/usr/include"
-          fi
+          # Make sure it can find libnfc
+          export PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/share/pkgconfig:$PKG_CONFIG_PATH"
+          ./configure --prefix=/usr --sysconfdir=/etc LDFLAGS="-L/usr/lib" CPPFLAGS="-I/usr/include"
           
           make
           sudo make install
@@ -121,24 +95,9 @@ jobs:
 
       - name: Set up cross-compilation environment
         run: |
-          if [[ "${{ matrix.os }}" == "windows" ]]; then
-            # Windows cross-compilation setup
-            if [[ "${{ matrix.arch }}" == "amd64" ]]; then
-              echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
-              echo "CXX=x86_64-w64-mingw32-g++" >> $GITHUB_ENV
-              echo "CGO_LDFLAGS=-L/usr/x86_64-w64-mingw32/lib" >> $GITHUB_ENV
-              echo "CGO_CFLAGS=-I/usr/x86_64-w64-mingw32/include" >> $GITHUB_ENV
-            else
-              echo "CC=aarch64-w64-mingw32-gcc" >> $GITHUB_ENV
-              echo "CXX=aarch64-w64-mingw32-g++" >> $GITHUB_ENV
-              echo "CGO_LDFLAGS=-L/usr/aarch64-w64-mingw32/lib" >> $GITHUB_ENV
-              echo "CGO_CFLAGS=-I/usr/aarch64-w64-mingw32/include" >> $GITHUB_ENV
-            fi
-          else
-            # Linux cross-compilation using Zig
-            echo "CC=zig cc -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
-            echo "CXX=zig c++ -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
-          fi
+          # Linux cross-compilation using Zig
+          echo "CC=zig cc -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "CXX=zig c++ -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
           
       - name: Build
         env:
@@ -147,27 +106,20 @@ jobs:
           CGO_ENABLED: 1
         run: |
           # For Linux builds, print info about installed packages
-          if [[ "${{ matrix.os }}" == "linux" && "${{ steps.check_pkgs.outputs.USE_PKG_MANAGER }}" == "true" ]]; then
+          if [[ "${{ steps.check_pkgs.outputs.USE_PKG_MANAGER }}" == "true" ]]; then
             echo "Using package manager versions:"
             apt-cache policy libnfc-dev libfreefare-dev
             pkg-config --modversion libnfc || echo "libnfc not found by pkg-config"
             pkg-config --modversion libfreefare || echo "libfreefare not found by pkg-config"
           fi
           
-          go build -v -o davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }} .
-
-      # Add verification step to check if Windows executables were built correctly
-      - name: Verify Windows build
-        if: matrix.os == 'windows'
-        run: |
-          ls -la davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}.exe
-          file davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}.exe | grep -i "PE32"
+          go build -v -o davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
-          path: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}
+          path: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
 
   build-macos:
     runs-on: macos-latest
@@ -231,8 +183,105 @@ jobs:
           name: davi-nfc-agent-darwin-${{ matrix.arch }}
           path: davi-nfc-agent-darwin-${{ matrix.arch }}
 
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      
+      - name: Install MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-libusb
+            mingw-w64-x86_64-autoconf
+            mingw-w64-x86_64-automake
+            mingw-w64-x86_64-libtool
+            git
+            wget
+      
+      - name: Build libnfc
+        shell: msys2 {0}
+        run: |
+          # Download and build libnfc
+          wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
+          tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
+          cd libnfc-${{ env.LIBNFC_VERSION }}
+          autoreconf -vis
+          
+          # Configure and build
+          ./configure --prefix=/mingw64 --with-drivers=acr122_usb,arygon,pn53x_usb
+          make
+          make install
+          cd ..
+
+      - name: Build libfreefare
+        shell: msys2 {0}
+        run: |
+          # Download and build libfreefare
+          wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-${{ env.LIBFREEFARE_VERSION }}/libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
+          tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
+          cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
+          autoreconf -vis
+          
+          # Configure and build
+          PKG_CONFIG_PATH=/mingw64/lib/pkgconfig ./configure --prefix=/mingw64
+          make
+          make install
+          cd ..
+          
+      - name: Setup environment variables
+        shell: bash
+        run: |
+          # Setup path for Go to find libs
+          echo "CGO_LDFLAGS=-L$(cygpath -w /mingw64/lib)" >> $GITHUB_ENV
+          echo "CGO_CFLAGS=-I$(cygpath -w /mingw64/include)" >> $GITHUB_ENV
+          echo "PATH=$PATH:/mingw64/bin" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/mingw64/lib/pkgconfig" >> $GITHUB_ENV
+          
+          # Setup Zig as compiler
+          echo "CC=zig cc -target windows-${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "CXX=zig c++ -target windows-${{ matrix.arch }}" >> $GITHUB_ENV
+
+      - name: Build with Zig
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
+        run: |
+          # Verify libraries are found
+          pkg-config.exe --modversion libnfc || echo "libnfc not found by pkg-config"
+          pkg-config.exe --modversion libfreefare || echo "libfreefare not found by pkg-config"
+          
+          # Build using Zig as the C compiler
+          go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: davi-nfc-agent-windows-${{ matrix.arch }}
+          path: davi-nfc-agent-windows-${{ matrix.arch }}.exe
+
   create-release:
-    needs: [build-linux-windows, build-macos]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
