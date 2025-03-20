@@ -21,8 +21,21 @@ A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Th
 
 - libnfc (v1.8.0 or later)
 - libfreefare (v0.4.0 or later)
+- libusb (v1.0 or later)
 
 ## Installation
+
+### Installing Dependencies
+
+The project includes a helper script to install libusb, which is required for libnfc:
+
+```bash
+# Install libusb dependency
+chmod +x scripts/install-libusb.sh
+./scripts/install-libusb.sh
+```
+
+This script automatically detects your operating system and installs libusb using the appropriate package manager (apt, yum, dnf, pacman, or brew).
 
 ### Building from source
 
