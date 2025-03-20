@@ -11,7 +11,7 @@ env:
   LIBFREEFARE_VERSION: "0.4.0"
 
 jobs:
-  build:
+  build-linux-windows:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -19,10 +19,6 @@ jobs:
           - os: linux
             arch: amd64
           - os: linux
-            arch: arm64
-          - os: darwin
-            arch: amd64
-          - os: darwin
             arch: arm64
           - os: windows
             arch: amd64
@@ -139,7 +135,7 @@ jobs:
               echo "CGO_CFLAGS=-I/usr/aarch64-w64-mingw32/include" >> $GITHUB_ENV
             fi
           else
-            # Linux/macOS cross-compilation using Zig
+            # Linux cross-compilation using Zig
             echo "CC=zig cc -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
             echo "CXX=zig c++ -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
           fi
@@ -173,8 +169,70 @@ jobs:
           name: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
           path: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}
 
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Install dependencies with Homebrew
+        run: |
+          brew install pkg-config libusb
+          brew install libnfc libfreefare
+          echo "Using Homebrew versions of libnfc and libfreefare for macOS builds"
+          brew --prefix libnfc
+          brew --prefix libfreefare
+          
+          # Add Homebrew pkg-config paths
+          echo "PKG_CONFIG_PATH=$(brew --prefix libusb)/lib/pkgconfig:$(brew --prefix libnfc)/lib/pkgconfig:$(brew --prefix libfreefare)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          
+          # Add Homebrew lib path to dynamic linker path
+          echo "DYLD_LIBRARY_PATH=$(brew --prefix libusb)/lib:$(brew --prefix libnfc)/lib:$(brew --prefix libfreefare)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+          
+          # Set CGO paths
+          echo "CGO_LDFLAGS=-L$(brew --prefix libusb)/lib -L$(brew --prefix libnfc)/lib -L$(brew --prefix libfreefare)/lib" >> $GITHUB_ENV
+          echo "CGO_CFLAGS=-I$(brew --prefix libusb)/include -I$(brew --prefix libnfc)/include -I$(brew --prefix libfreefare)/include" >> $GITHUB_ENV
+      
+      - name: Set up Zig as C compiler
+        run: |
+          # Use Zig as the C compiler for cross-compilation
+          echo "CC=zig cc -target darwin-${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "CXX=zig c++ -target darwin-${{ matrix.arch }}" >> $GITHUB_ENV
+          
+      - name: Build with Zig
+        env:
+          GOOS: darwin
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
+        run: |
+          # Verify pkg-config can find the libraries
+          pkg-config --modversion libnfc || echo "libnfc not found by pkg-config"
+          pkg-config --modversion libfreefare || echo "libfreefare not found by pkg-config"
+          
+          # Build using Zig as the C compiler
+          go build -v -o davi-nfc-agent-darwin-${{ matrix.arch }} .
+        
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: davi-nfc-agent-darwin-${{ matrix.arch }}
+          path: davi-nfc-agent-darwin-${{ matrix.arch }}
+
   create-release:
-    needs: build
+    needs: [build-linux-windows, build-macos]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
