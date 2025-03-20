@@ -66,9 +66,16 @@ func startServer(reader *NFCReader, port int) {
 
 	// Set up HTTP routes with context
 	http.DefaultServeMux = http.NewServeMux() // Reset mux for clean restart
+
+	// Configure WebSocket with permissive CORS policy
 	http.HandleFunc("/ws", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		// Set WebSocket upgrader to allow all origins
+		upgrader.CheckOrigin = func(r *http.Request) bool {
+			return true // Allow all origins
+		}
 		handleWebSocket(w, r.WithContext(ctx))
 	}))
+
 	http.HandleFunc("/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("NFC Agent Server Running"))
 	}))
