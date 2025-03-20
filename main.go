@@ -7,11 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 
@@ -240,7 +238,6 @@ func gracefulShutdown(reader *NFCReader) {
 func main() {
 	// Command line flags
 	devicePath := flag.String("device", "", "Path to NFC device (optional)")
-	fixUID := flag.String("fix-uid", "", "Fix sector 0 for card with the specified UID")
 	port := flag.Int("port", defaultPort, "Port to listen on for the web interface")
 	flag.Parse()
 
@@ -250,16 +247,6 @@ func main() {
 		log.Fatalf("Error initializing NFC reader: %v", err)
 	}
 	defer reader.Close()
-
-	// If we're in fix mode, handle it and exit
-	if *fixUID != "" {
-		if err := reader.RepairSector0(*fixUID); err != nil {
-			log.Fatalf("Error fixing card: %v", err)
-		}
-		fmt.Println("Card repair completed successfully")
-		os.Exit(0)
-		return
-	}
 
 	// Start the web interface
 	startServer(reader, *port)
