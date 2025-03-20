@@ -29,12 +29,40 @@ A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Th
 
 #### Linux (Debian/Ubuntu)
 
-For Debian-based distributions, you can install dependencies from the package manager:
+For Debian-based distributions, it's recommended to install dependencies from the package manager:
 
 ```bash
 # Install libnfc and its dependencies
 sudo apt update
 sudo apt install -y libnfc-dev libfreefare-dev libusb-1.0-0-dev
+```
+
+This is the preferred method as it ensures compatibility with your system's libraries and avoids compilation issues.
+
+#### Building Dependencies from Source
+
+If your package manager has outdated versions or you need specific features, you can build the dependencies from source:
+
+```bash
+# Download and build libnfc
+wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-1.8.0/libnfc-1.8.0.tar.bz2
+tar xjf libnfc-1.8.0.tar.bz2
+cd libnfc-1.8.0
+autoreconf -vis
+./configure --prefix=/usr --sysconfdir=/etc
+make
+sudo make install
+cd ..
+
+# Download and build libfreefare
+wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-0.4.0/libfreefare-0.4.0.tar.bz2
+tar xjf libfreefare-0.4.0.tar.bz2
+cd libfreefare-0.4.0
+autoreconf -vis
+./configure --prefix=/usr --sysconfdir=/etc
+make
+sudo make install
+cd ..
 ```
 
 #### Other Systems

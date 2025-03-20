@@ -45,7 +45,18 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config autoconf automake libtool libusb-1.0-0-dev
+          sudo apt-get install -y pkg-config autoconf automake libtool
+          
+          # Install libusb for all builds
+          sudo apt-get install -y libusb-1.0-0-dev
+          
+          # For local (Linux) builds, try to use package manager versions
+          if [[ "${{ matrix.os }}" == "linux" ]]; then
+            sudo apt-get install -y libnfc-dev libfreefare-dev
+            echo "Using package manager versions of libnfc and libfreefare for Linux builds"
+          fi
+          
+          # For Windows builds, install cross-compilation tools
           if [[ "${{ matrix.os }}" == "windows" ]]; then
             sudo apt-get install -y gcc-mingw-w64
           fi
@@ -53,7 +64,21 @@ jobs:
           # Ensure pkg-config can find libusb
           echo "PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig" >> $GITHUB_ENV
 
+      - name: Check if package manager versions are sufficient
+        id: check_pkgs
+        run: |
+          if [[ "${{ matrix.os }}" == "linux" ]]; then
+            if dpkg -l | grep -q libnfc-dev && dpkg -l | grep -q libfreefare-dev; then
+              echo "USE_PKG_MANAGER=true" >> $GITHUB_OUTPUT
+            else
+              echo "USE_PKG_MANAGER=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "USE_PKG_MANAGER=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build libnfc
+        if: steps.check_pkgs.outputs.USE_PKG_MANAGER != 'true'
         run: |
           # Check if pkg-config can find libusb-1.0
           pkg-config --list-all | grep libusb
@@ -77,6 +102,7 @@ jobs:
           cd ..
 
       - name: Build libfreefare
+        if: steps.check_pkgs.outputs.USE_PKG_MANAGER != 'true'
         run: |
           wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-${{ env.LIBFREEFARE_VERSION }}/libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
           tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
@@ -124,6 +150,14 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 1
         run: |
+          # For Linux builds, print info about installed packages
+          if [[ "${{ matrix.os }}" == "linux" && "${{ steps.check_pkgs.outputs.USE_PKG_MANAGER }}" == "true" ]]; then
+            echo "Using package manager versions:"
+            apt-cache policy libnfc-dev libfreefare-dev
+            pkg-config --modversion libnfc || echo "libnfc not found by pkg-config"
+            pkg-config --modversion libfreefare || echo "libfreefare not found by pkg-config"
+          fi
+          
           go build -v -o davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }} .
 
       # Add verification step to check if Windows executables were built correctly
