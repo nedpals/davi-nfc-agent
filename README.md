@@ -8,7 +8,7 @@ A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Th
 - Write text to NFC tags via WebSocket API
 - Real-time WebSocket broadcasting of tag data
 - Automatic device reconnection and error recovery
-- Cross-platform support (Linux, macOS)
+- Cross-platform support (Linux, macOS, Windows)
 - Detailed device status reporting
 
 ## Limitations
@@ -36,6 +36,19 @@ chmod +x scripts/install-libusb.sh
 ```
 
 This script automatically detects your operating system and installs libusb using the appropriate package manager (apt, yum, dnf, pacman, or brew).
+
+#### Windows Dependencies
+
+For Windows, install the dependencies using the following steps:
+
+```bash
+# Install required tools using Chocolatey
+choco install mingw
+choco install msys2
+
+# Launch MSYS2 and install dependencies
+pacman -S mingw-w64-x86_64-toolchain autoconf automake libtool mingw-w64-x86_64-libusb
+```
 
 ### Building from source
 
@@ -140,11 +153,19 @@ This application supports any NFC reader compatible with libnfc, including:
 The GitHub Actions workflow builds the application for multiple platforms:
 - Linux (amd64, arm64)
 - macOS (amd64, arm64)
+- Windows (amd64, arm64)
 
 To build manually for a specific platform:
 
 ```bash
+# For Linux
 GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -o davi-nfc-agent-linux-amd64 .
+
+# For macOS
+GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -o davi-nfc-agent-darwin-amd64 .
+
+# For Windows
+GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o davi-nfc-agent-windows-amd64.exe .
 ```
 
 ## Troubleshooting

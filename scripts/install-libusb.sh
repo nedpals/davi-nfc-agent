@@ -59,8 +59,27 @@ elif [[ "$OSTYPE" == "darwin"* ]]; then
     echo "export CPPFLAGS=\"-I$LIBUSB_PATH/include \$CPPFLAGS\""
     echo "export LDFLAGS=\"-L$LIBUSB_PATH/lib \$LDFLAGS\""
 
+elif [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]]; then
+    echo "Detected Windows system (MSYS2/Cygwin)"
+    
+    if command -v pacman &> /dev/null; then
+        echo "Installing libusb using MSYS2 pacman..."
+        pacman -S --noconfirm mingw-w64-x86_64-libusb
+    else
+        echo "MSYS2 pacman not found. Please install MSYS2 and run this script from an MSYS2 terminal."
+        echo "Install instructions: https://www.msys2.org/"
+        exit 1
+    fi
+    
+    echo ""
+    echo "For Windows native builds outside MSYS2, install Zadig to set up USB drivers:"
+    echo "https://zadig.akeo.ie/"
+    echo ""
+    echo "After installing Zadig, connect your NFC reader and replace its driver with the WinUSB driver."
+
 else
     echo "Unsupported operating system: $OSTYPE"
+    echo "For Windows, please run this script from an MSYS2 terminal or install dependencies manually."
     exit 1
 fi
 

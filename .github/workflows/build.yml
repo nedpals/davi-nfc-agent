@@ -24,6 +24,10 @@ jobs:
             arch: amd64
           - os: darwin
             arch: arm64
+          - os: windows
+            arch: amd64
+          - os: windows
+            arch: arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +46,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config autoconf automake libtool libusb-1.0-0-dev
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            sudo apt-get install -y gcc-mingw-w64
+          fi
 
       - name: Build libnfc
         run: |
@@ -49,7 +56,14 @@ jobs:
           tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
           cd libnfc-${{ env.LIBNFC_VERSION }}
           autoreconf -vis
-          ./configure --prefix=/usr --sysconfdir=/etc
+          
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            # Configure for cross-compilation to Windows
+            ./configure --host=${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --prefix=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --with-drivers=acr122_usb,arygon,pn53x_usb
+          else
+            ./configure --prefix=/usr --sysconfdir=/etc
+          fi
+          
           make
           sudo make install
           cd ..
@@ -60,15 +74,39 @@ jobs:
           tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
           cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
           autoreconf -vis
-          ./configure --prefix=/usr --sysconfdir=/etc
+          
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            # Configure for cross-compilation to Windows
+            export PKG_CONFIG_PATH=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }}/lib/pkgconfig
+            ./configure --host=${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }} --prefix=/usr/${{ matrix.arch == 'amd64' && 'x86_64-w64-mingw32' || 'aarch64-w64-mingw32' }}
+          else
+            ./configure --prefix=/usr --sysconfdir=/etc
+          fi
+          
           make
           sudo make install
           cd ..
 
       - name: Set up cross-compilation environment
         run: |
-          echo "CC=zig cc -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "CXX=zig c++ -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            # Windows cross-compilation setup
+            if [[ "${{ matrix.arch }}" == "amd64" ]]; then
+              echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
+              echo "CXX=x86_64-w64-mingw32-g++" >> $GITHUB_ENV
+              echo "CGO_LDFLAGS=-L/usr/x86_64-w64-mingw32/lib" >> $GITHUB_ENV
+              echo "CGO_CFLAGS=-I/usr/x86_64-w64-mingw32/include" >> $GITHUB_ENV
+            else
+              echo "CC=aarch64-w64-mingw32-gcc" >> $GITHUB_ENV
+              echo "CXX=aarch64-w64-mingw32-g++" >> $GITHUB_ENV
+              echo "CGO_LDFLAGS=-L/usr/aarch64-w64-mingw32/lib" >> $GITHUB_ENV
+              echo "CGO_CFLAGS=-I/usr/aarch64-w64-mingw32/include" >> $GITHUB_ENV
+            fi
+          else
+            # Linux/macOS cross-compilation using Zig
+            echo "CC=zig cc -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target ${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
+          fi
           
       - name: Build
         env:
@@ -76,13 +114,20 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 1
         run: |
-          go build -v -o davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }} .
+          go build -v -o davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }} .
+
+      # Add verification step to check if Windows executables were built correctly
+      - name: Verify Windows build
+        if: matrix.os == 'windows'
+        run: |
+          ls -la davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}.exe
+          file davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}.exe | grep -i "PE32"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
-          path: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
+          path: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}
 
   create-release:
     needs: build
