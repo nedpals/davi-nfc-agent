@@ -46,7 +46,43 @@ func recoverServer(reader *NFCReader, port int) {
 	}
 }
 
-// runServer contains the main server logic
+// broadcastDeviceStatus sends the device status to all connected WebSocket clients.
+func broadcastDeviceStatus(status DeviceStatus) {
+	message := WebSocketMessage{
+		Type:    "deviceStatus",
+		Payload: status,
+	}
+
+	clientsMux.RLock()
+	for client := range clients {
+		err := client.WriteJSON(message)
+		if err != nil {
+			log.Printf("WebSocket write error: %v", err)
+			client.Close()
+			delete(clients, client)
+		}
+	}
+	clientsMux.RUnlock()
+}
+
+var (
+	currentServer *http.Server
+	serverCtx     context.Context
+	serverCancel  context.CancelFunc
+)
+
+func stopServer() {
+	if currentServer != nil {
+		if err := currentServer.Shutdown(context.Background()); err != nil {
+			log.Printf("Server shutdown error: %v", err)
+		}
+		currentServer = nil
+	}
+	if serverCancel != nil {
+		serverCancel()
+	}
+}
+
 func startServer(reader *NFCReader, port int) {
 	defer recoverServer(reader, port)
 	defer gracefulShutdown(reader)
@@ -81,14 +117,15 @@ func startServer(reader *NFCReader, port int) {
 	}))
 
 	// Start the HTTP server in a goroutine
-	server := &http.Server{
+	serverCtx, serverCancel = context.WithCancel(context.Background())
+	currentServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: http.DefaultServeMux,
 	}
 
 	go func() {
-		log.Printf("Starting server on %s", server.Addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("Starting server on %s", currentServer.Addr)
+		if err := currentServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("HTTP server error: %v", err)
 			panic(err)
 		}
@@ -96,31 +133,20 @@ func startServer(reader *NFCReader, port int) {
 
 	reader.Start()
 
-	for data := range reader.Data() {
-		if data.Err != nil {
-			log.Printf("Error: %v", data.Err)
-		} else {
-			fmt.Printf("UID: %x\nDecoded text: %s\n", data.UID, data.Text)
+	// Start data handling in a goroutine
+	go func() {
+		for {
+			select {
+			case <-serverCtx.Done():
+				return
+			case data := <-reader.Data():
+				if data.Err != nil {
+					log.Printf("Error: %v", data.Err)
+				} else {
+					fmt.Printf("UID: %x\nDecoded text: %s\n", data.UID, data.Text)
+				}
+				broadcastToClients(data)
+			}
 		}
-		broadcastToClients(data)
-	}
-}
-
-// broadcastDeviceStatus sends the device status to all connected WebSocket clients.
-func broadcastDeviceStatus(status DeviceStatus) {
-	message := WebSocketMessage{
-		Type:    "deviceStatus",
-		Payload: status,
-	}
-
-	clientsMux.RLock()
-	for client := range clients {
-		err := client.WriteJSON(message)
-		if err != nil {
-			log.Printf("WebSocket write error: %v", err)
-			client.Close()
-			delete(clients, client)
-		}
-	}
-	clientsMux.RUnlock()
+	}()
 }

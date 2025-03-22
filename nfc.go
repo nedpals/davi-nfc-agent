@@ -187,7 +187,6 @@ func NewNFCReader(deviceStr string) (*NFCReader, error) {
 
 // Close releases resources and stops the NFC reader worker.
 func (r *NFCReader) Close() {
-	close(r.stopChan)
 	r.device.Close()
 }
 

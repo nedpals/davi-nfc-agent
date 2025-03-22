@@ -10,9 +10,13 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 
+	"fyne.io/systray"
 	"github.com/gorilla/websocket"
 )
 
@@ -24,6 +28,10 @@ var (
 	clientsMux        sync.RWMutex
 	defaultPort       = 18080
 	additionalOrigins string
+	currentReader     *NFCReader
+	devicePathFlag    string
+	portFlag          int
+	systrayFlag       bool
 )
 
 // checkOrigin implements CORS checking for WebSocket connections.
@@ -235,19 +243,107 @@ func gracefulShutdown(reader *NFCReader) {
 	}
 }
 
+func onReady() {
+	systray.SetIcon(iconData)
+	systray.SetTitle("NFC Agent")
+	systray.SetTooltip("NFC Card Reader Agent")
+
+	mStatus := systray.AddMenuItem("Starting...", "Agent Status")
+	mStatus.Disable()
+	systray.AddSeparator()
+
+	mStart := systray.AddMenuItem("Start Agent", "Start the NFC agent")
+	mStop := systray.AddMenuItem("Stop Agent", "Stop the NFC agent")
+	mStart.Disable() // Disable start since we're auto-starting
+	mStop.Disable()  // Will be enabled once agent starts
+
+	systray.AddSeparator()
+	mQuit := systray.AddMenuItem("Quit", "Quit the application")
+
+	// Auto-start the agent
+	go func() {
+		if err := startAgent(); err == nil {
+			mStatus.SetTitle("Running")
+			mStop.Enable()
+		} else {
+			mStatus.SetTitle("Failed to Start")
+			mStart.Enable()
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-mStart.ClickedCh:
+				if err := startAgent(); err == nil {
+					mStatus.SetTitle("Running")
+					mStart.Disable()
+					mStop.Enable()
+				}
+			case <-mStop.ClickedCh:
+				stopAgent()
+				mStatus.SetTitle("Stopped")
+				mStop.Disable()
+				mStart.Enable()
+			case <-mQuit.ClickedCh:
+				systray.Quit()
+				return
+			}
+		}
+	}()
+}
+
+func onExit() {
+	stopAgent()
+}
+
+func startAgent() error {
+	var err error
+	currentReader, err = NewNFCReader(devicePathFlag)
+	if err != nil {
+		log.Printf("Error initializing NFC reader: %v", err)
+		return err
+	}
+	startServer(currentReader, portFlag)
+	return nil
+}
+
+func stopAgent() {
+	stopServer()
+	if currentReader != nil {
+		currentReader.Close()
+		currentReader = nil
+	}
+}
+
 func main() {
 	// Command line flags
-	devicePath := flag.String("device", "", "Path to NFC device (optional)")
-	port := flag.Int("port", defaultPort, "Port to listen on for the web interface")
+	flag.StringVar(&devicePathFlag, "device", "", "Path to NFC device (optional)")
+	flag.IntVar(&portFlag, "port", defaultPort, "Port to listen on for the web interface")
+	flag.BoolVar(&systrayFlag, "cli", false, "Run in CLI mode (default: system tray mode)")
 	flag.Parse()
 
-	// Regular mode - start NFC reader and web server
-	reader, err := NewNFCReader(*devicePath)
-	if err != nil {
-		log.Fatalf("Error initializing NFC reader: %v", err)
-	}
-	defer reader.Close()
+	// Run in CLI mode only if explicitly requested
+	if systrayFlag {
+		// Regular CLI mode
+		reader, err := NewNFCReader(devicePathFlag)
+		if err != nil {
+			log.Fatalf("Error initializing NFC reader: %v", err)
+		}
+		defer reader.Close()
 
-	// Start the web interface
-	startServer(reader, *port)
+		// Start the web interface
+		startServer(reader, portFlag)
+	} else {
+		// Default systray mode
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+		go func() {
+			<-sigChan
+			systray.Quit()
+		}()
+
+		systray.Run(onReady, onExit)
+	}
 }
