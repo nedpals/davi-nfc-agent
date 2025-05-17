@@ -299,7 +299,9 @@ func onExit() {
 
 func startAgent() error {
 	var err error
-	currentReader, err = NewNFCReader(devicePathFlag)
+
+	nfcManager := &RealNFCManager{}
+	currentReader, err = NewNFCReader(devicePathFlag, nfcManager)
 	if err != nil {
 		log.Printf("Error initializing NFC reader: %v", err)
 		return err
@@ -323,10 +325,12 @@ func main() {
 	flag.BoolVar(&systrayFlag, "cli", false, "Run in CLI mode (default: system tray mode)")
 	flag.Parse()
 
+	nfcManager := &RealNFCManager{}
+
 	// Run in CLI mode only if explicitly requested
 	if systrayFlag {
 		// Regular CLI mode
-		reader, err := NewNFCReader(devicePathFlag)
+		reader, err := NewNFCReader(devicePathFlag, nfcManager)
 		if err != nil {
 			log.Fatalf("Error initializing NFC reader: %v", err)
 		}
