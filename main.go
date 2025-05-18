@@ -15,9 +15,12 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time" // Added for operation timeout in NFCReader
 
 	"fyne.io/systray"
 	"github.com/gorilla/websocket"
+
+	"github.com/nedpals/davi-nfc-agent/nfc" // Import the new nfc package using module path
 )
 
 var (
@@ -28,7 +31,7 @@ var (
 	clientsMux        sync.RWMutex
 	defaultPort       = 18080
 	additionalOrigins string
-	currentReader     *NFCReader
+	currentReader     *nfc.NFCReader // Use nfc.NFCReader
 	devicePathFlag    string
 	portFlag          int
 	systrayFlag       bool
@@ -91,14 +94,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	clientsMux.Unlock()
 
 	// Send initial device status
-	status := reader.getDeviceStatus()
+	status := reader.GetDeviceStatus() // Use nfc.NFCReader method
 	conn.WriteJSON(WebSocketMessage{
 		Type:    "deviceStatus",
 		Payload: status,
 	})
 
 	// Get last scanned data from cache
-	uid, text := reader.cache.getLastScanned()
+	uid, text := reader.GetLastScannedData() // Use nfc.NFCReader method
 	if uid != "" {
 		conn.WriteJSON(WebSocketMessage{
 			Type: "tagData",
@@ -154,7 +157,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 
-				err = reader.WriteCardData(writeReq.Text)
+				err = reader.WriteCardData(writeReq.Text) // Use nfc.NFCReader method
 				if err != nil {
 					log.Println(err)
 				}
@@ -179,7 +182,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // broadcastToClients sends NFCData to all connected WebSocket clients.
 // It handles client disconnections and removes disconnected clients from the pool.
-func broadcastToClients(data NFCData) {
+func broadcastToClients(data nfc.NFCData) { // Use nfc.NFCData
 	var errStr *string = nil
 	if data.Err != nil {
 		errStr = new(string)
@@ -209,8 +212,8 @@ func broadcastToClients(data NFCData) {
 
 // getReaderFromContext retrieves the NFCReader instance from the context.
 // Returns nil if no reader is found in the context.
-func getReaderFromContext(ctx context.Context) *NFCReader {
-	reader, _ := ctx.Value(readerContextKey).(*NFCReader)
+func getReaderFromContext(ctx context.Context) *nfc.NFCReader { // Use nfc.NFCReader
+	reader, _ := ctx.Value(readerContextKey).(*nfc.NFCReader) // Use nfc.NFCReader
 	return reader
 }
 
@@ -226,7 +229,7 @@ type WriteRequest struct {
 }
 
 // gracefulShutdown attempts to close all active connections and resources
-func gracefulShutdown(reader *NFCReader) {
+func gracefulShutdown(reader *nfc.NFCReader) { // Use nfc.NFCReader
 	log.Println("Performing graceful shutdown...")
 
 	// Close all WebSocket connections
@@ -300,8 +303,8 @@ func onExit() {
 func startAgent() error {
 	var err error
 
-	nfcManager := &RealNFCManager{}
-	currentReader, err = NewNFCReader(devicePathFlag, nfcManager)
+	nfcManager := nfc.NewRealManager()                                               // Use nfc.NewRealManager
+	currentReader, err = nfc.NewNFCReader(devicePathFlag, nfcManager, 5*time.Second) // Use nfc.NewNFCReader, add timeout
 	if err != nil {
 		log.Printf("Error initializing NFC reader: %v", err)
 		return err
@@ -325,12 +328,12 @@ func main() {
 	flag.BoolVar(&systrayFlag, "cli", false, "Run in CLI mode (default: system tray mode)")
 	flag.Parse()
 
-	nfcManager := &RealNFCManager{}
+	nfcManager := nfc.NewRealManager() // Use nfc.NewRealManager
 
 	// Run in CLI mode only if explicitly requested
 	if systrayFlag {
 		// Regular CLI mode
-		reader, err := NewNFCReader(devicePathFlag, nfcManager)
+		reader, err := nfc.NewNFCReader(devicePathFlag, nfcManager, 5*time.Second) // Use nfc.NewNFCReader, add timeout
 		if err != nil {
 			log.Fatalf("Error initializing NFC reader: %v", err)
 		}

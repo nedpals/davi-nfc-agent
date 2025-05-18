@@ -7,15 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/clausecker/nfc/v2"
+	"github.com/nedpals/davi-nfc-agent/nfc"
 )
-
-// DeviceStatus represents the connection status of the NFC device.
-type DeviceStatus struct {
-	Connected   bool   `json:"connected"`
-	Message     string `json:"message,omitempty"`
-	CardPresent bool   `json:"cardPresent"`
-}
 
 // enableCORS is a middleware that adds CORS headers to responses
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
@@ -37,7 +30,7 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // recoverServer handles panic recovery and server restart
-func recoverServer(reader *NFCReader, port int) {
+func recoverServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 	if r := recover(); r != nil {
 		log.Printf("Server panic recovered: %v", r)
 		log.Println("Restarting server in 5 seconds...")
@@ -47,7 +40,7 @@ func recoverServer(reader *NFCReader, port int) {
 }
 
 // broadcastDeviceStatus sends the device status to all connected WebSocket clients.
-func broadcastDeviceStatus(status DeviceStatus) {
+func broadcastDeviceStatus(status nfc.DeviceStatus) { // Use nfc.DeviceStatus
 	message := WebSocketMessage{
 		Type:    "deviceStatus",
 		Payload: status,
@@ -83,16 +76,19 @@ func stopServer() {
 	}
 }
 
-func startServer(reader *NFCReader, port int) {
+func startServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 	defer recoverServer(reader, port)
 	defer gracefulShutdown(reader)
 
-	version := nfc.Version()
-	log.Printf("Starting NFC Agent using libnfc %s", version)
+	// version := nfc.Version() // This was from github.com/clausecker/nfc/v2, direct usage removed
+	// log.Printf("Starting NFC Agent using libnfc %s", version)
+	log.Printf("Starting NFC Agent...") // Simplified log message
 	log.Printf("Scanning for NFC devices...")
 
-	if reader.hasDevice {
-		reader.logDeviceInfo()
+	// reader.hasDevice is not directly accessible. Use GetDeviceStatus()
+	deviceStatus := reader.GetDeviceStatus()
+	if deviceStatus.Connected {
+		reader.LogDeviceInfo() // Use nfc.NFCReader method
 	} else {
 		log.Printf("No NFC device connected, waiting for device...")
 	}
@@ -139,13 +135,16 @@ func startServer(reader *NFCReader, port int) {
 			select {
 			case <-serverCtx.Done():
 				return
-			case data := <-reader.Data():
+			case data := <-reader.Data(): // reader.Data() returns chan nfc.NFCData
 				if data.Err != nil {
 					log.Printf("Error: %v", data.Err)
 				} else {
-					fmt.Printf("UID: %x\nDecoded text: %s\n", data.UID, data.Text)
+					// UID is a string in nfc.NFCData, adjust printing if it was hex bytes before
+					fmt.Printf("UID: %s\nDecoded text: %s\n", data.UID, data.Text)
 				}
 				broadcastToClients(data)
+			case statusUpdate := <-reader.StatusUpdates(): // reader.StatusUpdates() returns chan nfc.DeviceStatus
+				broadcastDeviceStatus(statusUpdate)
 			}
 		}
 	}()
