@@ -10,6 +10,10 @@ import (
 	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
+type readerContextKeySymbol struct{}
+
+var readerContextKey = readerContextKeySymbol{}
+
 // enableCORS is a middleware that adds CORS headers to responses
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
