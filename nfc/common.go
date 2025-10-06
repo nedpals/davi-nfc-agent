@@ -7,9 +7,8 @@ import (
 
 // NFCData represents the data read from an NFC tag including any potential errors.
 type NFCData struct {
-	UID  string
-	Text string
-	Err  error
+	Card *Card // The detected card (nil if error occurred)
+	Err  error // Error that occurred during detection/reading
 }
 
 // DeviceStatus represents the status of the NFC device.
@@ -28,6 +27,16 @@ const (
 	ReconnectDelay      = time.Second * 2
 	DeviceCheckInterval = time.Second * 2 // Interval to check for new devices
 	DeviceEnumRetries   = 3               // Number of retries for device enumeration
+)
+
+// TagType represents the type of NFC tag as a string.
+type TagType string
+
+// Constants for common tag types
+const (
+	TagTypeMifareClassic TagType = "MIFARE_Classic"
+	TagTypeType4         TagType = "Type4"
+	TagTypeUnknown       TagType = "Unknown"
 )
 
 // Error checking helper functions

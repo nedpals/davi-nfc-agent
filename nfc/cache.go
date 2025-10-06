@@ -5,11 +5,9 @@ import (
 	"time"
 )
 
-// TagCache provides thread-safe caching of NFC tag data and tracks the last successful scan.
+// TagCache provides thread-safe caching of the last scanned NFC tag UID.
 type TagCache struct {
-	lastSeen     map[string]string // map[UID]Text
-	lastUID      string            // Most recently scanned valid UID
-	lastText     string            // Most recently scanned valid text
+	lastUID      string // Most recently scanned valid UID
 	mu           sync.RWMutex
 	lastSeenTime time.Time
 }
@@ -17,51 +15,40 @@ type TagCache struct {
 // NewTagCache creates and initializes a new TagCache instance.
 func NewTagCache() *TagCache {
 	return &TagCache{
-		lastSeen:     make(map[string]string),
 		lastSeenTime: time.Time{},
 	}
 }
 
-// GetLastScanned returns the UID and text of the last successfully scanned tag.
-func (c *TagCache) GetLastScanned() (string, string) {
+// GetLastScanned returns the UID of the last successfully scanned tag.
+func (c *TagCache) GetLastScanned() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.lastUID, c.lastText
+	return c.lastUID
 }
 
-// HasChanged checks if the given UID and text combination differs from the cached version
-// and updates the cache if it has changed. It returns true if the data has changed.
-func (c *TagCache) HasChanged(uid, text string) bool {
+// HasChanged checks if the given UID is new or different from the last scanned card.
+// It returns true if this is a new card (different UID from last scan).
+func (c *TagCache) HasChanged(uid string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Always update lastSeenTime for any valid card detection
 	c.lastSeenTime = time.Now()
 
-	// For factory mode cards, cache UID but no text
-	if text == "" {
-		c.lastUID = uid
-		// Only report change if it's a different card
-		_, exists := c.lastSeen[uid]
-		return !exists
+	// If same card as last time, no change
+	if uid == c.lastUID {
+		return false
 	}
 
-	lastText, exists := c.lastSeen[uid]
-	if !exists || lastText != text {
-		c.lastSeen[uid] = text
-		c.lastUID = uid
-		c.lastText = text
-		return true
-	}
-	return false
+	// Different card detected
+	c.lastUID = uid
+	return true
 }
 
-// Clear removes all entries from the cache and resets the last scanned data.
+// Clear resets the cache to its initial state.
 func (c *TagCache) Clear() {
 	c.mu.Lock()
-	c.lastSeen = make(map[string]string)
 	c.lastUID = ""
-	c.lastText = ""
 	c.lastSeenTime = time.Time{}
 	c.mu.Unlock()
 }

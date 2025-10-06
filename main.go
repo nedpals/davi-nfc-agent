@@ -32,9 +32,15 @@ var (
 	defaultPort       = 18080
 	additionalOrigins string
 	currentReader     *nfc.NFCReader // Use nfc.NFCReader
+	currentDevice     string
+	currentMode       string // "read" or "write"
+	currentCardUID    string
+	currentCardType   string
+	allowedCardTypes  = make(map[string]bool) // Empty means all types allowed
 	devicePathFlag    string
 	portFlag          int
 	systrayFlag       bool
+	nfcManager        nfc.Manager
 )
 
 // checkOrigin implements CORS checking for WebSocket connections.
@@ -101,13 +107,13 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Get last scanned data from cache
-	uid, text := reader.GetLastScannedData() // Use nfc.NFCReader method
+	uid := reader.GetLastScannedData() // Use nfc.NFCReader method
 	if uid != "" {
 		conn.WriteJSON(WebSocketMessage{
 			Type: "tagData",
 			Payload: map[string]interface{}{
 				"uid":  uid,
-				"text": text,
+				"text": "", // Text not cached, will be sent on next scan
 				"err":  nil,
 			},
 		})
@@ -189,11 +195,30 @@ func broadcastToClients(data nfc.NFCData) { // Use nfc.NFCData
 		*errStr = data.Err.Error()
 	}
 
+	var uid, text string
+	if data.Card != nil {
+		uid = data.Card.UID
+		cardType := data.Card.Type
+
+		// Update current card info
+		currentCardUID = uid
+		currentCardType = cardType
+
+		// Try to read text from card
+		if msg, err := data.Card.ReadMessage(); err == nil {
+			if ndefMsg, ok := msg.(*nfc.NDEFMessage); ok {
+				text, _ = ndefMsg.GetText()
+			} else if textMsg, ok := msg.(*nfc.TextMessage); ok {
+				text = textMsg.Text
+			}
+		}
+	}
+
 	message := WebSocketMessage{
 		Type: "tagData",
 		Payload: map[string]interface{}{
-			"uid":  data.UID,
-			"text": data.Text,
+			"uid":  uid,
+			"text": text,
 			"err":  errStr,
 		},
 	}
@@ -251,10 +276,53 @@ func onReady() {
 	systray.SetTitle("NFC Agent")
 	systray.SetTooltip("NFC Card Reader Agent")
 
+	// Status section
 	mStatus := systray.AddMenuItem("Starting...", "Agent Status")
 	mStatus.Disable()
+
+	mConnection := systray.AddMenuItem("Connection: Disconnected", "Connection Status")
+	mConnection.Disable()
+
+	mMode := systray.AddMenuItem("Mode: Read", "Current Mode")
+	mMode.Disable()
+	currentMode = "read"
+
 	systray.AddSeparator()
 
+	// Card info section
+	mCardUID := systray.AddMenuItem("Card UID: None", "Current card UID")
+	mCardUID.Disable()
+
+	mCardType := systray.AddMenuItem("Card Type: None", "Current card type")
+	mCardType.Disable()
+
+	systray.AddSeparator()
+
+	// Device management section
+	mDeviceMenu := systray.AddMenuItem("Device", "Select NFC Device")
+	mRefreshDevices := mDeviceMenu.AddSubMenuItem("Refresh Devices", "Refresh device list")
+	mDeviceMenu.AddSubMenuItemCheckbox("Auto-detect", "Auto-detect device", true)
+
+	systray.AddSeparator()
+
+	// Mode toggle section
+	mModeMenu := systray.AddMenuItem("Switch Mode", "Change operation mode")
+	mReadMode := mModeMenu.AddSubMenuItemCheckbox("Read Mode", "Switch to read mode", true)
+	mWriteMode := mModeMenu.AddSubMenuItemCheckbox("Write Mode", "Switch to write mode", false)
+
+	systray.AddSeparator()
+
+	// Card type filtering section
+	mCardFilterMenu := systray.AddMenuItem("Card Type Filter", "Filter cards by type")
+	mFilterAll := mCardFilterMenu.AddSubMenuItemCheckbox("All Types", "Allow all card types", true)
+	mFilterMifare := mCardFilterMenu.AddSubMenuItemCheckbox("MIFARE Classic", "Allow MIFARE Classic only", false)
+	mFilterMifareUltra := mCardFilterMenu.AddSubMenuItemCheckbox("MIFARE Ultralight", "Allow MIFARE Ultralight only", false)
+	mFilterDESFire := mCardFilterMenu.AddSubMenuItemCheckbox("DESFire", "Allow DESFire only", false)
+	mFilterType4 := mCardFilterMenu.AddSubMenuItemCheckbox("Type 4", "Allow Type 4 only", false)
+
+	systray.AddSeparator()
+
+	// Agent control section
 	mStart := systray.AddMenuItem("Start Agent", "Start the NFC agent")
 	mStop := systray.AddMenuItem("Stop Agent", "Stop the NFC agent")
 	mStart.Disable() // Disable start since we're auto-starting
@@ -263,14 +331,77 @@ func onReady() {
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit the application")
 
+	// Initialize device list
+	deviceMenuItems := make(map[string]*systray.MenuItem)
+	updateDeviceList := func() {
+		// Clear existing device menu items
+		for _, item := range deviceMenuItems {
+			item.Hide()
+		}
+		deviceMenuItems = make(map[string]*systray.MenuItem)
+
+		// Get available devices
+		devices, err := nfcManager.ListDevices()
+		if err != nil {
+			log.Printf("Error listing devices: %v", err)
+			return
+		}
+
+		// Add device menu items
+		for _, device := range devices {
+			deviceName := device
+			isChecked := (currentDevice == deviceName) || (currentDevice == "" && len(deviceMenuItems) == 0)
+			item := mDeviceMenu.AddSubMenuItemCheckbox(deviceName, "Select this device", isChecked)
+			deviceMenuItems[deviceName] = item
+
+			if isChecked && currentDevice == "" {
+				currentDevice = deviceName
+			}
+		}
+	}
+
 	// Auto-start the agent
 	go func() {
 		if err := startAgent(); err == nil {
 			mStatus.SetTitle("Running")
+			mConnection.SetTitle("Connection: Connected")
+			if currentDevice != "" {
+				mConnection.SetTitle("Connection: Connected (" + currentDevice + ")")
+			}
 			mStop.Enable()
 		} else {
 			mStatus.SetTitle("Failed to Start")
+			mConnection.SetTitle("Connection: Failed")
 			mStart.Enable()
+		}
+		updateDeviceList()
+	}()
+
+	// Goroutine to update card info display
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		lastUID := ""
+		lastType := ""
+
+		for range ticker.C {
+			if currentCardUID != lastUID {
+				if currentCardUID == "" {
+					mCardUID.SetTitle("Card UID: None")
+				} else {
+					mCardUID.SetTitle("Card UID: " + currentCardUID)
+				}
+				lastUID = currentCardUID
+			}
+
+			if currentCardType != lastType {
+				if currentCardType == "" {
+					mCardType.SetTitle("Card Type: None")
+				} else {
+					mCardType.SetTitle("Card Type: " + currentCardType)
+				}
+				lastType = currentCardType
+			}
 		}
 	}()
 
@@ -280,17 +411,144 @@ func onReady() {
 			case <-mStart.ClickedCh:
 				if err := startAgent(); err == nil {
 					mStatus.SetTitle("Running")
+					mConnection.SetTitle("Connection: Connected")
+					if currentDevice != "" {
+						mConnection.SetTitle("Connection: Connected (" + currentDevice + ")")
+					}
 					mStart.Disable()
 					mStop.Enable()
+				} else {
+					mStatus.SetTitle("Failed to Start")
+					mConnection.SetTitle("Connection: Failed")
 				}
 			case <-mStop.ClickedCh:
 				stopAgent()
 				mStatus.SetTitle("Stopped")
+				mConnection.SetTitle("Connection: Disconnected")
+				currentCardUID = ""
+				currentCardType = ""
 				mStop.Disable()
 				mStart.Enable()
+			case <-mRefreshDevices.ClickedCh:
+				updateDeviceList()
+			case <-mReadMode.ClickedCh:
+				if !mReadMode.Checked() {
+					currentMode = "read"
+					mMode.SetTitle("Mode: Read")
+					mReadMode.Check()
+					mWriteMode.Uncheck()
+				}
+			case <-mWriteMode.ClickedCh:
+				if !mWriteMode.Checked() {
+					currentMode = "write"
+					mMode.SetTitle("Mode: Write")
+					mWriteMode.Check()
+					mReadMode.Uncheck()
+				}
+			case <-mFilterAll.ClickedCh:
+				mFilterAll.Check()
+				mFilterMifare.Uncheck()
+				mFilterMifareUltra.Uncheck()
+				mFilterDESFire.Uncheck()
+				mFilterType4.Uncheck()
+				allowedCardTypes = make(map[string]bool) // Empty means all allowed
+				log.Println("Card filter: All types allowed")
+			case <-mFilterMifare.ClickedCh:
+				mFilterAll.Uncheck()
+				if mFilterMifare.Checked() {
+					mFilterMifare.Uncheck()
+					delete(allowedCardTypes, "MIFARE Classic 1K")
+					delete(allowedCardTypes, "MIFARE Classic 4K")
+				} else {
+					mFilterMifare.Check()
+					allowedCardTypes["MIFARE Classic 1K"] = true
+					allowedCardTypes["MIFARE Classic 4K"] = true
+				}
+				// Check if no filters active, then revert to All
+				if len(allowedCardTypes) == 0 {
+					mFilterAll.Check()
+				}
+				log.Printf("Card filter updated: %v", allowedCardTypes)
+			case <-mFilterMifareUltra.ClickedCh:
+				mFilterAll.Uncheck()
+				if mFilterMifareUltra.Checked() {
+					mFilterMifareUltra.Uncheck()
+					delete(allowedCardTypes, "MIFARE Ultralight")
+				} else {
+					mFilterMifareUltra.Check()
+					allowedCardTypes["MIFARE Ultralight"] = true
+				}
+				// Check if no filters active, then revert to All
+				if len(allowedCardTypes) == 0 {
+					mFilterAll.Check()
+				}
+				log.Printf("Card filter updated: %v", allowedCardTypes)
+			case <-mFilterDESFire.ClickedCh:
+				mFilterAll.Uncheck()
+				if mFilterDESFire.Checked() {
+					mFilterDESFire.Uncheck()
+					delete(allowedCardTypes, "DESFire")
+				} else {
+					mFilterDESFire.Check()
+					allowedCardTypes["DESFire"] = true
+				}
+				// Check if no filters active, then revert to All
+				if len(allowedCardTypes) == 0 {
+					mFilterAll.Check()
+				}
+				log.Printf("Card filter updated: %v", allowedCardTypes)
+			case <-mFilterType4.ClickedCh:
+				mFilterAll.Uncheck()
+				if mFilterType4.Checked() {
+					mFilterType4.Uncheck()
+					delete(allowedCardTypes, string(nfc.TagTypeType4))
+				} else {
+					mFilterType4.Check()
+					allowedCardTypes[string(nfc.TagTypeType4)] = true
+				}
+				// Check if no filters active, then revert to All
+				if len(allowedCardTypes) == 0 {
+					mFilterAll.Check()
+				}
+				log.Printf("Card filter updated: %v", allowedCardTypes)
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
+			}
+
+			// Handle device selection
+			for deviceName, menuItem := range deviceMenuItems {
+				select {
+				case <-menuItem.ClickedCh:
+					if currentDevice != deviceName {
+						// Uncheck all devices
+						for _, item := range deviceMenuItems {
+							item.Uncheck()
+						}
+						// Check selected device
+						menuItem.Check()
+						currentDevice = deviceName
+
+						// Restart agent with new device
+						wasRunning := currentReader != nil
+						if wasRunning {
+							stopAgent()
+							if err := startAgentWithDevice(currentDevice); err == nil {
+								mStatus.SetTitle("Running")
+								mConnection.SetTitle("Connection: Connected (" + currentDevice + ")")
+								mStop.Enable()
+								mStart.Disable()
+							} else {
+								mStatus.SetTitle("Failed to Start")
+								mConnection.SetTitle("Connection: Failed")
+								mStart.Enable()
+								mStop.Disable()
+							}
+						}
+					}
+				default:
+					// No click event for this menu item
+				}
 			}
 		}
 	}()
@@ -301,23 +559,43 @@ func onExit() {
 }
 
 func startAgent() error {
+	return startAgentWithDevice(currentDevice)
+}
+
+func startAgentWithDevice(devicePath string) error {
 	var err error
 
-	nfcManager := nfc.NewRealManager()                                               // Use nfc.NewRealManager
-	currentReader, err = nfc.NewNFCReader(devicePathFlag, nfcManager, 5*time.Second) // Use nfc.NewNFCReader, add timeout
+	// Use the device path if specified, otherwise use auto-detect
+	if devicePath == "" {
+		devicePath = devicePathFlag
+	}
+
+	currentReader, err = nfc.NewNFCReader(devicePath, nfcManager, 5*time.Second)
 	if err != nil {
 		log.Printf("Error initializing NFC reader: %v", err)
 		return err
 	}
+
+	// Store the actual device being used
+	if currentReader != nil && devicePath != "" {
+		currentDevice = devicePath
+	}
+
 	startServer(currentReader, portFlag)
 	return nil
 }
 
 func stopAgent() {
+	log.Println("Stopping agent...")
+
+	// First stop the server to prevent new operations
 	stopServer()
+
+	// Then stop the NFC reader (this will wait for worker to finish and close device)
 	if currentReader != nil {
-		currentReader.Close()
+		currentReader.Stop()
 		currentReader = nil
+		log.Println("Agent stopped successfully")
 	}
 }
 
@@ -328,7 +606,8 @@ func main() {
 	flag.BoolVar(&systrayFlag, "cli", false, "Run in CLI mode (default: system tray mode)")
 	flag.Parse()
 
-	nfcManager := nfc.NewRealManager() // Use nfc.NewRealManager
+	// Initialize the global NFC manager
+	nfcManager = nfc.NewManager()
 
 	// Run in CLI mode only if explicitly requested
 	if systrayFlag {

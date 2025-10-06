@@ -140,11 +140,44 @@ func startServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 			case <-serverCtx.Done():
 				return
 			case data := <-reader.Data(): // reader.Data() returns chan nfc.NFCData
+				// Only process data in read mode
+				if currentMode != "read" {
+					log.Printf("Card detected but agent is in write mode, ignoring")
+					broadcastToClients(nfc.NFCData{
+						Card: nil,
+						Err:  fmt.Errorf("agent is in write mode"),
+					})
+					continue
+				}
+
 				if data.Err != nil {
 					log.Printf("Error: %v", data.Err)
-				} else {
-					// UID is a string in nfc.NFCData, adjust printing if it was hex bytes before
-					fmt.Printf("UID: %s\nDecoded text: %s\n", data.UID, data.Text)
+				} else if data.Card != nil {
+					// Check card type filter
+					if len(allowedCardTypes) > 0 && !allowedCardTypes[data.Card.Type] {
+						log.Printf("Card type '%s' not in allowed list, ignoring", data.Card.Type)
+						// Send error message to clients
+						broadcastToClients(nfc.NFCData{
+							Card: nil,
+							Err:  fmt.Errorf("card type '%s' not allowed by filter", data.Card.Type),
+						})
+						continue
+					}
+
+					// Read message from card
+					var text string
+					if msg, err := data.Card.ReadMessage(); err == nil {
+						if ndefMsg, ok := msg.(*nfc.NDEFMessage); ok {
+							text, _ = ndefMsg.GetText()
+							if text == "" {
+								// Try URI if no text
+								text, _ = ndefMsg.GetURI()
+							}
+						} else if textMsg, ok := msg.(*nfc.TextMessage); ok {
+							text = textMsg.Text
+						}
+					}
+					fmt.Printf("UID: %s\nDecoded text: %s\n", data.Card.UID, text)
 				}
 				broadcastToClients(data)
 			case statusUpdate := <-reader.StatusUpdates(): // reader.StatusUpdates() returns chan nfc.DeviceStatus

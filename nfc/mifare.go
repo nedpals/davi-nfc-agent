@@ -4,20 +4,21 @@ import (
 	"fmt"
 	"log"
 
-	// "strings" // Not used in the final version of SearchSectorKey
-
 	"github.com/clausecker/freefare"
 )
 
 // SearchSectorKey tries to find a key with full write permissions for a given sector.
 // The tag provider's Connect/Disconnect methods are used internally.
-func SearchSectorKey(tagProvider FreefareTagProvider, sector byte, foundKey *[6]byte, foundKeyType *int) error {
+// It now accepts ClassicTag instead of the more generic FreefareTagProvider.
+func SearchSectorKey(tag ClassicTag, sector byte, foundKey *[6]byte, foundKeyType *int) error {
 	block := freefare.ClassicSectorLastBlock(sector)
 
-	rawTag := tagProvider.GetFreefareTag()
+	// Get the underlying freefare.ClassicTag via the FreefareTagProvider interface embedded in ClassicTag
+	rawTag := tag.GetFreefareTag()
 	classicTag, ok := rawTag.(freefare.ClassicTag)
 	if !ok {
-		return fmt.Errorf("SearchSectorKey: provided tag is not a MIFARE Classic tag")
+		// This should ideally not happen if the ClassicTag implementation is correct
+		return fmt.Errorf("SearchSectorKey: provided tag is not a MIFARE Classic tag internally")
 	}
 
 	for _, keyToTry := range DefaultKeys { // Uses DefaultKeys from keys.go
