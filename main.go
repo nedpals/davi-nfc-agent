@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -163,7 +164,135 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 
-				err = reader.WriteCardData(writeReq.Text) // Use nfc.NFCReader method
+				// Determine record type
+				recordType := writeReq.RecordType
+				if recordType == "" {
+					recordType = "text" // default to text
+				}
+
+				// Determine language
+				language := writeReq.Language
+				if language == "" {
+					language = "en"
+				}
+
+				// Build NDEF message
+				var ndefMsg *nfc.NDEFMessage
+				var ndefData []byte
+
+				// Check if card has existing NDEF data (for safety enforcement)
+				var hasExistingNdef bool
+				tags, errTags := reader.GetTags()
+				if errTags == nil && len(tags) > 0 {
+					card := nfc.NewCard(tags[0])
+					if msg, errRead := card.ReadMessage(); errRead == nil {
+						if existingNdef, ok := msg.(*nfc.NDEFMessage); ok && len(existingNdef.Records()) > 0 {
+							hasExistingNdef = true
+							log.Printf("WriteRequest: Card has existing NDEF message with %d record(s)", len(existingNdef.Records()))
+						}
+					}
+				}
+
+				// Determine operation mode
+				if writeReq.Replace {
+					// Explicit replace - create new message (destructive)
+					log.Printf("WriteRequest: Replacing entire NDEF message (destructive)")
+					ndefMsg = nfc.NewNDEFMessage()
+					if recordType == "text" {
+						ndefMsg.AddText(writeReq.Text, language)
+					} else if recordType == "uri" {
+						ndefMsg.AddURI(writeReq.Text)
+					}
+				} else if writeReq.Append || writeReq.RecordIndex != nil {
+					// Append or update - read existing data first (safe)
+					if errTags != nil || len(tags) == 0 {
+						err = fmt.Errorf("no card present for update operation")
+					} else {
+						card := nfc.NewCard(tags[0])
+						if msg, errRead := card.ReadMessage(); errRead == nil {
+							if existingNdef, ok := msg.(*nfc.NDEFMessage); ok {
+								ndefMsg = existingNdef
+							}
+						}
+					}
+
+					if ndefMsg == nil {
+						// No existing NDEF, create new
+						log.Printf("WriteRequest: No existing NDEF found, creating new message")
+						ndefMsg = nfc.NewNDEFMessage()
+					}
+
+					if writeReq.Append {
+						// Append new record
+						log.Printf("WriteRequest: Appending new %s record", recordType)
+						if recordType == "text" {
+							ndefMsg.AddText(writeReq.Text, language)
+						} else if recordType == "uri" {
+							ndefMsg.AddURI(writeReq.Text)
+						}
+					} else if writeReq.RecordIndex != nil {
+						// Update specific record
+						idx := *writeReq.RecordIndex
+						records := ndefMsg.Records()
+
+						if idx >= 0 && idx < len(records) {
+							log.Printf("WriteRequest: Updating record at index %d", idx)
+							// Replace existing record
+							newRecords := make([]nfc.NDEFRecord, len(records))
+							copy(newRecords, records)
+
+							if recordType == "text" {
+								payload := nfc.MakeTextRecordPayload(writeReq.Text, language)
+								newRecords[idx] = nfc.NDEFRecord{
+									TNF:     0x01,
+									Type:    []byte("T"),
+									Payload: payload,
+								}
+							} else if recordType == "uri" {
+								payload := nfc.MakeURIRecordPayload(writeReq.Text)
+								newRecords[idx] = nfc.NDEFRecord{
+									TNF:     0x01,
+									Type:    []byte("U"),
+									Payload: payload,
+								}
+							}
+
+							// Rebuild message with updated records
+							ndefMsg = nfc.NewNDEFMessage()
+							for _, rec := range newRecords {
+								ndefMsg.AddRecord(rec)
+							}
+						} else {
+							err = fmt.Errorf("record index %d out of range (have %d records)", idx, len(records))
+						}
+					}
+				} else {
+					// No operation mode specified
+					if hasExistingNdef {
+						// Card has NDEF data - require explicit mode to prevent accidents
+						err = fmt.Errorf("card has existing NDEF data - must specify 'append', 'recordIndex', or 'replace' to avoid accidental data loss")
+					} else {
+						// Blank card or no NDEF - allow simple write
+						log.Printf("WriteRequest: Blank card, creating new NDEF message")
+						ndefMsg = nfc.NewNDEFMessage()
+						if recordType == "text" {
+							ndefMsg.AddText(writeReq.Text, language)
+						} else if recordType == "uri" {
+							ndefMsg.AddURI(writeReq.Text)
+						}
+					}
+				}
+
+				// Encode and write
+				if err == nil && ndefMsg != nil {
+					ndefData, err = ndefMsg.Encode()
+					if err != nil {
+						log.Printf("Failed to encode NDEF message: %v", err)
+					} else {
+						err = reader.WriteCardData(string(ndefData))
+					}
+				}
+
 				if err != nil {
 					log.Println(err)
 				}
@@ -195,32 +324,90 @@ func broadcastToClients(data nfc.NFCData) { // Use nfc.NFCData
 		*errStr = data.Err.Error()
 	}
 
-	var uid, text string
+	var payload map[string]interface{}
+
 	if data.Card != nil {
-		uid = data.Card.UID
+		uid := data.Card.UID
 		cardType := data.Card.Type
 
 		// Update current card info
 		currentCardUID = uid
 		currentCardType = cardType
 
-		// Try to read text from card
+		// Build the structured payload
+		payload = map[string]interface{}{
+			"uid":        uid,
+			"type":       data.Card.Type,
+			"technology": data.Card.Technology,
+			"scannedAt":  data.Card.ScannedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"err":        errStr,
+		}
+
+		// Try to read and parse message from card
 		if msg, err := data.Card.ReadMessage(); err == nil {
+			var text string
+			var messageInfo map[string]interface{}
+
 			if ndefMsg, ok := msg.(*nfc.NDEFMessage); ok {
+				// NDEF message - extract text and build records array
 				text, _ = ndefMsg.GetText()
+
+				records := make([]map[string]interface{}, 0, len(ndefMsg.Records()))
+				for _, record := range ndefMsg.Records() {
+					recordInfo := map[string]interface{}{
+						"tnf":  record.TNF,
+						"type": string(record.Type),
+					}
+
+					// Add ID if present
+					if len(record.ID) > 0 {
+						recordInfo["id"] = string(record.ID)
+					}
+
+					// Extract type-specific data
+					if recordText, ok := record.GetText(); ok {
+						recordInfo["text"] = recordText
+					} else if recordURI, ok := record.GetURI(); ok {
+						recordInfo["uri"] = recordURI
+					}
+
+					// Always include raw payload (as base64 for binary safety)
+					recordInfo["payload"] = record.Payload
+
+					records = append(records, recordInfo)
+				}
+
+				messageInfo = map[string]interface{}{
+					"type":    "ndef",
+					"records": records,
+				}
 			} else if textMsg, ok := msg.(*nfc.TextMessage); ok {
+				// Raw text message
 				text = textMsg.Text
+				messageInfo = map[string]interface{}{
+					"type": "raw",
+					"data": textMsg.Bytes(),
+				}
 			}
+
+			payload["message"] = messageInfo
+			payload["text"] = text
+		} else {
+			// Error reading message
+			payload["text"] = ""
+		}
+	} else {
+		// No card data available
+		payload = map[string]interface{}{
+			"uid":  "",
+			"text": "",
+			"err":  errStr,
 		}
 	}
 
 	message := WebSocketMessage{
-		Type: "tagData",
-		Payload: map[string]interface{}{
-			"uid":  uid,
-			"text": text,
-			"err":  errStr,
-		},
+		Type:    "tagData",
+		Payload: payload,
 	}
 
 	clientsMux.RLock()
@@ -248,9 +435,29 @@ type WebSocketMessage struct {
 	Payload interface{} `json:"payload"`
 }
 
-// WriteRequest represents a request to write data to an NFC card
+// WriteRequest represents a request to write data to an NFC card.
 type WriteRequest struct {
+	// Text is the text string to write
 	Text string `json:"text"`
+
+	// RecordIndex specifies which NDEF record to update (0-based)
+	// Required for updating existing records
+	RecordIndex *int `json:"recordIndex,omitempty"`
+
+	// RecordType specifies the type of record to update/create
+	// Options: "text" (default), "uri"
+	RecordType string `json:"recordType,omitempty"`
+
+	// Language code for text records (default: "en")
+	Language string `json:"language,omitempty"`
+
+	// Append adds a new record instead of replacing
+	// Set to true to safely add records without overwriting
+	Append bool `json:"append,omitempty"`
+
+	// Replace replaces the entire NDEF message (destructive)
+	// Must be explicitly set to true to overwrite all existing data
+	Replace bool `json:"replace,omitempty"`
 }
 
 // gracefulShutdown attempts to close all active connections and resources

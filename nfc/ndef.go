@@ -55,7 +55,7 @@ func ParseNdefMessageForURIRecord(ndefMessage []byte) (string, error) {
 
 // EncodeNdefMessageWithTextRecord creates an NDEF message containing a single Text Record.
 func EncodeNdefMessageWithTextRecord(text string, langCodeStr string) []byte {
-	textRecordPayload := makeTextRecordPayload(text, langCodeStr)
+	textRecordPayload := MakeTextRecordPayload(text, langCodeStr)
 
 	payloadLen := len(textRecordPayload)
 	isShortRecord := payloadLen <= 255
@@ -127,7 +127,8 @@ func decodeUTF16Internal(b []byte) string {
 	return strings.TrimSpace(string(utf16.Decode(u16s)))
 }
 
-func makeTextRecordPayload(text string, langCodeStr string) []byte {
+// MakeTextRecordPayload creates an NDEF Text Record payload with the specified text and language code.
+func MakeTextRecordPayload(text string, langCodeStr string) []byte {
 	if langCodeStr == "" {
 		langCodeStr = "en"
 	}

@@ -122,7 +122,7 @@ func (m *NDEFMessage) AddText(text, langCode string) *NDEFMessage {
 	if langCode == "" {
 		langCode = "en"
 	}
-	payload := makeTextRecordPayload(text, langCode)
+	payload := MakeTextRecordPayload(text, langCode)
 	m.records = append(m.records, NDEFRecord{
 		TNF:     0x01, // Well Known
 		Type:    []byte("T"),
@@ -133,7 +133,7 @@ func (m *NDEFMessage) AddText(text, langCode string) *NDEFMessage {
 
 // AddURI adds an NDEF URI Record to the message.
 func (m *NDEFMessage) AddURI(uri string) *NDEFMessage {
-	payload := makeURIRecordPayload(uri)
+	payload := MakeURIRecordPayload(uri)
 	m.records = append(m.records, NDEFRecord{
 		TNF:     0x01, // Well Known
 		Type:    []byte("U"),
@@ -196,8 +196,8 @@ func DecodeText(data []byte) *TextMessage {
 	return NewTextMessage(data)
 }
 
-// makeURIRecordPayload creates the payload for an NDEF URI record.
-func makeURIRecordPayload(uri string) []byte {
+// MakeURIRecordPayload creates the payload for an NDEF URI record.
+func MakeURIRecordPayload(uri string) []byte {
 	// URI record format: [identifier code][URI string]
 	// Identifier code 0x00 means no prefix abbreviation
 	payload := make([]byte, 1+len(uri))

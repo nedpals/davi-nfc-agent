@@ -752,3 +752,8 @@ func (r *NFCReader) getTags() ([]Tag, error) {
 	}
 	return tags, nil
 }
+
+// GetTags is the public version of getTags for external access.
+func (r *NFCReader) GetTags() ([]Tag, error) {
+	return r.getTags()
+}

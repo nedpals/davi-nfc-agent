@@ -131,8 +131,8 @@ func TestParseNDEFRecordsSingleText(t *testing.T) {
 
 // Test encodeNDEFRecords with multiple records
 func TestEncodeNDEFRecordsMultiple(t *testing.T) {
-	textPayload := makeTextRecordPayload("Hello", "en")
-	uriPayload := makeURIRecordPayload("https://example.com")
+	textPayload := MakeTextRecordPayload("Hello", "en")
+	uriPayload := MakeURIRecordPayload("https://example.com")
 
 	records := []NDEFRecord{
 		{
@@ -192,7 +192,7 @@ func TestURIRecordPayload(t *testing.T) {
 	}
 
 	for _, uri := range tests {
-		payload := makeURIRecordPayload(uri)
+		payload := MakeURIRecordPayload(uri)
 		decoded, err := parseURIRecordPayload(payload)
 		if err != nil {
 			t.Errorf("failed to decode URI %q: %v", uri, err)
@@ -267,9 +267,9 @@ func TestParseMalformedNDEF(t *testing.T) {
 	}
 }
 
-// Test makeTextRecordPayload
+// Test MakeTextRecordPayload
 func TestMakeTextRecordPayload(t *testing.T) {
-	payload := makeTextRecordPayload("Hello", "en")
+	payload := MakeTextRecordPayload("Hello", "en")
 
 	// Payload format: [status byte][lang code][text]
 	if len(payload) < 1 {
@@ -349,7 +349,7 @@ func TestEncodeDecodeRecordWithID(t *testing.T) {
 		TNF:     0x01,
 		Type:    []byte("T"),
 		ID:      []byte("test-id"),
-		Payload: makeTextRecordPayload("Hello", "en"),
+		Payload: MakeTextRecordPayload("Hello", "en"),
 	}
 
 	encoded, err := encodeNDEFRecords([]NDEFRecord{record})
@@ -396,9 +396,9 @@ func BenchmarkDecodeTextRecord(b *testing.B) {
 // Benchmark multi-record encoding
 func BenchmarkEncodeMultipleRecords(b *testing.B) {
 	records := []NDEFRecord{
-		{TNF: 0x01, Type: []byte("T"), Payload: makeTextRecordPayload("Hello", "en")},
-		{TNF: 0x01, Type: []byte("U"), Payload: makeURIRecordPayload("https://example.com")},
-		{TNF: 0x01, Type: []byte("T"), Payload: makeTextRecordPayload("World", "en")},
+		{TNF: 0x01, Type: []byte("T"), Payload: MakeTextRecordPayload("Hello", "en")},
+		{TNF: 0x01, Type: []byte("U"), Payload: MakeURIRecordPayload("https://example.com")},
+		{TNF: 0x01, Type: []byte("T"), Payload: MakeTextRecordPayload("World", "en")},
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
