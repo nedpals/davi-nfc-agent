@@ -11,11 +11,14 @@ A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Th
 - Cross-platform support (Linux, macOS, Windows)
 - Detailed device status reporting
 
-## Limitations
+## Supported Card Types
 
-- Currently only supports Mifare Classic 1K and 4K tags
-- Other NFC tag types (NTAG, DESFire, Ultralight, etc.) are not supported
-- Reading and writing is limited to NDEF text records only
+- **MIFARE Classic** (1K and 4K variants)
+- **MIFARE DESFire** (EV1, EV2, EV3)
+- **MIFARE Ultralight** (including Ultralight C)
+- **ISO14443-4 Type 4A** tags
+
+All card types support reading and writing NDEF formatted messages, including text and URI records.
 
 ## Requirements
 
@@ -107,6 +110,8 @@ Pre-built binaries for various platforms are available in the [releases](https:/
 
 ## Usage
 
+### Starting the server
+
 ```bash
 # Start the agent with default settings
 ./davi-nfc-agent
@@ -118,10 +123,24 @@ Pre-built binaries for various platforms are available in the [releases](https:/
 ./davi-nfc-agent -port 8080
 ```
 
-### Command-line options
-
+**Command-line options:**
 - `-device`: Path to NFC device (optional, autodetects if not specified)
 - `-port`: Port to listen on for WebSocket connections (default: 18080)
+- `-cli`: Run in CLI mode instead of system tray mode (default: system tray)
+
+### System Tray Mode
+
+By default, the agent runs in system tray mode with a graphical interface:
+
+- **Device Management**: Select and switch between NFC devices
+- **Mode Toggle**: Switch between read and write modes
+- **Card Filters**: Filter by card type (Classic, Ultralight, DESFire, Type 4)
+- **Real-time Status**: View connected card UID and type
+
+To run in CLI mode without system tray:
+```bash
+./davi-nfc-agent -cli
+```
 
 ## WebSocket API
 
@@ -146,20 +165,64 @@ const socket = new WebSocket('ws://localhost:18080/ws');
 ```
 
 2. **Tag Data**
+
+When a card is detected and read, the server broadcasts structured data:
+
 ```json
 {
   "type": "tagData",
   "payload": {
-    "uid": "a1b2c3d4",
+    "uid": "04A1B2C3D4E5F6",
+    "type": "MIFARE Classic 1K",
+    "technology": "ISO14443A",
+    "scannedAt": "2024-10-06T12:34:56Z",
+    "message": {
+      "type": "ndef",
+      "records": [
+        {
+          "tnf": 1,
+          "type": "T",
+          "text": "Hello, NFC!",
+          "payload": [72, 101, 108, 108, 111, 44, 32, 78, 70, 67, 33]
+        }
+      ]
+    },
     "text": "Hello, NFC!",
     "err": null
   }
 }
 ```
 
+**Payload Fields:**
+- `uid`: Card unique identifier (hex string)
+- `type`: Card type
+  - `"MIFARE Classic 1K"` / `"MIFARE Classic 4K"`
+  - `"MIFARE DESFire"` (EV1/EV2/EV3)
+  - `"MIFARE Ultralight"` / `"MIFARE Ultralight C"`
+  - `"ISO14443-4 Type 4A"`
+- `technology`: NFC technology standard (`"ISO14443A"`, `"ISO14443B"`, etc.)
+- `scannedAt`: ISO 8601 timestamp when card was detected
+- `message`: Structured message data (when available)
+  - **For NDEF messages** (`type: "ndef"`):
+    - `records`: Array of NDEF records
+      - `tnf`: Type Name Format (0x01 = Well Known)
+      - `type`: Record type (`"T"` = Text, `"U"` = URI)
+      - `text`: Decoded text (for Text records)
+      - `uri`: Decoded URI (for URI records)
+      - `id`: Record ID (optional)
+      - `payload`: Raw payload bytes
+  - **For raw text** (`type: "raw"`):
+    - `data`: Raw byte array
+- `text`: Quick access to first text record (for convenience)
+- `err`: Error message string if read failed, `null` on success
+
 ### Messages to server
 
 1. **Write Request**
+
+The write API is designed to **prevent accidental data loss for cards with existing NDEF data**.
+
+**Simple write** (for blank cards):
 ```json
 {
   "type": "writeRequest",
@@ -168,6 +231,79 @@ const socket = new WebSocket('ws://localhost:18080/ws');
   }
 }
 ```
+
+**Append new record** (safe - for cards with data):
+```json
+{
+  "type": "writeRequest",
+  "payload": {
+    "text": "Additional info",
+    "append": true
+  }
+}
+```
+
+**Update specific record** (safe - for cards with data):
+```json
+{
+  "type": "writeRequest",
+  "payload": {
+    "text": "Updated text",
+    "recordIndex": 0
+  }
+}
+```
+
+**Replace entire message** (explicit - for cards with data):
+```json
+{
+  "type": "writeRequest",
+  "payload": {
+    "text": "New message",
+    "replace": true
+  }
+}
+```
+
+**Payload Fields:**
+- `text` (required): Text or URI content to write
+- `append` (optional): Adds a new record without overwriting existing data
+- `recordIndex` (optional): Index of record to update (0-based)
+- `replace` (optional): Replaces entire NDEF message ⚠️ **DESTRUCTIVE**
+- `recordType` (optional): Record type - `"text"` (default) or `"uri"`
+- `language` (optional): ISO language code for text records (default: `"en"`)
+
+**🛡️ Smart Safety Enforcement:**
+- **Blank cards**: Simple `{"text": "..."}` works fine
+- **Cards with existing NDEF**: Must specify `append`, `recordIndex`, or `replace` to prevent accidental overwrites
+
+**Examples:**
+
+**Write to blank card** (simple):
+```json
+{"type": "writeRequest", "payload": {"text": "Hello!"}}
+```
+
+**Append to card with data** (safe):
+```json
+{"type": "writeRequest", "payload": {"text": "Additional info", "append": true}}
+```
+
+**Update record on card with data** (safe):
+```json
+{"type": "writeRequest", "payload": {"text": "Updated", "recordIndex": 0}}
+```
+
+**Replace card with data** (explicit):
+```json
+{"type": "writeRequest", "payload": {"text": "New content", "replace": true}}
+```
+
+**Notes:**
+- Blank/factory cards allow simple writes without operation mode
+- Cards with existing NDEF require `append`, `recordIndex`, or `replace`
+- `append` and `recordIndex` preserve existing records
+- Supports all card types (Classic, DESFire, Ultralight)
 
 2. **Write Response**
 ```json
@@ -221,6 +357,55 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o davi-nfc-agent-windows-amd64
    - Try unplugging and reconnecting your NFC reader
    - Restart the application
    - Check for conflicting applications using the NFC reader
+
+## Architecture
+
+The agent is built with a modular architecture:
+
+### Core Components
+
+- **`nfc` package**: Modular NFC abstraction layer
+  - `Manager`: Device lifecycle management
+  - `Tag`: Low-level hardware protocol interface
+  - `Card`: High-level `io.Reader`/`io.Writer` interface for NDEF data
+  - Tag implementations: Classic, DESFire, Ultralight, ISO14443-4
+
+- **WebSocket Server**: Broadcasts tag data to connected clients
+- **System Tray**: Optional GUI for device and mode management
+
+### Tag Abstraction
+
+The `Tag` interface provides a unified API for all card types:
+
+```go
+// Read NDEF data from any supported card
+tags, _ := reader.GetTags()
+card := nfc.NewCard(tags[0])
+data, _ := io.ReadAll(card)
+
+// Write NDEF data
+io.WriteString(card, "Hello NFC!")
+card.Close()
+```
+
+For card-specific operations, use type assertions:
+
+```go
+// MIFARE Classic: Direct sector/block access
+if classic, ok := tag.(nfc.ClassicTag); ok {
+    data, _ := classic.Read(sector, block, key, keyType)
+}
+
+// DESFire: Application and file operations
+if desfire, ok := tag.(nfc.DESFireTag); ok {
+    apps, _ := desfire.ApplicationIds()
+}
+
+// Ultralight: Page-based operations
+if ultralight, ok := tag.(nfc.UltralightTag); ok {
+    data, _ := ultralight.ReadPage(4)
+}
+```
 
 ## Development
 
