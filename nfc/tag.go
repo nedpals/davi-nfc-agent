@@ -58,6 +58,46 @@ type ISO14443Tag interface {
 	// Additional ISO14443-4 specific methods can be added here
 }
 
+// DESFireTag extends Tag with MIFARE DESFire specific operations.
+//
+// DESFireTag provides access to DESFire-specific features like applications,
+// files, and authentication with various key types (DES, 3DES, AES).
+//
+// Example:
+//
+//	if desfire, ok := tag.(DESFireTag); ok {
+//	    version, _ := desfire.Version()
+//	    apps, _ := desfire.ApplicationIds()
+//	}
+type DESFireTag interface {
+	Tag
+	FreefareTagProvider
+	Version() ([]byte, error)
+	ApplicationIds() ([][]byte, error)
+	SelectApplication(aid []byte) error
+	Authenticate(keyNo byte, key []byte) error
+	FileIds() ([]byte, error)
+	ReadFile(fileNo byte, offset int64, length int) ([]byte, error)
+	WriteFile(fileNo byte, offset int64, data []byte) error
+}
+
+// UltralightTag extends Tag with MIFARE Ultralight specific operations.
+//
+// UltralightTag provides page-based read/write operations for Ultralight cards.
+//
+// Example:
+//
+//	if ultralight, ok := tag.(UltralightTag); ok {
+//	    data, _ := ultralight.ReadPage(4)
+//	    ultralight.WritePage(5, [4]byte{0x01, 0x02, 0x03, 0x04})
+//	}
+type UltralightTag interface {
+	Tag
+	FreefareTagProvider
+	ReadPage(page byte) ([4]byte, error)
+	WritePage(page byte, data [4]byte) error
+}
+
 // FreefareTagProvider provides access to the underlying freefare.Tag object.
 // This is used for advanced operations that require direct access to the
 // freefare library.

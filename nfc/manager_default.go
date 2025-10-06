@@ -63,6 +63,12 @@ func (m *defaultManager) GetTags(dev Device) ([]Tag, error) {
 			case freefare.ClassicTag:
 				allFoundTags = append(allFoundTags, newClassicAdapter(t))
 				processedUIDs[uid] = true
+			case freefare.DESFireTag:
+				allFoundTags = append(allFoundTags, newDESFireAdapter(t))
+				processedUIDs[uid] = true
+			case freefare.UltralightTag:
+				allFoundTags = append(allFoundTags, newUltralightAdapter(t))
+				processedUIDs[uid] = true
 			default:
 				log.Printf("Found other Freefare tag: UID %s, Type %T", uid, t)
 				processedUIDs[uid] = true
