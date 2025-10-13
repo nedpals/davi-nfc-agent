@@ -198,9 +198,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					// Explicit replace - create new message (destructive)
 					log.Printf("WriteRequest: Replacing entire NDEF message (destructive)")
 					ndefMsg = nfc.NewNDEFMessage()
-					if recordType == "text" {
+					switch recordType {
+					case "text":
 						ndefMsg.AddText(writeReq.Text, language)
-					} else if recordType == "uri" {
+					case "uri":
 						ndefMsg.AddURI(writeReq.Text)
 					}
 				} else if writeReq.Append || writeReq.RecordIndex != nil {
