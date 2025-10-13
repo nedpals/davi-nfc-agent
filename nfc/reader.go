@@ -736,19 +736,15 @@ func (r *NFCReader) getTags() ([]Tag, error) {
 	r.statusMux.RLock()
 	hasDev := r.hasDevice
 	dev := r.device
-	manager := r.nfcManager
 	r.statusMux.RUnlock()
 
 	if !hasDev || dev == nil {
 		return nil, fmt.Errorf("getTags: no device connected or device is nil")
 	}
-	if manager == nil {
-		return nil, fmt.Errorf("getTags: nfcManager is nil")
-	}
 
-	tags, err := manager.GetTags(dev) // Manager.GetTags now returns []Tag
+	tags, err := dev.GetTags()
 	if err != nil {
-		return nil, fmt.Errorf("getTags: error from nfcManager.GetTags: %w", err)
+		return nil, fmt.Errorf("getTags: error from device.GetTags: %w", err)
 	}
 	return tags, nil
 }

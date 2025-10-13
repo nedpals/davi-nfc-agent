@@ -43,6 +43,16 @@ type MockDevice struct {
 	// TransceiveError, if set, will be returned by Transceive()
 	TransceiveError error
 
+	// GetTagsFunc allows custom GetTags behavior for testing
+	// If nil, returns Tags or GetTagsError
+	GetTagsFunc func() ([]Tag, error)
+
+	// Tags is the list of tags returned by GetTags()
+	Tags []Tag
+
+	// GetTagsError, if set, will be returned by GetTags()
+	GetTagsError error
+
 	// CallLog tracks all method calls for verification in tests
 	CallLog []string
 
@@ -144,4 +154,53 @@ func (m *MockDevice) ClearCallLog() {
 	defer m.mu.Unlock()
 
 	m.CallLog = make([]string, 0)
+}
+
+// GetTags simulates detecting tags on the device.
+func (m *MockDevice) GetTags() ([]Tag, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallLog = append(m.CallLog, "GetTags")
+
+	if !m.IsOpen {
+		return nil, fmt.Errorf("device not open")
+	}
+
+	if m.GetTagsFunc != nil {
+		return m.GetTagsFunc()
+	}
+
+	if m.GetTagsError != nil {
+		return nil, m.GetTagsError
+	}
+
+	// Return a copy to prevent external modification
+	tagsCopy := make([]Tag, len(m.Tags))
+	copy(tagsCopy, m.Tags)
+	return tagsCopy, nil
+}
+
+// SetTags sets the tags that will be returned by GetTags().
+func (m *MockDevice) SetTags(tags []Tag) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.Tags = tags
+}
+
+// AddTag adds a tag to the list returned by GetTags().
+func (m *MockDevice) AddTag(tag Tag) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.Tags = append(m.Tags, tag)
+}
+
+// ClearTags removes all tags from the list returned by GetTags().
+func (m *MockDevice) ClearTags() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.Tags = make([]Tag, 0)
 }

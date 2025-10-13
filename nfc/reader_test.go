@@ -47,8 +47,10 @@ func TestNFCReader_TagDetection(t *testing.T) {
 	ndefMessage := EncodeNdefMessageWithTextRecord("Hello World", "en")
 	mockTag.Data = ndefMessage
 
-	// Add tag to manager
-	manager.SetTags([]Tag{mockTag})
+	// Create mock device and add tag to device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
 
 	// Create NFCReader
 	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
@@ -91,8 +93,10 @@ func TestNFCReader_WriteCardData(t *testing.T) {
 	mockTag := NewMockClassicTag("04D5E6F7")
 	mockTag.IsConnected = true
 
-	// Add tag to manager
-	manager.SetTags([]Tag{mockTag})
+	// Create mock device and add tag to device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
 
 	// Create NFCReader
 	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
@@ -243,8 +247,10 @@ func TestNFCReader_MultipleTagsDetection(t *testing.T) {
 	tag2.IsConnected = true
 	tag2.Data = EncodeNdefMessageWithTextRecord("Tag 2", "en")
 
-	// Add tags to manager
-	manager.SetTags([]Tag{tag1, tag2})
+	// Create mock device and add tags to device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{tag1, tag2})
+	manager.MockDevice = mockDevice
 
 	// Create NFCReader
 	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)

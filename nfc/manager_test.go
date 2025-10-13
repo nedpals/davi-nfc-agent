@@ -66,16 +66,15 @@ func TestMockManager_OpenDeviceError(t *testing.T) {
 	}
 }
 
-func TestMockManager_GetTags(t *testing.T) {
-	manager := NewMockManager()
+func TestMockDevice_GetTags(t *testing.T) {
 	device := NewMockDevice()
 
 	// Add some mock tags
 	tag1 := NewMockTag("04A1B2C3")
 	tag2 := NewMockTag("04D5E6F7")
-	manager.SetTags([]Tag{tag1, tag2})
+	device.SetTags([]Tag{tag1, tag2})
 
-	tags, err := manager.GetTags(device)
+	tags, err := device.GetTags()
 	if err != nil {
 		t.Errorf("GetTags() failed: %v", err)
 	}
@@ -85,40 +84,38 @@ func TestMockManager_GetTags(t *testing.T) {
 	}
 }
 
-func TestMockManager_GetTagsError(t *testing.T) {
-	manager := NewMockManager()
+func TestMockDevice_GetTagsError(t *testing.T) {
 	device := NewMockDevice()
 	expectedErr := fmt.Errorf("no tags detected")
-	manager.GetTagsError = expectedErr
+	device.GetTagsError = expectedErr
 
-	_, err := manager.GetTags(device)
+	_, err := device.GetTags()
 	if err != expectedErr {
 		t.Errorf("Expected error '%v', got '%v'", expectedErr, err)
 	}
 }
 
-func TestMockManager_AddAndClearTags(t *testing.T) {
-	manager := NewMockManager()
+func TestMockDevice_AddAndClearTags(t *testing.T) {
 	device := NewMockDevice()
 
 	// Initially should have no tags
-	tags, _ := manager.GetTags(device)
+	tags, _ := device.GetTags()
 	if len(tags) != 0 {
 		t.Errorf("Expected 0 tags initially, got %d", len(tags))
 	}
 
 	// Add a tag
 	tag := NewMockTag("04A1B2C3")
-	manager.AddTag(tag)
+	device.AddTag(tag)
 
-	tags, _ = manager.GetTags(device)
+	tags, _ = device.GetTags()
 	if len(tags) != 1 {
 		t.Errorf("Expected 1 tag after adding, got %d", len(tags))
 	}
 
 	// Clear tags
-	manager.ClearTags()
-	tags, _ = manager.GetTags(device)
+	device.ClearTags()
+	tags, _ = device.GetTags()
 	if len(tags) != 0 {
 		t.Errorf("Expected 0 tags after clearing, got %d", len(tags))
 	}
@@ -126,18 +123,15 @@ func TestMockManager_AddAndClearTags(t *testing.T) {
 
 func TestMockManager_CallLog(t *testing.T) {
 	manager := NewMockManager()
-	device := NewMockDevice()
 	manager.ClearCallLog()
 
 	manager.ListDevices()
-	manager.OpenDevice("mock:usb:001")
-	manager.GetTags(device)
+	device, _ := manager.OpenDevice("mock:usb:001")
 
 	callLog := manager.GetCallLog()
 	expectedCalls := []string{
 		"ListDevices",
 		"OpenDevice(mock:usb:001)",
-		"GetTags",
 	}
 
 	if len(callLog) != len(expectedCalls) {
@@ -151,5 +145,18 @@ func TestMockManager_CallLog(t *testing.T) {
 		if callLog[i] != call {
 			t.Errorf("Expected call %d to be '%s', got '%s'", i, call, callLog[i])
 		}
+	}
+
+	// Test device call log
+	mockDevice, ok := device.(*MockDevice)
+	if !ok {
+		t.Fatal("Expected device to be MockDevice")
+	}
+	mockDevice.ClearCallLog()
+	mockDevice.GetTags()
+
+	deviceCallLog := mockDevice.GetCallLog()
+	if len(deviceCallLog) != 1 || deviceCallLog[0] != "GetTags" {
+		t.Errorf("Expected device call log to contain 'GetTags', got %v", deviceCallLog)
 	}
 }

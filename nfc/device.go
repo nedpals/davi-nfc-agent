@@ -16,4 +16,5 @@ type Device interface {
 	String() string
 	Connection() string
 	Transceive(txData []byte) ([]byte, error)
+	GetTags() ([]Tag, error)
 }

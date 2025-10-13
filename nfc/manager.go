@@ -1,20 +1,19 @@
 package nfc
 
-// Manager handles NFC device discovery and tag detection.
+// Manager handles NFC device discovery.
 //
-// Manager provides methods to list available NFC readers, open connections
-// to devices, and detect tags on those devices.
+// Manager provides methods to list available NFC readers and open connections
+// to devices.
 //
 // Example:
 //
 //	manager := nfc.NewManager()
 //	devices, _ := manager.ListDevices()
 //	device, _ := manager.OpenDevice(devices[0])
-//	tags, _ := manager.GetTags(device)
+//	tags, _ := device.GetTags()
 type Manager interface {
 	OpenDevice(deviceStr string) (Device, error)
 	ListDevices() ([]string, error)
-	GetTags(dev Device) ([]Tag, error)
 }
 
 // NewManager creates a new Manager using the default libnfc/freefare implementation.
