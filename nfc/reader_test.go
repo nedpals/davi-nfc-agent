@@ -20,10 +20,14 @@ func TestNFCReader_WithMockManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create NFCReader: %v", err)
 	}
+	defer reader.Stop()
 	defer reader.Close()
 
-	// Give the reader time to initialize
-	time.Sleep(100 * time.Millisecond)
+	// Start the worker to establish connection
+	reader.Start()
+
+	// Give the reader time to connect via handleDeviceCheck
+	time.Sleep(300 * time.Millisecond)
 
 	// Verify device status
 	status := reader.GetDeviceStatus()

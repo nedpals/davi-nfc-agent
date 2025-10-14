@@ -58,18 +58,10 @@ func NewNFCReader(deviceStr string, manager Manager, opTimeout time.Duration) (*
 		operationTimeout: opTimeout,
 	}
 
-	// Initial device connection attempt (non-blocking for constructor)
-	go func() {
-		log.Printf("Attempting to connect to device: %s", deviceStr)
-		if err := deviceManager.TryConnect(); err != nil {
-			log.Printf("Failed to connect to device initially: %v. Worker will keep trying.", err)
-			reader.broadcastDeviceStatus(fmt.Sprintf("Failed to connect: %v", err))
-		} else {
-			log.Printf("Successfully connected to device")
-			reader.LogDeviceInfo()
-			reader.broadcastDeviceStatus() // Use default message from GetDeviceStatus
-		}
-	}()
+	// Attempt initial connection synchronously
+	// If it fails, the worker will retry via handleDeviceCheck
+	retryCount := 0
+	reader.handleDeviceCheck(&retryCount)
 
 	return reader, nil
 }
