@@ -3,6 +3,7 @@ package nfc
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -33,10 +34,10 @@ type Card struct {
 	LastAccessed time.Time // Last read/write operation time
 
 	// Internal state for io.Reader
-	tag        Tag // The underlying tag implementation
-	readBuffer []byte       // Cached data from the tag
-	readOffset int          // Current read position
-	hasRead    bool         // Whether data has been loaded from tag
+	tag        Tag    // The underlying tag implementation
+	readBuffer []byte // Cached data from the tag
+	readOffset int    // Current read position
+	hasRead    bool   // Whether data has been loaded from tag
 
 	// Internal state for io.Writer
 	writeBuffer []byte // Buffer for data to be written
@@ -62,31 +63,15 @@ func NewCard(tag Tag) *Card {
 func inferTechnology(tagType string) string {
 	// Simple heuristic based on tag type string
 	switch {
-	case contains(tagType, "MIFARE"):
+	case strings.Contains(tagType, "MIFARE"):
 		return "ISO14443A"
-	case contains(tagType, "Type4"):
+	case strings.Contains(tagType, "Type4"):
 		return "ISO14443A/B"
-	case contains(tagType, "DESFire"):
+	case strings.Contains(tagType, "DESFire"):
 		return "ISO14443A"
 	default:
 		return "Unknown"
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		(len(s) > len(substr) &&
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-		containsMiddle(s, substr))))
-}
-
-func containsMiddle(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // Read implements io.Reader. Reads NDEF message data from the card.
