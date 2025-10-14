@@ -358,33 +358,95 @@ func (r *NFCReader) setCardPresent(present bool) {
 	r.broadcastDeviceStatus(message)
 }
 
-// writeData writes text to a card using the Card WriteMessage API.
-func (r *NFCReader) writeData(card *Card, text string) error {
-	if text == "" {
-		log.Printf("writeData (UID: %s, Type: %s): No text provided; writing empty NDEF message to initialize card if needed.", card.UID, card.Type)
+// WriteOptions controls how data is written to NFC cards at the reader level.
+type WriteOptions struct {
+	// Overwrite completely replaces card data. If false, performs partial update.
+	// Partial updates only work if the card already contains valid NDEF data.
+	Overwrite bool
+
+	// Index specifies which record to update (for NDEF partial updates).
+	// -1 means append, >= 0 means replace at that index.
+	// Ignored if Overwrite is true or card doesn't support NDEF.
+	Index int
+}
+
+// writeData writes text to a card with options.
+// Automatically detects if card supports NDEF by checking cached message data.
+func (r *NFCReader) writeData(card *Card, text string, opts WriteOptions) error {
+	log.Printf("writeData (UID: %s, Type: %s): text=%q, overwrite=%v, index=%d",
+		card.UID, card.Type, text, opts.Overwrite, opts.Index)
+
+	cachedMsg, cardReadErr := card.ReadMessage()
+	if cachedMsg == nil && cardReadErr == nil {
+		log.Printf("writeData (UID: %s): card does not have NDEF data (has %T), using overwrite", card.UID, card.MessageData)
+		opts.Overwrite = true
+	}
+
+	cachedNdef, isNDEF := cachedMsg.(*NDEFMessage)
+	if !isNDEF || len(cachedNdef.Records()) == 0 {
+		log.Printf("writeData (UID: %s): card message is not NDEF (has %T), using overwrite", card.UID, card.MessageData)
+		opts.Overwrite = true
+	}
+
+	if opts.Overwrite {
+		var msg Message
+		if isNDEF {
+			newMsgBuilder := &NDEFMessageBuilder{
+				Records: []NDEFRecordBuilder{
+					&NDEFText{Content: text, Language: "en"},
+				},
+			}
+			msg = newMsgBuilder.MustBuild()
+		} else {
+			msg = NewTextMessageFromString(text)
+		}
+
+		if err := card.WriteMessage(msg); err != nil {
+			return fmt.Errorf("writeData (UID: %s, Type: %s): error from card.WriteMessage: %w", card.UID, card.Type, err)
+		}
+
+		log.Printf("writeData (UID: %s, Type: %s): card write completed successfully.", card.UID, card.Type)
+		return nil
+	}
+
+	// Card has NDEF, try partial update
+	log.Printf("writeData (UID: %s): attempting NDEF partial update", card.UID)
+
+	cachedMsgBuilder := cachedNdef.ToBuilder()
+	if opts.Index <= -1 || opts.Index >= len(cachedMsgBuilder.Records) {
+		// Use last index for append
+		opts.Index = len(cachedMsgBuilder.Records)
+	}
+
+	if opts.Index >= len(cachedMsgBuilder.Records) {
+		// Append mode
+		log.Printf("writeData (UID: %s): appending new record", card.UID)
+		cachedMsgBuilder.Records = append(cachedMsgBuilder.Records, &NDEFText{Content: text, Language: "en"})
 	} else {
-		log.Printf("writeData (UID: %s, Type: %s): Writing text message: %q", card.UID, card.Type, text)
+		log.Printf("writeData (UID: %s): replacing record at index %d", card.UID, opts.Index)
+		cachedMsgBuilder.Records[opts.Index] = &NDEFText{Content: text, Language: "en"}
 	}
 
-	// Encode text as NDEF message
-	ndefMessage := &NDEFMessageBuilder{
-		Records: []NDEFRecordBuilder{
-			&NDEFText{Content: text, Language: "en"},
-		},
+	// Build and write updated message
+	updatedMsg := cachedMsgBuilder.MustBuild()
+	card.Reset()
+	if err := card.WriteMessage(updatedMsg); err != nil {
+		log.Printf("writeData (UID: %s): NDEF partial write failed: %v, falling back to overwrite", card.UID, err)
 	}
 
-	// Use Card's WriteMessage which handles encoding and writing
-	if err := card.WriteMessage(ndefMessage); err != nil {
-		return fmt.Errorf("writeData (UID: %s, Type: %s): error from card.WriteMessage: %w", card.UID, card.Type, err)
-	}
-
-	log.Printf("writeData (UID: %s, Type: %s): card write completed successfully.", card.UID, card.Type)
+	log.Printf("writeData (UID: %s): NDEF partial write succeeded", card.UID)
 	return nil
 }
 
-// WriteCardData attempts to write data to a detected NFC card.
-// Currently, this means initializing a factory mode card.
+// WriteCardData attempts to write data to a detected NFC card using default options (overwrite mode).
 func (r *NFCReader) WriteCardData(text string) error {
+	return r.WriteCardDataWithOptions(text, WriteOptions{
+		Overwrite: true,
+		Index:     -1,
+	})
+}
+
+func (r *NFCReader) WriteCardDataWithOptions(text string, opts WriteOptions) error {
 	return r.withTagOperation(func() error {
 		if !r.deviceManager.HasDevice() {
 			return fmt.Errorf("no NFC device connected")
@@ -403,22 +465,35 @@ func (r *NFCReader) WriteCardData(text string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get tags for writing: %w", err)
 		}
+
 		if len(tags) == 0 {
 			return fmt.Errorf("no card detected for writing")
 		}
 
+		if !r.cache.IsCardPresent() {
+			// Do not proceed to avoid writing multiple cards
+			return fmt.Errorf("multiple cards detected, please present only one card for writing")
+		}
+
+		currentPresentCardUID := r.cache.GetLastScanned()
 		for _, tag := range tags {
+			if currentPresentCardUID != tag.UID() {
+				log.Printf("Skipping tag UID %s, does not match current card UID", tag.UID())
+				continue
+			}
+
 			// Create Card wrapper for the tag
 			card := NewCard(tag)
 
 			log.Printf("Attempting to write to card UID: %s, Type: %s", card.UID, card.Type)
-			errWrite := r.writeData(card, text)
+			errWrite := r.writeData(card, text, opts)
 			if errWrite == nil {
 				log.Printf("Successfully wrote to card UID: %s", card.UID)
 				return nil // Success
 			}
 			log.Printf("Failed to write to card UID %s (Type: %s): %v. Trying next card if any.", card.UID, card.Type, errWrite)
 		}
+
 		return fmt.Errorf("no compatible or writable tag found, or write operation failed for all detected tags")
 	})
 }
