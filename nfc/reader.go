@@ -20,6 +20,18 @@ const (
 	UnhandledErrorRetryInterval = 1 * time.Second
 )
 
+// ReaderMode defines the access mode for the NFC reader.
+type ReaderMode int
+
+const (
+	// ModeReadWrite allows both read and write operations (default).
+	ModeReadWrite ReaderMode = iota
+	// ModeReadOnly allows only read operations.
+	ModeReadOnly
+	// ModeWriteOnly allows only write operations.
+	ModeWriteOnly
+)
+
 // NFCReader manages NFC device interactions and broadcasts tag data.
 type NFCReader struct {
 	deviceManager     *DeviceManager
@@ -27,6 +39,7 @@ type NFCReader struct {
 	statusChan        chan DeviceStatus // Broadcasts device status updates
 	stopChan          chan struct{}     // Signals the worker to stop
 	cache             *TagCache         // Caches tag data
+	mode              ReaderMode        // Access mode for the reader
 	statusMux         sync.RWMutex
 	cardPresent       bool           // Internal tracking of card presence
 	isWriting         bool           // Tracks if a write operation is in progress
@@ -37,7 +50,7 @@ type NFCReader struct {
 	workerWg          sync.WaitGroup // Tracks worker goroutine completion
 }
 
-// NewNFCReader creates and initializes a new NFCReader instance.
+// NewNFCReader creates and initializes a new NFCReader instance with default ModeReadWrite.
 func NewNFCReader(deviceStr string, manager Manager, opTimeout time.Duration) (*NFCReader, error) {
 	if manager == nil {
 		return nil, fmt.Errorf("NFCManager cannot be nil")
@@ -54,6 +67,7 @@ func NewNFCReader(deviceStr string, manager Manager, opTimeout time.Duration) (*
 		statusChan:       make(chan DeviceStatus, 1), // Buffered for status updates
 		stopChan:         make(chan struct{}),
 		cache:            NewTagCache(),
+		mode:             ModeReadWrite, // Default to read/write mode
 		cardPresent:      false,
 		operationTimeout: opTimeout,
 	}
@@ -64,6 +78,21 @@ func NewNFCReader(deviceStr string, manager Manager, opTimeout time.Duration) (*
 	reader.handleDeviceCheck(&retryCount)
 
 	return reader, nil
+}
+
+// SetMode changes the reader's access mode at runtime.
+func (r *NFCReader) SetMode(mode ReaderMode) {
+	r.statusMux.Lock()
+	defer r.statusMux.Unlock()
+	r.mode = mode
+	log.Printf("Reader mode changed to: %v", mode)
+}
+
+// GetMode returns the current reader mode.
+func (r *NFCReader) GetMode() ReaderMode {
+	r.statusMux.RLock()
+	defer r.statusMux.RUnlock()
+	return r.mode
 }
 
 // Close releases resources. Does not stop the worker, use Stop() for that.
@@ -207,6 +236,16 @@ func (r *NFCReader) handleDeviceErrors(err error, retryCount *int) bool {
 
 // handleTagPolling processes detected tags and sends data to the channel.
 func (r *NFCReader) handleTagPolling(tags []Tag) {
+	// Check read permission
+	r.statusMux.RLock()
+	mode := r.mode
+	r.statusMux.RUnlock()
+
+	if mode == ModeWriteOnly {
+		// In write-only mode, skip reading card data
+		return
+	}
+
 	for _, tag := range tags {
 		uid := tag.UID()
 
@@ -448,6 +487,15 @@ func (r *NFCReader) WriteCardData(text string) error {
 
 func (r *NFCReader) WriteCardDataWithOptions(text string, opts WriteOptions) error {
 	return r.withTagOperation(func() error {
+		// Check write permission
+		r.statusMux.RLock()
+		mode := r.mode
+		r.statusMux.RUnlock()
+
+		if mode == ModeReadOnly {
+			return fmt.Errorf("reader is in read-only mode, write operations are not allowed")
+		}
+
 		if !r.deviceManager.HasDevice() {
 			return fmt.Errorf("no NFC device connected")
 		}

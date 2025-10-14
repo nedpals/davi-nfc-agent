@@ -306,3 +306,190 @@ collectLoop:
 		t.Logf("Successfully received data from %d tag(s)", len(receivedTags))
 	}
 }
+
+// TestNFCReader_ModeReadOnly tests read-only mode blocks write operations.
+func TestNFCReader_ModeReadOnly(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag
+	mockTag := NewMockTag("04A1B2C3")
+	mockTag.TagType = "MIFARE Classic 1K"
+	mockTag.IsConnected = true
+	mockTag.Data = EncodeNdefMessageWithTextRecord("Hello", "en")
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Set to read-only mode
+	reader.SetMode(ModeReadOnly)
+
+	// Verify mode is set
+	if reader.GetMode() != ModeReadOnly {
+		t.Errorf("Expected mode to be ModeReadOnly, got %v", reader.GetMode())
+	}
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Attempt to write should fail
+	err = reader.WriteCardData("Test Write")
+	if err == nil {
+		t.Error("Expected write to fail in read-only mode")
+	}
+	if err != nil && err.Error() != "reader is in read-only mode, write operations are not allowed" {
+		t.Errorf("Expected read-only mode error, got: %v", err)
+	}
+}
+
+// TestNFCReader_ModeWriteOnly tests write-only mode allows writes but skips reads.
+func TestNFCReader_ModeWriteOnly(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag
+	mockTag := NewMockTag("04A1B2C3")
+	mockTag.TagType = "MIFARE Classic 1K"
+	mockTag.IsConnected = true
+	mockTag.Data = EncodeNdefMessageWithTextRecord("Hello", "en")
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Set to write-only mode
+	reader.SetMode(ModeWriteOnly)
+
+	// Verify mode is set
+	if reader.GetMode() != ModeWriteOnly {
+		t.Errorf("Expected mode to be ModeWriteOnly, got %v", reader.GetMode())
+	}
+
+	// Manually update cache to simulate card present
+	reader.cache.HasChanged("04A1B2C3") // This sets the lastUID
+	reader.cache.UpdateLastSeenTime("04A1B2C3")
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Write should succeed
+	err = reader.WriteCardData("Test Write")
+	if err != nil {
+		t.Errorf("Expected write to succeed in write-only mode, got error: %v", err)
+	}
+
+	// Verify data was written
+	data, _ := mockTag.ReadData()
+	if len(data) == 0 {
+		t.Error("Expected data to be written to tag")
+	}
+}
+
+// TestNFCReader_ModeReadWrite tests default read/write mode allows both operations.
+func TestNFCReader_ModeReadWrite(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag
+	mockTag := NewMockTag("04A1B2C3")
+	mockTag.TagType = "MIFARE Classic 1K"
+	mockTag.IsConnected = true
+	mockTag.Data = EncodeNdefMessageWithTextRecord("Hello", "en")
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader (default mode is ModeReadWrite)
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+	defer reader.Stop()
+
+	// Verify default mode is ModeReadWrite
+	if reader.GetMode() != ModeReadWrite {
+		t.Errorf("Expected default mode to be ModeReadWrite, got %v", reader.GetMode())
+	}
+
+	// Start reader for reading
+	reader.Start()
+
+	// Read should work
+	select {
+	case data := <-reader.Data():
+		if data.Err != nil {
+			t.Errorf("Expected read to succeed, got error: %v", data.Err)
+		}
+		if data.Card == nil {
+			t.Error("Expected card data")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Timeout waiting for card data")
+	}
+
+	// Write should also work
+	err = reader.WriteCardData("Test Write")
+	if err != nil {
+		t.Errorf("Expected write to succeed in read/write mode, got error: %v", err)
+	}
+}
+
+// TestNFCReader_SetMode tests changing mode at runtime.
+func TestNFCReader_SetMode(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Default should be ModeReadWrite
+	if reader.GetMode() != ModeReadWrite {
+		t.Errorf("Expected default mode ModeReadWrite, got %v", reader.GetMode())
+	}
+
+	// Change to read-only
+	reader.SetMode(ModeReadOnly)
+	if reader.GetMode() != ModeReadOnly {
+		t.Errorf("Expected mode ModeReadOnly after SetMode, got %v", reader.GetMode())
+	}
+
+	// Change to write-only
+	reader.SetMode(ModeWriteOnly)
+	if reader.GetMode() != ModeWriteOnly {
+		t.Errorf("Expected mode ModeWriteOnly after SetMode, got %v", reader.GetMode())
+	}
+
+	// Change back to read/write
+	reader.SetMode(ModeReadWrite)
+	if reader.GetMode() != ModeReadWrite {
+		t.Errorf("Expected mode ModeReadWrite after SetMode, got %v", reader.GetMode())
+	}
+}
