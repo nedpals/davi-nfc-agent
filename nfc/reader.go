@@ -27,14 +27,13 @@ type NFCReader struct {
 	statusChan        chan DeviceStatus // Broadcasts device status updates
 	stopChan          chan struct{}     // Signals the worker to stop
 	cache             *TagCache         // Caches tag data
-	deviceStatus      DeviceStatus      // Internal tracking of device status
 	statusMux         sync.RWMutex
-	cardPresent       bool          // Internal tracking of card presence
-	isWriting         bool          // Tracks if a write operation is in progress
-	operationMutex    sync.Mutex    // Protects tag operations (read/write)
-	operationTimeout  time.Duration // Timeout for tag operations
-	deviceCheckTicker *time.Ticker  // Ticker for periodic device checks
-	cardCheckTicker   *time.Ticker  // Ticker for periodic card presence checks (based on cache)
+	cardPresent       bool           // Internal tracking of card presence
+	isWriting         bool           // Tracks if a write operation is in progress
+	operationMutex    sync.Mutex     // Protects tag operations (read/write)
+	operationTimeout  time.Duration  // Timeout for tag operations
+	deviceCheckTicker *time.Ticker   // Ticker for periodic device checks
+	cardCheckTicker   *time.Ticker   // Ticker for periodic card presence checks (based on cache)
 	workerWg          sync.WaitGroup // Tracks worker goroutine completion
 }
 
@@ -56,7 +55,6 @@ func NewNFCReader(deviceStr string, manager Manager, opTimeout time.Duration) (*
 		stopChan:         make(chan struct{}),
 		cache:            NewTagCache(),
 		cardPresent:      false,
-		deviceStatus:     DeviceStatus{Connected: false, Message: "Initializing...", CardPresent: false},
 		operationTimeout: opTimeout,
 	}
 
@@ -65,14 +63,11 @@ func NewNFCReader(deviceStr string, manager Manager, opTimeout time.Duration) (*
 		log.Printf("Attempting to connect to device: %s", deviceStr)
 		if err := deviceManager.TryConnect(); err != nil {
 			log.Printf("Failed to connect to device initially: %v. Worker will keep trying.", err)
-			reader.setDeviceStatus(false, fmt.Sprintf("Failed to connect: %v", err))
+			reader.broadcastDeviceStatus(fmt.Sprintf("Failed to connect: %v", err))
 		} else {
 			log.Printf("Successfully connected to device")
 			reader.LogDeviceInfo()
-			dev := deviceManager.Device()
-			if dev != nil {
-				reader.setDeviceStatus(true, fmt.Sprintf("Connected to %s", dev.String()))
-			}
+			reader.broadcastDeviceStatus() // Use default message from GetDeviceStatus
 		}
 	}()
 
@@ -121,11 +116,32 @@ func (r *NFCReader) StatusUpdates() <-chan DeviceStatus {
 	return r.statusChan
 }
 
-// GetDeviceStatus returns the current device status.
+// GetDeviceStatus returns the current device status by querying live state.
 func (r *NFCReader) GetDeviceStatus() DeviceStatus {
 	r.statusMux.RLock()
-	defer r.statusMux.RUnlock()
-	return r.deviceStatus
+	cardPres := r.cardPresent
+	r.statusMux.RUnlock()
+
+	connected := r.deviceManager.HasDevice()
+	var message string
+	if connected {
+		dev := r.deviceManager.Device()
+		if dev != nil {
+			message = fmt.Sprintf("Connected to %s", dev.String())
+		} else {
+			message = "Connected"
+		}
+	} else if r.deviceManager.InCooldown() {
+		message = "Device in cooldown"
+	} else {
+		message = "Not connected"
+	}
+
+	return DeviceStatus{
+		Connected:   connected,
+		Message:     message,
+		CardPresent: cardPres,
+	}
 }
 
 // handleDeviceCheck attempts to connect to the device if not connected and not in cooldown.
@@ -134,15 +150,12 @@ func (r *NFCReader) handleDeviceCheck(retryCount *int) {
 		log.Println("Device check ticker: No device or not in cooldown, attempting connect.")
 		if err := r.deviceManager.TryConnect(); err != nil {
 			log.Printf("Device check ticker: Connection attempt failed: %v", err)
-			r.setDeviceStatus(false, fmt.Sprintf("Connection failed: %v", err))
+			r.broadcastDeviceStatus(fmt.Sprintf("Connection failed: %v", err))
 		} else {
 			log.Println("Device check ticker: Connection successful.")
 			*retryCount = 0
 			r.LogDeviceInfo()
-			dev := r.deviceManager.Device()
-			if dev != nil {
-				r.setDeviceStatus(true, fmt.Sprintf("Connected to %s", dev.String()))
-			}
+			r.broadcastDeviceStatus() // Use default message from GetDeviceStatus
 		}
 	}
 }
@@ -183,16 +196,13 @@ func (r *NFCReader) handleDeviceErrors(err error, retryCount *int) bool {
 	*retryCount = newRetryCount
 
 	if needsCooldown {
-		r.setDeviceStatus(false, "Device in cooldown")
+		r.broadcastDeviceStatus("Device in cooldown")
 		return true
 	}
 
 	// Check if device was reconnected successfully
 	if r.deviceManager.HasDevice() {
-		dev := r.deviceManager.Device()
-		if dev != nil {
-			r.setDeviceStatus(true, fmt.Sprintf("Connected to %s", dev.String()))
-		}
+		r.broadcastDeviceStatus() // Use default message from GetDeviceStatus
 		*retryCount = 0
 		return true
 	}
@@ -251,7 +261,7 @@ func (r *NFCReader) worker() {
 		r.deviceCheckTicker.Stop()
 		r.cardCheckTicker.Stop()
 		r.deviceManager.Close()
-		r.setDeviceStatus(false, "Worker stopped, device disconnected.")
+		r.broadcastDeviceStatus("Worker stopped, device disconnected.")
 		r.workerWg.Done()
 		log.Println("Worker goroutine finished.")
 	}()
@@ -303,16 +313,19 @@ func (r *NFCReader) worker() {
 	}
 }
 
-func (r *NFCReader) setDeviceStatus(connected bool, message string) {
-	r.statusMux.Lock()
-	r.deviceStatus.Connected = connected
-	r.deviceStatus.Message = message
-	// r.deviceStatus.CardPresent is managed by setCardPresent
-	currentStatus := r.deviceStatus // Make a copy to send
-	r.statusMux.Unlock()
+// broadcastDeviceStatus broadcasts a device status update.
+// It queries the current live state via GetDeviceStatus().
+// An optional custom message can be provided to override the default message.
+func (r *NFCReader) broadcastDeviceStatus(customMessage ...string) {
+	status := r.GetDeviceStatus()
+
+	// Allow override for specific messages like "Reconnecting...", "Failed to connect", etc.
+	if len(customMessage) > 0 && customMessage[0] != "" {
+		status.Message = customMessage[0]
+	}
 
 	select {
-	case r.statusChan <- currentStatus:
+	case r.statusChan <- status:
 	default:
 		log.Println("Warning: Device status channel full or no listener.")
 	}
@@ -337,31 +350,29 @@ func (r *NFCReader) GetLastScannedData() string {
 
 func (r *NFCReader) setCardPresent(present bool) {
 	r.statusMux.Lock()
-	if r.cardPresent == present && r.deviceStatus.CardPresent == present { // Avoid redundant updates
+	if r.cardPresent == present { // Avoid redundant updates
 		r.statusMux.Unlock()
 		return
 	}
 	r.cardPresent = present
-	r.deviceStatus.CardPresent = present
+	r.statusMux.Unlock()
+
+	// Construct message based on card presence
+	var message string
 	if present {
 		uid := r.cache.GetLastScanned()
 		if uid != "" {
-			r.deviceStatus.Message = fmt.Sprintf("Card detected (UID: %s)", uid)
+			message = fmt.Sprintf("Card detected (UID: %s)", uid)
 		} else {
-			r.deviceStatus.Message = "Card detected"
+			message = "Card detected"
 		}
 	} else {
-		r.deviceStatus.Message = "Card removed"
+		message = "Card removed"
 		r.cache.Clear() // Clear cache when card is definitively removed
 	}
-	currentStatus := r.deviceStatus // Make a copy to send
-	r.statusMux.Unlock()
 
-	select {
-	case r.statusChan <- currentStatus:
-	default:
-		log.Println("Warning: Card presence status channel full or no listener.")
-	}
+	// Broadcast status with custom message
+	r.broadcastDeviceStatus(message)
 }
 
 // writeData initializes a factory mode card to NDEF format.
