@@ -140,15 +140,6 @@ func startServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 			case <-serverCtx.Done():
 				return
 			case data := <-reader.Data(): // reader.Data() returns chan nfc.NFCData
-				// Only process data in read mode
-				if currentMode != "read" {
-					log.Printf("Card detected but agent is in write mode, ignoring")
-					broadcastToClients(nfc.NFCData{
-						Card: nil,
-						Err:  fmt.Errorf("agent is in write mode"),
-					})
-					continue
-				}
 
 				if data.Err != nil {
 					log.Printf("Error: %v", data.Err)

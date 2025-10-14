@@ -34,15 +34,145 @@ var (
 	additionalOrigins string
 	currentReader     *nfc.NFCReader // Use nfc.NFCReader
 	currentDevice     string
-	currentMode       string // "read" or "write"
-	currentCardUID    string
-	currentCardType   string
 	allowedCardTypes  = make(map[string]bool) // Empty means all types allowed
 	devicePathFlag    string
 	portFlag          int
 	systrayFlag       bool
 	nfcManager        nfc.Manager
+	lastBroadcastCard *nfc.Card // Track last broadcast card for systray display
+	lastCardMux       sync.RWMutex
 )
+
+// setLastBroadcastCard safely sets the last broadcast card
+func setLastBroadcastCard(card *nfc.Card) {
+	lastCardMux.Lock()
+	defer lastCardMux.Unlock()
+	lastBroadcastCard = card
+}
+
+// getLastBroadcastCard safely gets the last broadcast card
+func getLastBroadcastCard() *nfc.Card {
+	lastCardMux.RLock()
+	defer lastCardMux.RUnlock()
+	return lastBroadcastCard
+}
+
+// sendErrorResponse sends an error response to a WebSocket connection
+func sendErrorResponse(conn *websocket.Conn, responseType string, errMsg string) {
+	conn.WriteJSON(WebSocketMessage{
+		Type: responseType,
+		Payload: map[string]interface{}{
+			"success": false,
+			"error":   errMsg,
+		},
+	})
+}
+
+// buildNDEFMessageWithOptions builds an NDEF message and write options based on the request
+func buildNDEFMessageWithOptions(writeReq WriteRequest) (*nfc.NDEFMessage, nfc.WriteOptions, error) {
+	// Determine record type
+	recordType := writeReq.RecordType
+	if recordType == "" {
+		recordType = "text" // default to text
+	}
+
+	// Determine language
+	language := writeReq.Language
+	if language == "" {
+		language = "en"
+	}
+
+	// Build NDEF record using the new builder API
+	var newRecord nfc.NDEFRecordBuilder
+	switch recordType {
+	case "text":
+		newRecord = &nfc.NDEFText{Content: writeReq.Text, Language: language}
+	case "uri":
+		newRecord = &nfc.NDEFURI{Content: writeReq.Text}
+	default:
+		return nil, nfc.WriteOptions{}, fmt.Errorf("unsupported record type: %s", recordType)
+	}
+
+	// Build message
+	builder := &nfc.NDEFMessageBuilder{
+		Records: []nfc.NDEFRecordBuilder{newRecord},
+	}
+	ndefMsg := builder.MustBuild()
+
+	// Determine write options
+	var writeOpts nfc.WriteOptions
+	if writeReq.Replace {
+		log.Printf("WriteRequest: Replacing entire NDEF message (destructive)")
+		writeOpts = nfc.WriteOptions{Overwrite: true, Index: -1}
+	} else if writeReq.Append {
+		log.Printf("WriteRequest: Appending new %s record", recordType)
+		writeOpts = nfc.WriteOptions{Overwrite: false, Index: -1}
+	} else if writeReq.RecordIndex != nil {
+		log.Printf("WriteRequest: Updating record at index %d", *writeReq.RecordIndex)
+		writeOpts = nfc.WriteOptions{Overwrite: false, Index: *writeReq.RecordIndex}
+	} else {
+		log.Printf("WriteRequest: Auto-detecting write mode")
+		writeOpts = nfc.WriteOptions{Overwrite: true, Index: -1}
+	}
+
+	return ndefMsg, writeOpts, nil
+}
+
+// handleWriteRequest processes a write request from a WebSocket client
+func handleWriteRequest(conn *websocket.Conn, wsMessage WebSocketMessage, ctx context.Context) {
+	var writeReq WriteRequest
+	payloadJSON, err := json.Marshal(wsMessage.Payload)
+	if err != nil {
+		log.Printf("Failed to marshal write payload: %v", err)
+		sendErrorResponse(conn, "writeResponse", "Failed to parse request")
+		return
+	}
+
+	if err := json.Unmarshal(payloadJSON, &writeReq); err != nil {
+		log.Printf("Failed to parse write request: %v", err)
+		sendErrorResponse(conn, "writeResponse", "Failed to parse request")
+		return
+	}
+
+	// Get reader from context
+	reader := getReaderFromContext(ctx)
+	if reader == nil {
+		sendErrorResponse(conn, "writeResponse", "NFC reader not available")
+		return
+	}
+
+	// Build NDEF message and write options
+	ndefMsg, writeOpts, err := buildNDEFMessageWithOptions(writeReq)
+	if err != nil {
+		log.Printf("Failed to build NDEF message: %v", err)
+		sendErrorResponse(conn, "writeResponse", err.Error())
+		return
+	}
+
+	// Encode and write
+	ndefData, err := ndefMsg.Encode()
+	if err != nil {
+		log.Printf("Failed to encode NDEF message: %v", err)
+		sendErrorResponse(conn, "writeResponse", "Failed to encode NDEF message")
+		return
+	}
+
+	err = reader.WriteCardDataWithOptions(string(ndefData), writeOpts)
+	if err != nil {
+		log.Printf("Write failed: %v", err)
+		sendErrorResponse(conn, "writeResponse", err.Error())
+		return
+	}
+
+	// Success response
+	conn.WriteJSON(WebSocketMessage{
+		Type: "writeResponse",
+		Payload: map[string]interface{}{
+			"success": true,
+			"error":   nil,
+		},
+	})
+}
 
 // checkOrigin implements CORS checking for WebSocket connections.
 // It allows connections from localhost:3000 and any origins specified in additionalOrigins.
@@ -139,178 +269,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 			switch wsMessage.Type {
 			case "writeRequest":
-				var writeReq WriteRequest
-				payloadJSON, err := json.Marshal(wsMessage.Payload)
-				if err != nil {
-					log.Printf("Failed to marshal write payload: %v", err)
-					continue
-				}
-
-				if err := json.Unmarshal(payloadJSON, &writeReq); err != nil {
-					log.Printf("Failed to parse write request: %v", err)
-					continue
-				}
-
-				// Get reader from context and attempt write
-				reader := getReaderFromContext(r.Context())
-				if reader == nil {
-					conn.WriteJSON(WebSocketMessage{
-						Type: "writeResponse",
-						Payload: map[string]interface{}{
-							"success": false,
-							"error":   "NFC reader not available",
-						},
-					})
-					continue
-				}
-
-				// Determine record type
-				recordType := writeReq.RecordType
-				if recordType == "" {
-					recordType = "text" // default to text
-				}
-
-				// Determine language
-				language := writeReq.Language
-				if language == "" {
-					language = "en"
-				}
-
-				// Build NDEF message
-				var ndefMsg *nfc.NDEFMessage
-				var ndefData []byte
-
-				// Check if card has existing NDEF data (for safety enforcement)
-				var hasExistingNdef bool
-				tags, errTags := reader.GetTags()
-				if errTags == nil && len(tags) > 0 {
-					card := nfc.NewCard(tags[0])
-					if msg, errRead := card.ReadMessage(); errRead == nil {
-						if existingNdef, ok := msg.(*nfc.NDEFMessage); ok && len(existingNdef.Records()) > 0 {
-							hasExistingNdef = true
-							log.Printf("WriteRequest: Card has existing NDEF message with %d record(s)", len(existingNdef.Records()))
-						}
-					}
-				}
-
-				// Determine operation mode
-				if writeReq.Replace {
-					// Explicit replace - create new message (destructive)
-					log.Printf("WriteRequest: Replacing entire NDEF message (destructive)")
-					ndefMsg = nfc.NewNDEFMessage()
-					switch recordType {
-					case "text":
-						ndefMsg.AddText(writeReq.Text, language)
-					case "uri":
-						ndefMsg.AddURI(writeReq.Text)
-					}
-				} else if writeReq.Append || writeReq.RecordIndex != nil {
-					// Append or update - read existing data first (safe)
-					if errTags != nil || len(tags) == 0 {
-						err = fmt.Errorf("no card present for update operation")
-					} else {
-						card := nfc.NewCard(tags[0])
-						if msg, errRead := card.ReadMessage(); errRead == nil {
-							if existingNdef, ok := msg.(*nfc.NDEFMessage); ok {
-								ndefMsg = existingNdef
-							}
-						}
-					}
-
-					if ndefMsg == nil {
-						// No existing NDEF, create new
-						log.Printf("WriteRequest: No existing NDEF found, creating new message")
-						ndefMsg = nfc.NewNDEFMessage()
-					}
-
-					if writeReq.Append {
-						// Append new record
-						log.Printf("WriteRequest: Appending new %s record", recordType)
-						if recordType == "text" {
-							ndefMsg.AddText(writeReq.Text, language)
-						} else if recordType == "uri" {
-							ndefMsg.AddURI(writeReq.Text)
-						}
-					} else if writeReq.RecordIndex != nil {
-						// Update specific record
-						idx := *writeReq.RecordIndex
-						records := ndefMsg.Records()
-
-						if idx >= 0 && idx < len(records) {
-							log.Printf("WriteRequest: Updating record at index %d", idx)
-							// Replace existing record
-							newRecords := make([]nfc.NDEFRecord, len(records))
-							copy(newRecords, records)
-
-							if recordType == "text" {
-								payload := nfc.MakeTextRecordPayload(writeReq.Text, language)
-								newRecords[idx] = nfc.NDEFRecord{
-									TNF:     0x01,
-									Type:    []byte("T"),
-									Payload: payload,
-								}
-							} else if recordType == "uri" {
-								payload := nfc.MakeURIRecordPayload(writeReq.Text)
-								newRecords[idx] = nfc.NDEFRecord{
-									TNF:     0x01,
-									Type:    []byte("U"),
-									Payload: payload,
-								}
-							}
-
-							// Rebuild message with updated records
-							ndefMsg = nfc.NewNDEFMessage()
-							for _, rec := range newRecords {
-								ndefMsg.AddRecord(rec)
-							}
-						} else {
-							err = fmt.Errorf("record index %d out of range (have %d records)", idx, len(records))
-						}
-					}
-				} else {
-					// No operation mode specified
-					if hasExistingNdef {
-						// Card has NDEF data - require explicit mode to prevent accidents
-						err = fmt.Errorf("card has existing NDEF data - must specify 'append', 'recordIndex', or 'replace' to avoid accidental data loss")
-					} else {
-						// Blank card or no NDEF - allow simple write
-						log.Printf("WriteRequest: Blank card, creating new NDEF message")
-						ndefMsg = nfc.NewNDEFMessage()
-						if recordType == "text" {
-							ndefMsg.AddText(writeReq.Text, language)
-						} else if recordType == "uri" {
-							ndefMsg.AddURI(writeReq.Text)
-						}
-					}
-				}
-
-				// Encode and write
-				if err == nil && ndefMsg != nil {
-					ndefData, err = ndefMsg.Encode()
-					if err != nil {
-						log.Printf("Failed to encode NDEF message: %v", err)
-					} else {
-						err = reader.WriteCardData(string(ndefData))
-					}
-				}
-
-				if err != nil {
-					log.Println(err)
-				}
-
-				var errStr *string = nil
-				if err != nil {
-					errStr = new(string)
-					*errStr = err.Error()
-				}
-
-				conn.WriteJSON(WebSocketMessage{
-					Type: "writeResponse",
-					Payload: map[string]interface{}{
-						"success": err == nil,
-						"error":   errStr,
-					},
-				})
+				handleWriteRequest(conn, wsMessage, r.Context())
 			}
 		}
 	}
@@ -328,16 +287,12 @@ func broadcastToClients(data nfc.NFCData) { // Use nfc.NFCData
 	var payload map[string]interface{}
 
 	if data.Card != nil {
-		uid := data.Card.UID
-		cardType := data.Card.Type
-
-		// Update current card info
-		currentCardUID = uid
-		currentCardType = cardType
+		// Update last broadcast card for systray display
+		setLastBroadcastCard(data.Card)
 
 		// Build the structured payload
 		payload = map[string]interface{}{
-			"uid":        uid,
+			"uid":        data.Card.UID,
 			"type":       data.Card.Type,
 			"technology": data.Card.Technology,
 			"scannedAt":  data.Card.ScannedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -432,8 +387,8 @@ func getReaderFromContext(ctx context.Context) *nfc.NFCReader { // Use nfc.NFCRe
 
 // WebSocketMessage represents a message sent to WebSocket clients.
 type WebSocketMessage struct {
-	Type    string      `json:"type"`
-	Payload interface{} `json:"payload"`
+	Type    string `json:"type"`
+	Payload any    `json:"payload"`
 }
 
 // WriteRequest represents a request to write data to an NFC card.
@@ -491,9 +446,8 @@ func onReady() {
 	mConnection := systray.AddMenuItem("Connection: Disconnected", "Connection Status")
 	mConnection.Disable()
 
-	mMode := systray.AddMenuItem("Mode: Read", "Current Mode")
+	mMode := systray.AddMenuItem("Mode: Read/Write", "Current Mode")
 	mMode.Disable()
-	currentMode = "read"
 
 	systray.AddSeparator()
 
@@ -515,8 +469,9 @@ func onReady() {
 
 	// Mode toggle section
 	mModeMenu := systray.AddMenuItem("Switch Mode", "Change operation mode")
-	mReadMode := mModeMenu.AddSubMenuItemCheckbox("Read Mode", "Switch to read mode", true)
-	mWriteMode := mModeMenu.AddSubMenuItemCheckbox("Write Mode", "Switch to write mode", false)
+	mReadWriteMode := mModeMenu.AddSubMenuItemCheckbox("Read/Write Mode", "Allow both read and write", true)
+	mReadMode := mModeMenu.AddSubMenuItemCheckbox("Read Only Mode", "Only allow reading", false)
+	mWriteMode := mModeMenu.AddSubMenuItemCheckbox("Write Only Mode", "Only allow writing", false)
 
 	systray.AddSeparator()
 
@@ -593,22 +548,29 @@ func onReady() {
 		lastType := ""
 
 		for range ticker.C {
-			if currentCardUID != lastUID {
-				if currentCardUID == "" {
-					mCardUID.SetTitle("Card UID: None")
-				} else {
-					mCardUID.SetTitle("Card UID: " + currentCardUID)
-				}
-				lastUID = currentCardUID
+			card := getLastBroadcastCard()
+			var uid, cardType string
+			if card != nil {
+				uid = card.UID
+				cardType = card.Type
 			}
 
-			if currentCardType != lastType {
-				if currentCardType == "" {
+			if uid != lastUID {
+				if uid == "" {
+					mCardUID.SetTitle("Card UID: None")
+				} else {
+					mCardUID.SetTitle("Card UID: " + uid)
+				}
+				lastUID = uid
+			}
+
+			if cardType != lastType {
+				if cardType == "" {
 					mCardType.SetTitle("Card Type: None")
 				} else {
-					mCardType.SetTitle("Card Type: " + currentCardType)
+					mCardType.SetTitle("Card Type: " + cardType)
 				}
-				lastType = currentCardType
+				lastType = cardType
 			}
 		}
 	}()
@@ -633,25 +595,37 @@ func onReady() {
 				stopAgent()
 				mStatus.SetTitle("Stopped")
 				mConnection.SetTitle("Connection: Disconnected")
-				currentCardUID = ""
-				currentCardType = ""
+				setLastBroadcastCard(nil)
 				mStop.Disable()
 				mStart.Enable()
 			case <-mRefreshDevices.ClickedCh:
 				updateDeviceList()
-			case <-mReadMode.ClickedCh:
-				if !mReadMode.Checked() {
-					currentMode = "read"
-					mMode.SetTitle("Mode: Read")
-					mReadMode.Check()
+			case <-mReadWriteMode.ClickedCh:
+				if !mReadWriteMode.Checked() && currentReader != nil {
+					currentReader.SetMode(nfc.ModeReadWrite)
+					mMode.SetTitle("Mode: Read/Write")
+					mReadWriteMode.Check()
+					mReadMode.Uncheck()
 					mWriteMode.Uncheck()
+					log.Println("Switched to read/write mode")
+				}
+			case <-mReadMode.ClickedCh:
+				if !mReadMode.Checked() && currentReader != nil {
+					currentReader.SetMode(nfc.ModeReadOnly)
+					mMode.SetTitle("Mode: Read Only")
+					mReadMode.Check()
+					mReadWriteMode.Uncheck()
+					mWriteMode.Uncheck()
+					log.Println("Switched to read-only mode")
 				}
 			case <-mWriteMode.ClickedCh:
-				if !mWriteMode.Checked() {
-					currentMode = "write"
-					mMode.SetTitle("Mode: Write")
+				if !mWriteMode.Checked() && currentReader != nil {
+					currentReader.SetMode(nfc.ModeWriteOnly)
+					mMode.SetTitle("Mode: Write Only")
 					mWriteMode.Check()
+					mReadWriteMode.Uncheck()
 					mReadMode.Uncheck()
+					log.Println("Switched to write-only mode")
 				}
 			case <-mFilterAll.ClickedCh:
 				mFilterAll.Check()
