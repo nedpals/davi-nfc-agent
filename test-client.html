@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFC Agent Test Client</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 16px;
+        }
+
+        .section {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .section h2 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #999;
+        }
+
+        .status-dot.connected {
+            background: #22c55e;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 60px;
+            font-family: inherit;
+        }
+
+        button {
+            background: #333;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+        }
+
+        button:hover {
+            background: #555;
+        }
+
+        button.secondary {
+            background: transparent;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+
+        button.secondary:hover {
+            background: #f9f9f9;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+            opacity: 0.5;
+        }
+
+        .card-data {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 13px;
+        }
+
+        .card-data div {
+            margin-bottom: 8px;
+        }
+
+        .card-data strong {
+            display: inline-block;
+            width: 100px;
+        }
+
+        .record {
+            background: #f9f9f9;
+            padding: 10px;
+            border-left: 3px solid #333;
+            margin-bottom: 10px;
+        }
+
+        .record-type {
+            font-weight: 600;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .alert {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        /* State visibility */
+        .hidden {
+            display: none !important;
+        }
+
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 24px;
+            }
+
+            .section {
+                padding: 20px;
+            }
+
+            .two-col {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- State 1: Landing / Connection -->
+        <div id="landingState">
+            <h1>NFC Agent Test Client</h1>
+            <p class="subtitle">Connect to your NFC reader</p>
+
+            <div class="section">
+                <div class="form-group">
+                    <label>WebSocket URL</label>
+                    <input type="text" id="wsUrl" value="ws://localhost:18080/ws">
+                </div>
+                <button onclick="connect()">Connect</button>
+            </div>
+        </div>
+
+        <!-- State 2: Connected / Ready to scan -->
+        <div id="scanState" class="hidden">
+            <h1>NFC Agent Test Client</h1>
+            <p class="subtitle">Ready to scan</p>
+
+            <div class="section">
+                <div class="status">
+                    <div class="status-dot connected"></div>
+                    <span>Connected to agent</span>
+                </div>
+
+                <div class="empty-state">
+                    <div class="empty-icon">📱</div>
+                    <div>Hold a card near your reader</div>
+                </div>
+
+                <button class="secondary" onclick="disconnect()">Disconnect</button>
+            </div>
+        </div>
+
+        <!-- State 3: Card detected -->
+        <div id="cardState" class="hidden">
+            <h1>NFC Agent Test Client</h1>
+            <p class="subtitle" id="cardUID"></p>
+
+            <!-- Card Info -->
+            <div class="section">
+                <h2>Card Information</h2>
+                <div id="cardInfo" class="card-data"></div>
+            </div>
+
+            <!-- Records -->
+            <div class="section" id="recordsSection" style="display: none;">
+                <h2>Records</h2>
+                <div id="recordsList"></div>
+            </div>
+
+            <!-- Write -->
+            <div class="section">
+                <h2>Write to Card</h2>
+                <div id="writeAlert"></div>
+
+                <div class="form-group">
+                    <label>Text</label>
+                    <textarea id="writeText"></textarea>
+                </div>
+
+                <div class="two-col">
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select id="recordType">
+                            <option value="text">Text</option>
+                            <option value="uri">URI</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Mode</label>
+                        <select id="writeMode">
+                            <option value="replace">Replace All</option>
+                            <option value="append">Append</option>
+                        </select>
+                    </div>
+                </div>
+
+                <button onclick="writeCard()">Write</button>
+            </div>
+
+            <button class="secondary" onclick="backToScan()">Back to Scan</button>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+
+        function setState(state) {
+            document.getElementById('landingState').classList.toggle('hidden', state !== 'landing');
+            document.getElementById('scanState').classList.toggle('hidden', state !== 'scan');
+            document.getElementById('cardState').classList.toggle('hidden', state !== 'card');
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                setState('scan');
+            };
+
+            ws.onclose = () => {
+                setState('landing');
+            };
+
+            ws.onerror = () => {
+                alert('Connection failed. Please check the URL.');
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'tagData' && data.payload.uid) {
+                    handleCard(data.payload);
+                } else if (data.type === 'writeResponse') {
+                    handleWriteResponse(data.payload);
+                }
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+            setState('landing');
+        }
+
+        function backToScan() {
+            setState('scan');
+        }
+
+        function handleCard(card) {
+            document.getElementById('cardUID').textContent = card.uid;
+
+            let html = `<div><strong>UID:</strong> ${card.uid}</div>`;
+            html += `<div><strong>Type:</strong> ${card.type}</div>`;
+            if (card.technology) {
+                html += `<div><strong>Technology:</strong> ${card.technology}</div>`;
+            }
+
+            document.getElementById('cardInfo').innerHTML = html;
+
+            // Show records
+            if (card.message && card.message.records && card.message.records.length > 0) {
+                let recordsHtml = '';
+                card.message.records.forEach((rec, i) => {
+                    const type = rec.type === 'T' ? 'TEXT' : rec.type === 'U' ? 'URI' : 'OTHER';
+                    const content = rec.text || rec.uri || 'Binary';
+                    recordsHtml += `
+                        <div class="record">
+                            <div class="record-type">${type} [${i}]</div>
+                            <div>${content}</div>
+                        </div>
+                    `;
+                });
+                document.getElementById('recordsList').innerHTML = recordsHtml;
+                document.getElementById('recordsSection').style.display = 'block';
+            } else {
+                document.getElementById('recordsSection').style.display = 'none';
+            }
+
+            setState('card');
+        }
+
+        function handleWriteResponse(resp) {
+            const alertDiv = document.getElementById('writeAlert');
+            if (resp.success) {
+                alertDiv.innerHTML = '<div class="alert alert-success">Write successful</div>';
+            } else {
+                alertDiv.innerHTML = `<div class="alert alert-error">Error: ${resp.error}</div>`;
+            }
+            setTimeout(() => alertDiv.innerHTML = '', 5000);
+        }
+
+        function writeCard() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert('Not connected');
+                return;
+            }
+
+            const text = document.getElementById('writeText').value.trim();
+            if (!text) {
+                alert('Enter text');
+                return;
+            }
+
+            const request = {
+                type: 'writeRequest',
+                payload: {
+                    text: text,
+                    recordType: document.getElementById('recordType').value,
+                    language: 'en'
+                }
+            };
+
+            const mode = document.getElementById('writeMode').value;
+            if (mode === 'replace') {
+                request.payload.replace = true;
+            } else {
+                request.payload.append = true;
+            }
+
+            ws.send(JSON.stringify(request));
+        }
+    </script>
+</body>
+</html>
