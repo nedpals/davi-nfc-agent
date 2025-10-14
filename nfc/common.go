@@ -7,7 +7,7 @@ import (
 
 // NFCData represents the data read from an NFC tag including any potential errors.
 type NFCData struct {
-	Card *Card // The detected card (nil if error occurred)
+	Card *Card // The detected card, nil if no card is present
 	Err  error // Error that occurred during detection/reading
 }
 

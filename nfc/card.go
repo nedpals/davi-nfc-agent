@@ -27,11 +27,12 @@ import (
 //	card.Close()
 type Card struct {
 	// Metadata about the card
-	UID          string    // Unique identifier of the card
-	Type         string    // Human-readable type (e.g., "MIFARE Classic 1K", "Type4")
-	Technology   string    // Technology family (e.g., "ISO14443A", "ISO14443B")
-	ScannedAt    time.Time // When the card was detected
-	LastAccessed time.Time // Last read/write operation time
+	UID          string    `json:"uid"`                    // Unique identifier of the card
+	Type         string    `json:"type"`                   // Human-readable type (e.g., "MIFARE Classic 1K", "Type4")
+	Technology   string    `json:"technology"`             // Technology family (e.g., "ISO14443A", "ISO14443B")
+	ScannedAt    time.Time `json:"scanned_at"`             // When the card was detected
+	LastAccessed time.Time `json:"last_accessed"`          // Last read/write operation time
+	MessageData  Message   `json:"message_data,omitempty"` // Cached message data, if any
 
 	// Internal state for io.Reader
 	tag        Tag    // The underlying tag implementation
@@ -176,6 +177,11 @@ func (c *Card) String() string {
 //	    raw := m.Data
 //	}
 func (c *Card) ReadMessage() (Message, error) {
+	// If we already have a cached message, return it
+	if c.MessageData != nil {
+		return c.MessageData, nil
+	}
+
 	// Read raw data from card
 	data, err := io.ReadAll(c)
 	if err != nil {
@@ -184,11 +190,14 @@ func (c *Card) ReadMessage() (Message, error) {
 
 	// Try to parse as NDEF first
 	if msg, err := DecodeNDEF(data); err == nil {
+		c.MessageData = msg // Cache the parsed message
 		return msg, nil
 	}
 
 	// Fallback: return raw bytes as TextMessage
-	return DecodeText(data), nil
+	textMsg := NewTextMessage(data)
+	c.MessageData = textMsg // Cache the raw message
+	return textMsg, nil
 }
 
 // WriteMessage encodes and writes a message to the card.

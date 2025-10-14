@@ -214,25 +214,20 @@ func (r *NFCReader) handleTagPolling(tags []Tag) {
 			r.cache.UpdateLastSeenTime(uid)
 		}
 
-		// Read data from tag first
-		data, readErr := tag.ReadData()
-		if readErr != nil {
-			log.Printf("Error reading data for tag UID %s (Type: %s): %v", uid, tag.Type(), readErr)
-			// Still create card even on error, but with no pre-loaded data
-			card := NewCard(tag)
-			r.dataChan <- NFCData{Card: card, Err: readErr}
+		// Create Card wrapper
+		card := NewCard(tag)
+		if _, err := card.ReadMessage(); err != nil {
+			log.Printf("Error reading data for card UID %s (Type: %s): %v", uid, card.Type, err)
+			// Send card with error
+			r.dataChan <- NFCData{Card: card, Err: err}
 			continue
 		}
 
-		// Create Card with pre-loaded data
-		card := NewCard(tag)
-		card.preloadData(data)
-
-		// Check if this is a new/different card
 		if r.cache.HasChanged(uid) {
-			log.Printf("Tag data changed or new tag: UID %s (Type: %s)", uid, tag.Type())
+			log.Printf("Card data changed or new card: UID %s (Type: %s)", uid, card.Type)
 			r.dataChan <- NFCData{Card: card, Err: nil}
 		}
+
 		time.Sleep(DefaultPollingInterval)
 	}
 }
@@ -363,34 +358,27 @@ func (r *NFCReader) setCardPresent(present bool) {
 	r.broadcastDeviceStatus(message)
 }
 
-// writeData initializes a factory mode card to NDEF format.
-// Actual NDEF message writing is a separate step (conceptual in original).
-func (r *NFCReader) writeData(tag Tag, text string) error {
-	var ndefMessage []byte
-
-	if text != "" {
-		// Encode the text string into an NDEF message payload.
-		// Assuming EncodeTextPayload is available in the nfc package (e.g., from ndef_utils.go).
-		// Defaulting to "en" language code.
-		// Corrected to use EncodeNdefMessageWithTextRecord from ndef_utils.go
-		ndefMessage = EncodeNdefMessageWithTextRecord(text, "en")
-		// err is not returned by EncodeNdefMessageWithTextRecord, so no error check needed here.
-		log.Printf("writeData (UID: %s, Type: %s): Encoded text to NDEF message of %d bytes.", tag.UID(), tag.Type(), len(ndefMessage))
+// writeData writes text to a card using the Card WriteMessage API.
+func (r *NFCReader) writeData(card *Card, text string) error {
+	if text == "" {
+		log.Printf("writeData (UID: %s, Type: %s): No text provided; writing empty NDEF message to initialize card if needed.", card.UID, card.Type)
 	} else {
-		log.Printf("writeData (UID: %s, Type: %s): No text provided; will call WriteData with nil/empty to ensure card is NDEF ready/initialized if applicable.", tag.UID(), tag.Type())
-		// Passing nil or empty slice to WriteData on RealClassicTagAdapter
-		// should trigger initialization logic if the card is in factory mode.
-		ndefMessage = nil
+		log.Printf("writeData (UID: %s, Type: %s): Writing text message: %q", card.UID, card.Type, text)
 	}
 
-	// Call the WriteData method from Tag
-	// This will handle factory initialization if needed (e.g., in RealClassicTagAdapter)
-	// and then write the NDEF message.
-	if err := tag.WriteData(ndefMessage); err != nil {
-		return fmt.Errorf("writeData (UID: %s, Type: %s): error from tag.WriteData(%d bytes): %w", tag.UID(), tag.Type(), len(ndefMessage), err)
+	// Encode text as NDEF message
+	ndefMessage := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFText{Content: text, Language: "en"},
+		},
 	}
 
-	log.Printf("writeData (UID: %s, Type: %s): tag.WriteData() completed successfully.", tag.UID(), tag.Type())
+	// Use Card's WriteMessage which handles encoding and writing
+	if err := card.WriteMessage(ndefMessage); err != nil {
+		return fmt.Errorf("writeData (UID: %s, Type: %s): error from card.WriteMessage: %w", card.UID, card.Type, err)
+	}
+
+	log.Printf("writeData (UID: %s, Type: %s): card write completed successfully.", card.UID, card.Type)
 	return nil
 }
 
@@ -419,22 +407,17 @@ func (r *NFCReader) WriteCardData(text string) error {
 			return fmt.Errorf("no card detected for writing")
 		}
 
-		for _, tag := range tags { // tag is Tag
-			// Attempt to write to any tag that supports WriteData.
-			// The current implementation of WriteData in RealClassicTagAdapter handles MIFARE Classic.
-			// Other tag types would need their own WriteData implementations.
-			// We could add a check here: if _, ok := tag.(ClassicTag); ok { ... }
-			// Or, more generally, just try and let the tag report if it's not supported.
-			log.Printf("Attempting to write to tag UID: %s, Type: %s", tag.UID(), tag.Type())
-			errWrite := r.writeData(tag, text)
+		for _, tag := range tags {
+			// Create Card wrapper for the tag
+			card := NewCard(tag)
+
+			log.Printf("Attempting to write to card UID: %s, Type: %s", card.UID, card.Type)
+			errWrite := r.writeData(card, text)
 			if errWrite == nil {
-				log.Printf("Successfully wrote to tag UID: %s", tag.UID())
+				log.Printf("Successfully wrote to card UID: %s", card.UID)
 				return nil // Success
 			}
-			log.Printf("Failed to write to tag UID %s (Type: %s): %v. Trying next tag if any.", tag.UID(), tag.Type(), errWrite)
-			// If it's a MIFARE Classic tag and it failed, we might not want to try others unless specifically designed.
-			// For now, let's assume we try the first one that might work.
-			// If the error is critical (e.g. card removed), it might be better to return it immediately.
+			log.Printf("Failed to write to card UID %s (Type: %s): %v. Trying next card if any.", card.UID, card.Type, errWrite)
 		}
 		return fmt.Errorf("no compatible or writable tag found, or write operation failed for all detected tags")
 	})

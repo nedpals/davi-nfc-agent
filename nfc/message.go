@@ -235,3 +235,142 @@ func parseURIRecordPayload(payload []byte) (string, error) {
 
 	return prefix + string(uriBytes), nil
 }
+
+// High-level record types for declarative message construction
+
+// NDEFText represents a high-level text record.
+//
+// Example:
+//
+//	msg := &nfc.NDEFMessageBuilder{
+//	    Records: []nfc.NDEFRecordBuilder{
+//	        &nfc.NDEFText{Content: "Hello World", Language: "en"},
+//	        &nfc.NDEFURI{Content: "https://example.com"},
+//	    },
+//	}
+type NDEFText struct {
+	Content  string
+	Language string // Optional, defaults to "en"
+}
+
+// ToRecord converts NDEFText to NDEFRecord.
+func (t *NDEFText) ToRecord() NDEFRecord {
+	lang := t.Language
+	if lang == "" {
+		lang = "en"
+	}
+	return NDEFRecord{
+		TNF:     0x01, // Well Known
+		Type:    []byte("T"),
+		Payload: MakeTextRecordPayload(t.Content, lang),
+	}
+}
+
+// NDEFURI represents a high-level URI record.
+type NDEFURI struct {
+	Content string
+}
+
+// ToRecord converts NDEFURI to NDEFRecord.
+func (u *NDEFURI) ToRecord() NDEFRecord {
+	return NDEFRecord{
+		TNF:     0x01, // Well Known
+		Type:    []byte("U"),
+		Payload: MakeURIRecordPayload(u.Content),
+	}
+}
+
+// NDEFMIME represents a high-level MIME type record.
+type NDEFMIME struct {
+	Type string
+	Data []byte
+}
+
+// ToRecord converts NDEFMIME to NDEFRecord.
+func (m *NDEFMIME) ToRecord() NDEFRecord {
+	return NDEFRecord{
+		TNF:     0x02, // MIME Media Type
+		Type:    []byte(m.Type),
+		Payload: m.Data,
+	}
+}
+
+// NDEFExternal represents a high-level external type record.
+type NDEFExternal struct {
+	Domain string // e.g., "example.com:myapp"
+	Data   []byte
+}
+
+// ToRecord converts NDEFExternal to NDEFRecord.
+func (e *NDEFExternal) ToRecord() NDEFRecord {
+	return NDEFRecord{
+		TNF:     0x04, // External Type
+		Type:    []byte(e.Domain),
+		Payload: e.Data,
+	}
+}
+
+// NDEFEmpty represents a high-level empty record.
+type NDEFEmpty struct{}
+
+// ToRecord converts NDEFEmpty to NDEFRecord.
+func (e *NDEFEmpty) ToRecord() NDEFRecord {
+	return NDEFRecord{
+		TNF:     0x00, // Empty
+		Type:    nil,
+		Payload: nil,
+	}
+}
+
+// NDEFRecordBuilder is an interface that can be converted to NDEFRecord.
+type NDEFRecordBuilder interface {
+	ToRecord() NDEFRecord
+}
+
+// NDEFMessageBuilder provides a declarative way to construct NDEF messages.
+//
+// Example:
+//
+//	msg := &nfc.NDEFMessageBuilder{
+//	    Records: []nfc.NDEFRecordBuilder{
+//	        &nfc.NDEFText{Content: "Hello World", Language: "en"},
+//	        &nfc.NDEFURI{Content: "https://example.com"},
+//	    },
+//	}.Build()
+type NDEFMessageBuilder struct {
+	Records []NDEFRecordBuilder
+}
+
+func (b *NDEFMessageBuilder) Encode() ([]byte, error) {
+	msg, err := b.Build()
+	if err != nil {
+		return nil, err
+	}
+	return msg.Encode()
+}
+
+func (b *NDEFMessageBuilder) Type() string {
+	return "ndef"
+}
+
+// Build transforms the high-level records into a low-level NDEFMessage.
+func (b *NDEFMessageBuilder) Build() (*NDEFMessage, error) {
+	if len(b.Records) == 0 {
+		return nil, fmt.Errorf("cannot build empty NDEF message (no records provided)")
+	}
+
+	msg := NewNDEFMessage()
+	for _, record := range b.Records {
+		msg.AddRecord(record.ToRecord())
+	}
+	return msg, nil
+}
+
+// MustBuild is like Build but panics on error.
+func (b *NDEFMessageBuilder) MustBuild() *NDEFMessage {
+	msg, err := b.Build()
+	if err != nil {
+		panic(fmt.Sprintf("NDEFMessageBuilder.MustBuild: %v", err))
+	}
+	return msg
+}
