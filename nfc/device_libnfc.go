@@ -67,13 +67,13 @@ func (d *libnfcDevice) GetTags() ([]Tag, error) {
 
 			switch t := ffTag.(type) {
 			case freefare.ClassicTag:
-				allFoundTags = append(allFoundTags, newClassicAdapter(t))
+				allFoundTags = append(allFoundTags, NewClassicTag(t))
 				processedUIDs[uid] = true
 			case freefare.DESFireTag:
-				allFoundTags = append(allFoundTags, newDESFireAdapter(t))
+				allFoundTags = append(allFoundTags, NewDESFireTag(t))
 				processedUIDs[uid] = true
 			case freefare.UltralightTag:
-				allFoundTags = append(allFoundTags, newUltralightAdapter(t))
+				allFoundTags = append(allFoundTags, NewUltralightTag(t))
 				processedUIDs[uid] = true
 			default:
 				log.Printf("Found other Freefare tag: UID %s, Type %T", uid, t)
@@ -111,7 +111,7 @@ func (d *libnfcDevice) GetTags() ([]Tag, error) {
 			// Check SAK for ISO14443-4 compliance (Type 4A: bit 5 = 0x20)
 			if (isoATarget.Sak & 0x20) != 0 {
 				log.Printf("Found ISO14443-4A tag: UID %s, SAK %02X", currentUID, isoATarget.Sak)
-				allFoundTags = append(allFoundTags, newISO14443Adapter(target, d))
+				allFoundTags = append(allFoundTags, NewISO14443Tag(target, d))
 				processedUIDs[currentUID] = true
 			}
 		}

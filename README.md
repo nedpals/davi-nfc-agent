@@ -392,17 +392,17 @@ For card-specific operations, use type assertions:
 
 ```go
 // MIFARE Classic: Direct sector/block access
-if classic, ok := tag.(nfc.ClassicTag); ok {
+if classic, ok := tag.(*nfc.ClassicTag); ok {
     data, _ := classic.Read(sector, block, key, keyType)
 }
 
 // DESFire: Application and file operations
-if desfire, ok := tag.(nfc.DESFireTag); ok {
+if desfire, ok := tag.(*nfc.DESFireTag); ok {
     apps, _ := desfire.ApplicationIds()
 }
 
 // Ultralight: Page-based operations
-if ultralight, ok := tag.(nfc.UltralightTag); ok {
+if ultralight, ok := tag.(*nfc.UltralightTag); ok {
     data, _ := ultralight.ReadPage(4)
 }
 ```

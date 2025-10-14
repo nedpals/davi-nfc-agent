@@ -51,9 +51,21 @@ func checkSW1SW2(response []byte, expected []byte) error {
 	return fmt.Errorf("APDU error: SW1=%02X, SW2=%02X", sw1, sw2)
 }
 
-// iso14443Adapter implements ISO14443Tag for ISO14443-4 Type A tags.
-// It will wrap a device or tag object from a suitable Type 4 library.
-type iso14443Adapter struct {
+// ISO14443Tag wraps an ISO14443-4 Type A tag with NFC operations.
+//
+// ISO14443Tag represents NFC Forum Type 4 tags which use ISO7816-4 APDUs
+// for communication. These tags are commonly used in contactless payment
+// and high-security applications.
+//
+// Example:
+//
+//	tags, _ := device.GetTags()
+//	for _, tag := range tags {
+//	    if iso14443, ok := tag.(*ISO14443Tag); ok {
+//	        data, _ := iso14443.ReadData()
+//	    }
+//	}
+type ISO14443Tag struct {
 	device      Device // The underlying NFC device, needed for Transceive
 	uid         string
 	tagType     TagType // Changed from string to TagType
@@ -62,13 +74,10 @@ type iso14443Adapter struct {
 	// Add other necessary fields, e.g., connection details, selected application AID
 }
 
-// Ensure iso14443Adapter implements ISO14443Tag (and thus TagInterface)
-var _ ISO14443Tag = (*iso14443Adapter)(nil)
-
-// newISO14443Adapter creates a new adapter for a Type 4 tag.
+// NewISO14443Tag creates a new Type 4 tag wrapper.
 // It requires the underlying nfc.Target (which should be an *nfc.ISO14443aTarget)
 // and the Device for transceiving commands.
-func newISO14443Adapter(target nfc.Target, device Device) *iso14443Adapter {
+func NewISO14443Tag(target nfc.Target, device Device) *ISO14443Tag {
 	uid := "unknown"
 	if isoATarget, ok := target.(*nfc.ISO14443aTarget); ok {
 		// Correctly access UID from ISO14443aTarget
@@ -78,7 +87,7 @@ func newISO14443Adapter(target nfc.Target, device Device) *iso14443Adapter {
 	} else if generalTarget, ok := target.(interface{ UID() string }); ok { // Fallback for other nfc.Target types if they have UID()
 		uid = generalTarget.UID()
 	}
-	return &iso14443Adapter{
+	return &ISO14443Tag{
 		rawTarget:   target,
 		device:      device,
 		uid:         uid,
@@ -88,24 +97,24 @@ func newISO14443Adapter(target nfc.Target, device Device) *iso14443Adapter {
 }
 
 // UID returns the Unique Identifier of the tag.
-func (i *iso14443Adapter) UID() string {
+func (i *ISO14443Tag) UID() string {
 	return i.uid
 }
 
 // Type returns the type of the tag (e.g., "Type4").
-func (i *iso14443Adapter) Type() string {
+func (i *ISO14443Tag) Type() string {
 	return string(i.tagType) // Convert TagType to string for the interface method
 }
 
 // NumericType returns a numeric representation of the tag type.
-func (i *iso14443Adapter) NumericType() int {
+func (i *ISO14443Tag) NumericType() int {
 	return i.numericType
 }
 
 // Connect establishes a connection to the tag.
 // For Type 4 tags, this might involve selecting the NDEF application.
 // For now, it's a placeholder.
-func (i *iso14443Adapter) Connect() error {
+func (i *ISO14443Tag) Connect() error {
 	log.Printf("Connecting to Type 4 tag: %s", i.UID())
 
 	// Select NDEF Application (AID D2760000850101)
@@ -131,7 +140,7 @@ func (i *iso14443Adapter) Connect() error {
 // Disconnect performs any necessary cleanup or session termination with the tag.
 // For Type 4 tags, this is often a no-op at this level unless specific session
 // management commands were used.
-func (i *iso14443Adapter) Disconnect() error {
+func (i *ISO14443Tag) Disconnect() error {
 	log.Printf("Disconnecting from Type 4 tag: %s", i.UID())
 	// For many Type 4 tags and NDEF operations, an explicit deselect of the application
 	// is not strictly necessary, as the session often ends when the tag is removed
@@ -143,7 +152,7 @@ func (i *iso14443Adapter) Disconnect() error {
 }
 
 // Transceive sends raw APDU commands to the Type 4 tag and receives the response.
-func (i *iso14443Adapter) Transceive(txData []byte) ([]byte, error) {
+func (i *ISO14443Tag) Transceive(txData []byte) ([]byte, error) {
 	if i.device == nil {
 		return nil, fmt.Errorf("no device available for transceive operation on tag %s", i.uid)
 	}
@@ -170,7 +179,7 @@ func (i *iso14443Adapter) Transceive(txData []byte) ([]byte, error) {
 
 // ReadData for ISO14443Tag is intended to read NDEF data.
 // Implementation will involve APDU commands for NDEF app selection, file selection, and reading.
-func (i *iso14443Adapter) ReadData() ([]byte, error) {
+func (i *ISO14443Tag) ReadData() ([]byte, error) {
 	log.Printf("ReadData (NDEF) called on Type 4 tag %s", i.UID())
 
 	// 1. Select NDEF Application (AID D2760000850101) - MOVED TO Connect()
@@ -424,7 +433,7 @@ func (i *iso14443Adapter) ReadData() ([]byte, error) {
 
 // WriteData for ISO14443Tag is intended to write NDEF data.
 // Implementation will involve APDU commands similar to ReadData but using UpdateBinary.
-func (i *iso14443Adapter) WriteData(data []byte) error {
+func (i *ISO14443Tag) WriteData(data []byte) error {
 	log.Printf("WriteData (NDEF) called on Type 4 tag %s with %d bytes", i.UID(), len(data))
 
 	// 0. Preliminary checks
@@ -632,7 +641,7 @@ func (i *iso14443Adapter) WriteData(data []byte) error {
 	return nil
 }
 
-func (i *iso14443Adapter) IsWritable() (bool, error) {
+func (i *ISO14443Tag) IsWritable() (bool, error) {
 	log.Printf("IsWritable called on Type 4 tag %s", i.UID())
 
 	// Select NDEF Application (already done in Connect, but ensure we're connected)
@@ -688,7 +697,7 @@ func (i *iso14443Adapter) IsWritable() (bool, error) {
 	return false, fmt.Errorf("IsWritable: NDEF File Control TLV (Tag 0x04) not found in CC file")
 }
 
-func (i *iso14443Adapter) CanMakeReadOnly() (bool, error) {
+func (i *ISO14443Tag) CanMakeReadOnly() (bool, error) {
 	log.Printf("CanMakeReadOnly called on Type 4 tag %s", i.UID())
 
 	// To make a tag read-only, we need to check:
@@ -768,7 +777,7 @@ func (i *iso14443Adapter) CanMakeReadOnly() (bool, error) {
 	return false, fmt.Errorf("CanMakeReadOnly: NDEF File Control TLV (Tag 0x04) not found in CC file")
 }
 
-func (i *iso14443Adapter) MakeReadOnly() error {
+func (i *ISO14443Tag) MakeReadOnly() error {
 	log.Printf("MakeReadOnly called on Type 4 tag %s", i.UID())
 
 	// To make the tag read-only, we need to update the WriteAccess byte in the

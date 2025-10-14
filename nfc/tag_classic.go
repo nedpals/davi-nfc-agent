@@ -8,24 +8,34 @@ import (
 	"github.com/clausecker/freefare"
 )
 
-// classicAdapter implements ClassicTag for MIFARE Classic tags.
-type classicAdapter struct {
+// ClassicTag wraps a MIFARE Classic tag with NFC operations.
+//
+// ClassicTag provides low-level sector and block access for MIFARE Classic
+// tags (1K and 4K variants).
+//
+// Example:
+//
+//	tags, _ := device.GetTags()
+//	for _, tag := range tags {
+//	    if classic, ok := tag.(*ClassicTag); ok {
+//	        key := [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+//	        data, _ := classic.Read(1, 0, key[:], 0x60)
+//	    }
+//	}
+type ClassicTag struct {
 	tag freefare.ClassicTag
 }
 
-// Ensure classicAdapter implements ClassicTag
-var _ ClassicTag = (*classicAdapter)(nil)
-
-// newClassicAdapter creates a new adapter for a MIFARE Classic tag.
-func newClassicAdapter(tag freefare.ClassicTag) *classicAdapter {
-	return &classicAdapter{tag: tag}
+// NewClassicTag creates a new Classic tag wrapper.
+func NewClassicTag(tag freefare.ClassicTag) *ClassicTag {
+	return &ClassicTag{tag: tag}
 }
 
-func (c *classicAdapter) UID() string {
+func (c *ClassicTag) UID() string {
 	return c.tag.UID()
 }
 
-func (c *classicAdapter) Type() string {
+func (c *ClassicTag) Type() string {
 	switch c.tag.Type() {
 	case freefare.Classic1k:
 		return "MIFARE Classic 1K"
@@ -36,80 +46,80 @@ func (c *classicAdapter) Type() string {
 	}
 }
 
-func (c *classicAdapter) NumericType() int {
+func (c *ClassicTag) NumericType() int {
 	return int(c.tag.Type())
 }
 
-func (c *classicAdapter) GetFreefareTag() freefare.Tag {
+func (c *ClassicTag) GetFreefareTag() freefare.Tag {
 	return c.tag
 }
 
-func (c *classicAdapter) Connect() error {
+func (c *ClassicTag) Connect() error {
 	return c.tag.Connect()
 }
 
-func (c *classicAdapter) Disconnect() error {
+func (c *ClassicTag) Disconnect() error {
 	return c.tag.Disconnect()
 }
 
-func (c *classicAdapter) Transceive(data []byte) ([]byte, error) {
+func (c *ClassicTag) Transceive(data []byte) ([]byte, error) {
 	return nil, fmt.Errorf("Transceive not directly supported for classicAdapter; use Read/Write or device-level Transceive")
 }
 
-func (c *classicAdapter) Read(sector, block uint8, key []byte, keyType int) ([]byte, error) {
+func (c *ClassicTag) Read(sector, block uint8, key []byte, keyType int) ([]byte, error) {
 	if len(key) != 6 {
-		return nil, fmt.Errorf("classicAdapter.Read: key length must be 6 bytes, got %d", len(key))
+		return nil, fmt.Errorf("ClassicTag.Read: key length must be 6 bytes, got %d", len(key))
 	}
 	var keyArray [6]byte
 	copy(keyArray[:], key)
 
 	if err := c.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("classicAdapter.Read connect error: %w", err)
+		return nil, fmt.Errorf("ClassicTag.Read connect error: %w", err)
 	}
 	defer c.tag.Disconnect()
 
 	trailerBlockNum := freefare.ClassicSectorLastBlock(sector)
 	errAuth := c.tag.Authenticate(trailerBlockNum, keyArray, keyType)
 	if errAuth != nil {
-		return nil, fmt.Errorf("classicAdapter.Read authentication error for sector %d (auth block %d): %w", sector, trailerBlockNum, errAuth)
+		return nil, fmt.Errorf("ClassicTag.Read authentication error for sector %d (auth block %d): %w", sector, trailerBlockNum, errAuth)
 	}
 
 	absoluteBlockNumber, errCalc := ClassicSectorBlockToLinear(c.NumericType(), sector, block)
 	if errCalc != nil {
-		return nil, fmt.Errorf("classicAdapter.Read error calculating absolute block number for sector %d, block %d: %w", sector, block, errCalc)
+		return nil, fmt.Errorf("ClassicTag.Read error calculating absolute block number for sector %d, block %d: %w", sector, block, errCalc)
 	}
 
 	data, errRead := c.tag.ReadBlock(absoluteBlockNumber)
 	if errRead != nil {
-		return nil, fmt.Errorf("classicAdapter.Read error reading block %d (sector %d, rel block %d): %w", absoluteBlockNumber, sector, block, errRead)
+		return nil, fmt.Errorf("ClassicTag.Read error reading block %d (sector %d, rel block %d): %w", absoluteBlockNumber, sector, block, errRead)
 	}
 	return data[:], nil
 }
 
-func (c *classicAdapter) Write(sector, block uint8, data []byte, key []byte, keyType int) error {
+func (c *ClassicTag) Write(sector, block uint8, data []byte, key []byte, keyType int) error {
 	if len(data) != 16 {
-		return fmt.Errorf("classicAdapter.Write error: data length must be 16 bytes, got %d", len(data))
+		return fmt.Errorf("ClassicTag.Write error: data length must be 16 bytes, got %d", len(data))
 	}
 	if len(key) != 6 {
-		return fmt.Errorf("classicAdapter.Write: key length must be 6 bytes, got %d", len(key))
+		return fmt.Errorf("ClassicTag.Write: key length must be 6 bytes, got %d", len(key))
 	}
 	var keyArray [6]byte
 	copy(keyArray[:], key)
 
 	if err := c.tag.Connect(); err != nil {
-		return fmt.Errorf("classicAdapter.Write connect error: %w", err)
+		return fmt.Errorf("ClassicTag.Write connect error: %w", err)
 	}
 	defer c.tag.Disconnect()
 
 	trailerBlockNum := freefare.ClassicSectorLastBlock(sector)
 	errAuth := c.tag.Authenticate(trailerBlockNum, keyArray, keyType)
 	if errAuth != nil {
-		return fmt.Errorf("classicAdapter.Write authentication error for sector %d (auth block %d): %w", sector, trailerBlockNum, errAuth)
+		return fmt.Errorf("ClassicTag.Write authentication error for sector %d (auth block %d): %w", sector, trailerBlockNum, errAuth)
 	}
 
 	absoluteBlockNumber, errCalc := ClassicSectorBlockToLinear(c.NumericType(), sector, block)
 	if errCalc != nil {
-		return fmt.Errorf("classicAdapter.Write error calculating absolute block number for sector %d, block %d: %w", sector, block, errCalc)
+		return fmt.Errorf("ClassicTag.Write error calculating absolute block number for sector %d, block %d: %w", sector, block, errCalc)
 	}
 
 	var dataArray [16]byte
@@ -117,14 +127,14 @@ func (c *classicAdapter) Write(sector, block uint8, data []byte, key []byte, key
 
 	errWrite := c.tag.WriteBlock(absoluteBlockNumber, dataArray)
 	if errWrite != nil {
-		return fmt.Errorf("classicAdapter.Write error writing to block %d (sector %d, rel block %d): %w", absoluteBlockNumber, sector, block, errWrite)
+		return fmt.Errorf("ClassicTag.Write error writing to block %d (sector %d, rel block %d): %w", absoluteBlockNumber, sector, block, errWrite)
 	}
 	return nil
 }
 
-func (c *classicAdapter) ReadData() ([]byte, error) {
+func (c *ClassicTag) ReadData() ([]byte, error) {
 	if err := c.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("classicAdapter.ReadData connect error: %w", err)
+		return nil, fmt.Errorf("ClassicTag.ReadData connect error: %w", err)
 	}
 	defer c.tag.Disconnect()
 
@@ -136,19 +146,19 @@ func (c *classicAdapter) ReadData() ([]byte, error) {
 		}
 		trailerBlockNum := freefare.ClassicSectorLastBlock(madSector)
 		if errAuth := c.tag.Authenticate(trailerBlockNum, FactoryKey, int(freefare.KeyA)); errAuth == nil {
-			log.Printf("classicAdapter.ReadData: MAD read failed (%v), but factory key auth succeeded. Assuming factory mode.", errMad)
+			log.Printf("ClassicTag.ReadData: MAD read failed (%v), but factory key auth succeeded. Assuming factory mode.", errMad)
 			return nil, nil
 		}
-		return nil, fmt.Errorf("classicAdapter.ReadData MAD read error: %w", errMad)
+		return nil, fmt.Errorf("ClassicTag.ReadData MAD read error: %w", errMad)
 	}
 
 	buffer := make([]byte, 4096)
 	bufLen, errReadApp := c.tag.ReadApplication(mad, freefare.MadNFCForumAid, buffer, PublicKey, int(freefare.KeyA))
 	if errReadApp != nil {
-		return nil, fmt.Errorf("classicAdapter.ReadData read NDEF application error: %w", errReadApp)
+		return nil, fmt.Errorf("ClassicTag.ReadData read NDEF application error: %w", errReadApp)
 	}
 	if bufLen == 0 {
-		log.Println("classicAdapter.ReadData: No data in NDEF application.")
+		log.Println("ClassicTag.ReadData: No data in NDEF application.")
 		return nil, nil
 	}
 
@@ -201,13 +211,13 @@ func (c *classicAdapter) ReadData() ([]byte, error) {
 		}
 		offset = valueStart + msgLength
 	}
-	log.Println("classicAdapter.ReadData: No NDEF Message TLV (type 0x03) found.")
+	log.Println("ClassicTag.ReadData: No NDEF Message TLV (type 0x03) found.")
 	return nil, nil
 }
 
-func (c *classicAdapter) IsWritable() (bool, error) {
+func (c *ClassicTag) IsWritable() (bool, error) {
 	if err := c.tag.Connect(); err != nil {
-		return false, fmt.Errorf("classicAdapter.IsWritable connect error: %w", err)
+		return false, fmt.Errorf("ClassicTag.IsWritable connect error: %w", err)
 	}
 	defer c.tag.Disconnect()
 
@@ -258,9 +268,9 @@ func (c *classicAdapter) IsWritable() (bool, error) {
 	return false, nil // No writable blocks found
 }
 
-func (c *classicAdapter) CanMakeReadOnly() (bool, error) {
+func (c *ClassicTag) CanMakeReadOnly() (bool, error) {
 	if err := c.tag.Connect(); err != nil {
-		return false, fmt.Errorf("classicAdapter.CanMakeReadOnly connect error: %w", err)
+		return false, fmt.Errorf("ClassicTag.CanMakeReadOnly connect error: %w", err)
 	}
 	defer c.tag.Disconnect()
 
@@ -307,9 +317,9 @@ func (c *classicAdapter) CanMakeReadOnly() (bool, error) {
 	return false, nil
 }
 
-func (c *classicAdapter) MakeReadOnly() error {
+func (c *ClassicTag) MakeReadOnly() error {
 	if err := c.tag.Connect(); err != nil {
-		return fmt.Errorf("classicAdapter.MakeReadOnly connect error: %w", err)
+		return fmt.Errorf("ClassicTag.MakeReadOnly connect error: %w", err)
 	}
 	defer c.tag.Disconnect()
 
@@ -350,16 +360,16 @@ func (c *classicAdapter) MakeReadOnly() error {
 			return fmt.Errorf("MakeReadOnly: failed to write read-only trailer for sector %d: %w", currentSector, err)
 		}
 
-		log.Printf("classicAdapter.MakeReadOnly: Locked sector %d to read-only", currentSector)
+		log.Printf("ClassicTag.MakeReadOnly: Locked sector %d to read-only", currentSector)
 	}
 
-	log.Println("classicAdapter.MakeReadOnly: Tag successfully locked to read-only mode")
+	log.Println("ClassicTag.MakeReadOnly: Tag successfully locked to read-only mode")
 	return nil
 }
 
-func (c *classicAdapter) WriteData(data []byte) error {
+func (c *ClassicTag) WriteData(data []byte) error {
 	if err := c.tag.Connect(); err != nil {
-		return fmt.Errorf("classicAdapter.WriteData connect error: %w", err)
+		return fmt.Errorf("ClassicTag.WriteData connect error: %w", err)
 	}
 	defer c.tag.Disconnect()
 
@@ -367,7 +377,7 @@ func (c *classicAdapter) WriteData(data []byte) error {
 	authErr := c.tag.Authenticate(sector0TrailerBlock, FactoryKey, int(freefare.KeyA))
 
 	if authErr == nil {
-		log.Println("classicAdapter.WriteData: Card in factory mode. Initializing for NDEF...")
+		log.Println("ClassicTag.WriteData: Card in factory mode. Initializing for NDEF...")
 		maxSectorIdx := 15
 		if c.NumericType() == int(freefare.Classic4k) {
 			maxSectorIdx = 39
@@ -395,15 +405,15 @@ func (c *classicAdapter) WriteData(data []byte) error {
 			if errWrite := c.tag.WriteBlock(currentSectorTrailerBlock, trailerData); errWrite != nil {
 				return fmt.Errorf("WriteData: failed to write trailer for sector %d: %w", currentSector, errWrite)
 			}
-			log.Printf("classicAdapter.WriteData: Initialized trailer for sector %d", currentSector)
+			log.Printf("ClassicTag.WriteData: Initialized trailer for sector %d", currentSector)
 		}
-		log.Println("classicAdapter.WriteData: Card initialized from factory mode.")
+		log.Println("ClassicTag.WriteData: Card initialized from factory mode.")
 	} else {
-		log.Printf("classicAdapter.WriteData: Card not in factory mode (auth error: %v) or already initialized.", authErr)
+		log.Printf("ClassicTag.WriteData: Card not in factory mode (auth error: %v) or already initialized.", authErr)
 	}
 
 	if len(data) > 0 {
-		log.Printf("classicAdapter.WriteData: Attempting to write NDEF data (%d bytes)...", len(data))
+		log.Printf("ClassicTag.WriteData: Attempting to write NDEF data (%d bytes)...", len(data))
 
 		ndefMsgLen := len(data)
 		var tlvPayload []byte
@@ -476,9 +486,9 @@ func (c *classicAdapter) WriteData(data []byte) error {
 			return fmt.Errorf("WriteData NDEF: failed to write all NDEF data. Wrote %d of %d bytes. Card may be full or some sectors un-writable", bytesWritten, totalBytesToWrite)
 		}
 
-		log.Printf("classicAdapter.WriteData: Successfully wrote %d bytes of NDEF TLV data.", bytesWritten)
+		log.Printf("ClassicTag.WriteData: Successfully wrote %d bytes of NDEF TLV data.", bytesWritten)
 	} else if data != nil {
-		log.Printf("classicAdapter.WriteData: Received empty data. Writing empty NDEF message TLV + Terminator.")
+		log.Printf("ClassicTag.WriteData: Received empty data. Writing empty NDEF message TLV + Terminator.")
 		emptyNdefPayload := []byte{0x03, 0x00, 0xFE}
 
 		bytesWritten := 0
@@ -525,7 +535,7 @@ func (c *classicAdapter) WriteData(data []byte) error {
 		if bytesWritten < totalBytesToWrite {
 			return fmt.Errorf("WriteData NDEF (empty): failed to write all data. Wrote %d of %d bytes", bytesWritten, totalBytesToWrite)
 		}
-		log.Printf("classicAdapter.WriteData: Successfully wrote empty NDEF message.")
+		log.Printf("ClassicTag.WriteData: Successfully wrote empty NDEF message.")
 	}
 
 	if authErr != nil && data == nil {

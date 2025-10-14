@@ -8,57 +8,67 @@ import (
 	"github.com/clausecker/freefare"
 )
 
-// desfireAdapter implements DESFireTag for MIFARE DESFire tags.
-type desfireAdapter struct {
+// DESFireTag wraps a MIFARE DESFire tag with NFC operations.
+//
+// DESFireTag provides access to DESFire-specific features like applications,
+// files, and authentication with various key types (DES, 3DES, AES).
+//
+// Example:
+//
+//	tags, _ := device.GetTags()
+//	for _, tag := range tags {
+//	    if desfire, ok := tag.(*DESFireTag); ok {
+//	        version, _ := desfire.Version()
+//	        apps, _ := desfire.ApplicationIds()
+//	    }
+//	}
+type DESFireTag struct {
 	tag freefare.DESFireTag
 }
 
-// Ensure desfireAdapter implements DESFireTag
-var _ DESFireTag = (*desfireAdapter)(nil)
-
-// newDESFireAdapter creates a new adapter for a MIFARE DESFire tag.
-func newDESFireAdapter(tag freefare.DESFireTag) *desfireAdapter {
-	return &desfireAdapter{tag: tag}
+// NewDESFireTag creates a new DESFire tag wrapper.
+func NewDESFireTag(tag freefare.DESFireTag) *DESFireTag {
+	return &DESFireTag{tag: tag}
 }
 
-func (d *desfireAdapter) UID() string {
+func (d *DESFireTag) UID() string {
 	return d.tag.UID()
 }
 
-func (d *desfireAdapter) Type() string {
+func (d *DESFireTag) Type() string {
 	return fmt.Sprintf("MIFARE DESFire (type %d)", d.tag.Type())
 }
 
-func (d *desfireAdapter) NumericType() int {
+func (d *DESFireTag) NumericType() int {
 	return int(d.tag.Type())
 }
 
-func (d *desfireAdapter) GetFreefareTag() freefare.Tag {
+func (d *DESFireTag) GetFreefareTag() freefare.Tag {
 	return d.tag
 }
 
-func (d *desfireAdapter) Connect() error {
+func (d *DESFireTag) Connect() error {
 	return d.tag.Connect()
 }
 
-func (d *desfireAdapter) Disconnect() error {
+func (d *DESFireTag) Disconnect() error {
 	return d.tag.Disconnect()
 }
 
-func (d *desfireAdapter) Transceive(data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("Transceive not directly supported for desfireAdapter; use DESFire-specific commands")
+func (d *DESFireTag) Transceive(data []byte) ([]byte, error) {
+	return nil, fmt.Errorf("Transceive not directly supported for DESFireTag; use DESFire-specific commands")
 }
 
 // Version returns the DESFire version information as a byte slice.
-func (d *desfireAdapter) Version() ([]byte, error) {
+func (d *DESFireTag) Version() ([]byte, error) {
 	if err := d.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("desfireAdapter.Version connect error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.Version connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
 	versionInfo, err := d.tag.Version()
 	if err != nil {
-		return nil, fmt.Errorf("desfireAdapter.Version error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.Version error: %w", err)
 	}
 
 	// Pack version info into byte slice
@@ -85,15 +95,15 @@ func (d *desfireAdapter) Version() ([]byte, error) {
 }
 
 // ApplicationIds returns the list of application IDs on the DESFire card.
-func (d *desfireAdapter) ApplicationIds() ([][]byte, error) {
+func (d *DESFireTag) ApplicationIds() ([][]byte, error) {
 	if err := d.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("desfireAdapter.ApplicationIds connect error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.ApplicationIds connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
 	aids, err := d.tag.ApplicationIds()
 	if err != nil {
-		return nil, fmt.Errorf("desfireAdapter.ApplicationIds error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.ApplicationIds error: %w", err)
 	}
 
 	result := make([][]byte, len(aids))
@@ -104,13 +114,13 @@ func (d *desfireAdapter) ApplicationIds() ([][]byte, error) {
 }
 
 // SelectApplication selects an application on the DESFire card.
-func (d *desfireAdapter) SelectApplication(aid []byte) error {
+func (d *DESFireTag) SelectApplication(aid []byte) error {
 	if len(aid) != 3 {
-		return fmt.Errorf("desfireAdapter.SelectApplication: AID must be 3 bytes, got %d", len(aid))
+		return fmt.Errorf("DESFireTag.SelectApplication: AID must be 3 bytes, got %d", len(aid))
 	}
 
 	if err := d.tag.Connect(); err != nil {
-		return fmt.Errorf("desfireAdapter.SelectApplication connect error: %w", err)
+		return fmt.Errorf("DESFireTag.SelectApplication connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
@@ -119,15 +129,15 @@ func (d *desfireAdapter) SelectApplication(aid []byte) error {
 	desFireAid := freefare.DESFireAid(aidArray)
 
 	if err := d.tag.SelectApplication(desFireAid); err != nil {
-		return fmt.Errorf("desfireAdapter.SelectApplication error: %w", err)
+		return fmt.Errorf("DESFireTag.SelectApplication error: %w", err)
 	}
 	return nil
 }
 
 // Authenticate authenticates with a key on the DESFire card.
-func (d *desfireAdapter) Authenticate(keyNo byte, key []byte) error {
+func (d *DESFireTag) Authenticate(keyNo byte, key []byte) error {
 	if err := d.tag.Connect(); err != nil {
-		return fmt.Errorf("desfireAdapter.Authenticate connect error: %w", err)
+		return fmt.Errorf("DESFireTag.Authenticate connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
@@ -148,62 +158,62 @@ func (d *desfireAdapter) Authenticate(keyNo byte, key []byte) error {
 		copy(keyArray[:], key)
 		desFireKey = freefare.NewDESFire3K3DESKey(keyArray)
 	default:
-		return fmt.Errorf("desfireAdapter.Authenticate: invalid key length %d (must be 8, 16, or 24)", len(key))
+		return fmt.Errorf("DESFireTag.Authenticate: invalid key length %d (must be 8, 16, or 24)", len(key))
 	}
 
 	if err := d.tag.Authenticate(keyNo, *desFireKey); err != nil {
-		return fmt.Errorf("desfireAdapter.Authenticate error: %w", err)
+		return fmt.Errorf("DESFireTag.Authenticate error: %w", err)
 	}
 	return nil
 }
 
 // FileIds returns the list of file IDs in the currently selected application.
-func (d *desfireAdapter) FileIds() ([]byte, error) {
+func (d *DESFireTag) FileIds() ([]byte, error) {
 	if err := d.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("desfireAdapter.FileIds connect error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.FileIds connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
 	fileIds, err := d.tag.FileIds()
 	if err != nil {
-		return nil, fmt.Errorf("desfireAdapter.FileIds error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.FileIds error: %w", err)
 	}
 	return fileIds, nil
 }
 
 // ReadFile reads data from a file on the DESFire card.
-func (d *desfireAdapter) ReadFile(fileNo byte, offset int64, length int) ([]byte, error) {
+func (d *DESFireTag) ReadFile(fileNo byte, offset int64, length int) ([]byte, error) {
 	if err := d.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("desfireAdapter.ReadFile connect error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.ReadFile connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
 	buf := make([]byte, length)
 	n, err := d.tag.ReadData(fileNo, offset, buf)
 	if err != nil {
-		return nil, fmt.Errorf("desfireAdapter.ReadFile error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.ReadFile error: %w", err)
 	}
 	return buf[:n], nil
 }
 
 // WriteFile writes data to a file on the DESFire card.
-func (d *desfireAdapter) WriteFile(fileNo byte, offset int64, data []byte) error {
+func (d *DESFireTag) WriteFile(fileNo byte, offset int64, data []byte) error {
 	if err := d.tag.Connect(); err != nil {
-		return fmt.Errorf("desfireAdapter.WriteFile connect error: %w", err)
+		return fmt.Errorf("DESFireTag.WriteFile connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
 	_, err := d.tag.WriteData(fileNo, offset, data)
 	if err != nil {
-		return fmt.Errorf("desfireAdapter.WriteFile error: %w", err)
+		return fmt.Errorf("DESFireTag.WriteFile error: %w", err)
 	}
 	return nil
 }
 
 // ReadData reads NDEF data from the DESFire card.
-func (d *desfireAdapter) ReadData() ([]byte, error) {
+func (d *DESFireTag) ReadData() ([]byte, error) {
 	if err := d.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("desfireAdapter.ReadData connect error: %w", err)
+		return nil, fmt.Errorf("DESFireTag.ReadData connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
@@ -212,7 +222,7 @@ func (d *desfireAdapter) ReadData() ([]byte, error) {
 
 	// Try to select NDEF application
 	if err := d.tag.SelectApplication(ndefAid); err != nil {
-		log.Printf("desfireAdapter.ReadData: NDEF application not found or error: %v", err)
+		log.Printf("DESFireTag.ReadData: NDEF application not found or error: %v", err)
 		return nil, nil
 	}
 
@@ -220,7 +230,7 @@ func (d *desfireAdapter) ReadData() ([]byte, error) {
 	// First try file 2 (capability container is usually file 1)
 	fileIds, err := d.tag.FileIds()
 	if err != nil || len(fileIds) == 0 {
-		log.Printf("desfireAdapter.ReadData: no files found in NDEF application")
+		log.Printf("DESFireTag.ReadData: no files found in NDEF application")
 		return nil, nil
 	}
 
@@ -243,13 +253,13 @@ func (d *desfireAdapter) ReadData() ([]byte, error) {
 	lenBuf := make([]byte, 2)
 	_, err = d.tag.ReadData(ndefFileNo, 0, lenBuf)
 	if err != nil {
-		log.Printf("desfireAdapter.ReadData: error reading NDEF length: %v", err)
+		log.Printf("DESFireTag.ReadData: error reading NDEF length: %v", err)
 		return nil, nil
 	}
 
 	ndefLen := binary.BigEndian.Uint16(lenBuf)
 	if ndefLen == 0 {
-		log.Println("desfireAdapter.ReadData: NDEF message is empty")
+		log.Println("DESFireTag.ReadData: NDEF message is empty")
 		return nil, nil
 	}
 
@@ -257,16 +267,16 @@ func (d *desfireAdapter) ReadData() ([]byte, error) {
 	buf := make([]byte, ndefLen)
 	n, err := d.tag.ReadData(ndefFileNo, 2, buf)
 	if err != nil {
-		return nil, fmt.Errorf("desfireAdapter.ReadData: error reading NDEF message: %w", err)
+		return nil, fmt.Errorf("DESFireTag.ReadData: error reading NDEF message: %w", err)
 	}
 
 	return buf[:n], nil
 }
 
 // WriteData writes NDEF data to the DESFire card.
-func (d *desfireAdapter) WriteData(data []byte) error {
+func (d *DESFireTag) WriteData(data []byte) error {
 	if err := d.tag.Connect(); err != nil {
-		return fmt.Errorf("desfireAdapter.WriteData connect error: %w", err)
+		return fmt.Errorf("DESFireTag.WriteData connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
@@ -275,7 +285,7 @@ func (d *desfireAdapter) WriteData(data []byte) error {
 
 	// Try to select NDEF application
 	if err := d.tag.SelectApplication(ndefAid); err != nil {
-		return fmt.Errorf("desfireAdapter.WriteData: NDEF application not found: %w", err)
+		return fmt.Errorf("DESFireTag.WriteData: NDEF application not found: %w", err)
 	}
 
 	// Write to standard NDEF file (usually file 2)
@@ -287,24 +297,24 @@ func (d *desfireAdapter) WriteData(data []byte) error {
 
 	// Write length
 	if _, err := d.tag.WriteData(ndefFileNo, 0, lenBuf); err != nil {
-		return fmt.Errorf("desfireAdapter.WriteData: error writing NDEF length: %w", err)
+		return fmt.Errorf("DESFireTag.WriteData: error writing NDEF length: %w", err)
 	}
 
 	// Write NDEF message
 	if len(data) > 0 {
 		if _, err := d.tag.WriteData(ndefFileNo, 2, data); err != nil {
-			return fmt.Errorf("desfireAdapter.WriteData: error writing NDEF message: %w", err)
+			return fmt.Errorf("DESFireTag.WriteData: error writing NDEF message: %w", err)
 		}
 	}
 
-	log.Printf("desfireAdapter.WriteData: successfully wrote %d bytes", len(data))
+	log.Printf("DESFireTag.WriteData: successfully wrote %d bytes", len(data))
 	return nil
 }
 
 // IsWritable checks if the DESFire tag has a writable NDEF application.
-func (d *desfireAdapter) IsWritable() (bool, error) {
+func (d *DESFireTag) IsWritable() (bool, error) {
 	if err := d.tag.Connect(); err != nil {
-		return false, fmt.Errorf("desfireAdapter.IsWritable connect error: %w", err)
+		return false, fmt.Errorf("DESFireTag.IsWritable connect error: %w", err)
 	}
 	defer d.tag.Disconnect()
 
@@ -327,14 +337,14 @@ func (d *desfireAdapter) IsWritable() (bool, error) {
 }
 
 // CanMakeReadOnly checks if the DESFire tag can be made read-only.
-func (d *desfireAdapter) CanMakeReadOnly() (bool, error) {
+func (d *DESFireTag) CanMakeReadOnly() (bool, error) {
 	// DESFire read-only functionality depends on application-level permissions
 	// and is more complex than Classic tags. For now, return false.
 	return false, nil
 }
 
 // MakeReadOnly makes the DESFire tag read-only.
-func (d *desfireAdapter) MakeReadOnly() error {
+func (d *DESFireTag) MakeReadOnly() error {
 	// DESFire read-only functionality would require changing application-level
 	// access rights, which is complex and card-specific. Not implemented yet.
 	return fmt.Errorf("MakeReadOnly not yet implemented for DESFire tags")
