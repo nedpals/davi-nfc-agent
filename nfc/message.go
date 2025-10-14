@@ -374,3 +374,92 @@ func (b *NDEFMessageBuilder) MustBuild() *NDEFMessage {
 	}
 	return msg
 }
+
+// ToBuilder converts a low-level NDEFMessage into a high-level NDEFMessageBuilder.
+// This allows editing existing messages in a declarative way.
+//
+// Example:
+//
+//	// Read existing message
+//	msg, _ := card.ReadMessage()
+//	ndefMsg := msg.(*nfc.NDEFMessage)
+//
+//	// Convert to builder for editing
+//	builder := ndefMsg.ToBuilder()
+//	builder.Records = append(builder.Records, &nfc.NDEFText{Content: "New text"})
+//
+//	// Build and write back
+//	updated := builder.MustBuild()
+//	card.WriteMessage(updated)
+func (m *NDEFMessage) ToBuilder() *NDEFMessageBuilder {
+	builders := make([]NDEFRecordBuilder, 0, len(m.records))
+
+	for _, record := range m.records {
+		// Convert each NDEFRecord to its high-level equivalent
+		builder := recordToBuilder(record)
+		if builder != nil {
+			builders = append(builders, builder)
+		}
+	}
+
+	return &NDEFMessageBuilder{
+		Records: builders,
+	}
+}
+
+// recordToBuilder converts a low-level NDEFRecord to a high-level builder.
+// Returns nil for unrecognized record types.
+func recordToBuilder(record NDEFRecord) NDEFRecordBuilder {
+	switch record.TNF {
+	case 0x00: // Empty
+		return &NDEFEmpty{}
+
+	case 0x01: // Well Known
+		if len(record.Type) == 1 {
+			switch record.Type[0] {
+			case 'T': // Text Record
+				text, err := parseTextRecordPayload(record.Payload)
+				if err != nil {
+					return nil
+				}
+				// Try to extract language (first byte of payload has status + lang length)
+				lang := "en" // default
+				if len(record.Payload) > 0 {
+					statusByte := record.Payload[0]
+					langLen := int(statusByte & 0x3F) // Lower 6 bits
+					if langLen > 0 && len(record.Payload) > 1+langLen {
+						lang = string(record.Payload[1 : 1+langLen])
+					}
+				}
+				return &NDEFText{
+					Content:  text,
+					Language: lang,
+				}
+
+			case 'U': // URI Record
+				uri, err := parseURIRecordPayload(record.Payload)
+				if err != nil {
+					return nil
+				}
+				return &NDEFURI{
+					Content: uri,
+				}
+			}
+		}
+
+	case 0x02: // MIME Media Type
+		return &NDEFMIME{
+			Type: string(record.Type),
+			Data: record.Payload,
+		}
+
+	case 0x04: // External Type
+		return &NDEFExternal{
+			Domain: string(record.Type),
+			Data:   record.Payload,
+		}
+	}
+
+	// Unknown record type - return nil
+	return nil
+}
