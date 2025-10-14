@@ -110,10 +110,7 @@ func (r *NFCReader) StatusUpdates() <-chan DeviceStatus {
 
 // GetDeviceStatus returns the current device status by querying live state.
 func (r *NFCReader) GetDeviceStatus() DeviceStatus {
-	r.statusMux.RLock()
-	cardPres := r.cardPresent
-	r.statusMux.RUnlock()
-
+	cardPres := r.readCardPresent()
 	connected := r.deviceManager.HasDevice()
 	var message string
 	if connected {
@@ -136,6 +133,13 @@ func (r *NFCReader) GetDeviceStatus() DeviceStatus {
 	}
 }
 
+// readCardPresent safely reads the cardPresent flag.
+func (r *NFCReader) readCardPresent() bool {
+	r.statusMux.RLock()
+	defer r.statusMux.RUnlock()
+	return r.cardPresent
+}
+
 // handleDeviceCheck attempts to connect to the device if not connected and not in cooldown.
 func (r *NFCReader) handleDeviceCheck(retryCount *int) {
 	if !r.deviceManager.HasDevice() && !r.deviceManager.InCooldown() {
@@ -155,10 +159,7 @@ func (r *NFCReader) handleDeviceCheck(retryCount *int) {
 // handleCardCheck updates card presence based on cache status.
 func (r *NFCReader) handleCardCheck() {
 	currentCacheCardPresent := r.cache.IsCardPresent()
-	r.statusMux.RLock()
-	cardPres := r.cardPresent
-	r.statusMux.RUnlock()
-
+	cardPres := r.readCardPresent()
 	if cardPres != currentCacheCardPresent {
 		r.setCardPresent(currentCacheCardPresent)
 		if currentCacheCardPresent {
@@ -168,11 +169,6 @@ func (r *NFCReader) handleCardCheck() {
 			log.Println("Card presence changed via cache: REMOVED/timed out")
 		}
 	}
-}
-
-// handleCooldownEnd handles the end of a device cooldown period.
-func (r *NFCReader) handleCooldownEnd() {
-	r.deviceManager.EndCooldown(r.stopChan)
 }
 
 // handleDeviceErrors processes errors from getTags and determines recovery action.
@@ -270,7 +266,7 @@ func (r *NFCReader) worker() {
 			r.handleCardCheck()
 
 		case <-r.deviceManager.CooldownChannel():
-			r.handleCooldownEnd()
+			r.deviceManager.EndCooldown(r.stopChan)
 
 		default:
 			hasDev := r.deviceManager.HasDevice()
@@ -289,7 +285,7 @@ func (r *NFCReader) worker() {
 				continue
 			}
 
-			tags, err := r.getTags()
+			tags, err := r.GetTags()
 			if err != nil {
 				if !r.handleDeviceErrors(err, &retryCount) {
 					return // Stop signal received during error handling
@@ -415,7 +411,7 @@ func (r *NFCReader) WriteCardData(text string) error {
 			r.statusMux.Unlock()
 		}()
 
-		tags, err := r.getTags()
+		tags, err := r.GetTags()
 		if err != nil {
 			return fmt.Errorf("failed to get tags for writing: %w", err)
 		}
@@ -464,8 +460,8 @@ func (r *NFCReader) withTagOperation(operation func() error) error {
 	}
 }
 
-// getTags retrieves available tags from the connected NFC device.
-func (r *NFCReader) getTags() ([]Tag, error) {
+// GetTags retrieves available tags from the connected NFC device.
+func (r *NFCReader) GetTags() ([]Tag, error) {
 	dev := r.deviceManager.Device()
 	if dev == nil {
 		return nil, fmt.Errorf("getTags: no device connected or device is nil")
@@ -476,9 +472,4 @@ func (r *NFCReader) getTags() ([]Tag, error) {
 		return nil, fmt.Errorf("getTags: error from device.GetTags: %w", err)
 	}
 	return tags, nil
-}
-
-// GetTags is the public version of getTags for external access.
-func (r *NFCReader) GetTags() ([]Tag, error) {
-	return r.getTags()
 }
