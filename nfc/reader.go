@@ -524,74 +524,172 @@ func (r *NFCReader) writeData(card *Card, text string, opts WriteOptions) error 
 
 // WriteCardData attempts to write data to a detected NFC card using default options (overwrite mode).
 func (r *NFCReader) WriteCardData(text string) error {
-	return r.WriteCardDataWithOptions(text, WriteOptions{
+	msg := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFText{Content: text, Language: "en"},
+		},
+	}
+	ndefMsg := msg.MustBuild()
+	return r.WriteMessageWithOptions(ndefMsg, WriteOptions{
 		Overwrite: true,
 		Index:     -1,
 	})
 }
 
-func (r *NFCReader) WriteCardDataWithOptions(text string, opts WriteOptions) error {
+// prepareCardForWrite performs common validation and card retrieval for write operations.
+// It checks permissions, device availability, retrieves and validates the tag, and returns the Card.
+func (r *NFCReader) prepareCardForWrite() (*Card, error) {
+	// Check write permission
+	r.statusMux.RLock()
+	mode := r.mode
+	r.statusMux.RUnlock()
+
+	if mode == ModeReadOnly {
+		return nil, fmt.Errorf("reader is in read-only mode, write operations are not allowed")
+	}
+
+	if !r.deviceManager.HasDevice() {
+		return nil, fmt.Errorf("no NFC device connected")
+	}
+
+	r.statusMux.Lock()
+	r.isWriting = true
+	r.statusMux.Unlock()
+	// Note: caller must defer the isWriting = false cleanup
+
+	tags, err := r.GetTags()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tags for writing: %w", err)
+	}
+
+	if len(tags) == 0 {
+		return nil, fmt.Errorf("no card detected for writing")
+	}
+
+	// Multi-card guard: require exactly one tag
+	if len(tags) > 1 {
+		return nil, fmt.Errorf("multiple cards detected (%d tags), please present only one card for writing", len(tags))
+	}
+
+	tag := tags[0] // Safe because we checked len(tags) == 1
+
+	// Verify the single tag matches our cache (if cache has a card)
+	currentPresentCardUID := r.cache.GetLastScanned()
+	if currentPresentCardUID == "" {
+		// Cache is empty (e.g., first write in write-only mode)
+		log.Printf("Cache empty, using sole detected tag UID: %s", tag.UID())
+		r.cache.UpdateLastSeenTime(tag.UID())
+		r.cache.HasChanged(tag.UID())
+	} else if currentPresentCardUID != tag.UID() {
+		// Cache has a different card - unsafe to proceed
+		return nil, fmt.Errorf("tag UID mismatch: cache has %s but detected tag is %s", currentPresentCardUID, tag.UID())
+	}
+
+	// Create Card wrapper for the tag
+	card := NewCard(tag)
+	return card, nil
+}
+
+// writeMessageToCard performs the actual write operation with NDEF message handling.
+// Supports overwrite mode and partial update (append/replace at index).
+func (r *NFCReader) writeMessageToCard(card *Card, msg *NDEFMessage, opts WriteOptions) error {
+	log.Printf("writeMessageToCard (UID: %s, Type: %s): overwrite=%v, index=%d",
+		card.UID, card.Type, opts.Overwrite, opts.Index)
+
+	// Read current message to determine behavior
+	cachedMsg, cardReadErr := card.ReadMessage()
+	if cachedMsg == nil && cardReadErr == nil {
+		log.Printf("writeMessageToCard (UID: %s): card does not have NDEF data, using overwrite", card.UID)
+		opts.Overwrite = true
+	}
+
+	cachedNdef, isNDEF := cachedMsg.(*NDEFMessage)
+	if !isNDEF || len(cachedNdef.Records()) == 0 {
+		log.Printf("writeMessageToCard (UID: %s): card message is not NDEF, using overwrite", card.UID)
+		opts.Overwrite = true
+	}
+
+	if opts.Overwrite {
+		// Direct overwrite with provided message
+		data, err := msg.Encode()
+		if err != nil {
+			return fmt.Errorf("writeMessageToCard (UID: %s): error encoding message: %w", card.UID, err)
+		}
+
+		// If tag supports AdvancedWriter interface and ForceInitialize is set, use it
+		if opts.ForceInitialize {
+			if advWriter, ok := card.tag.(AdvancedWriter); ok {
+				tagOpts := TagWriteOptions{
+					ForceInitialize: opts.ForceInitialize,
+				}
+				if err := advWriter.WriteDataWithOptions(data, tagOpts); err != nil {
+					return fmt.Errorf("writeMessageToCard (UID: %s): error from WriteDataWithOptions: %w", card.UID, err)
+				}
+				log.Printf("writeMessageToCard (UID: %s): card write with ForceInitialize completed successfully.", card.UID)
+				return nil
+			}
+			log.Printf("writeMessageToCard (UID: %s): ForceInitialize requested but tag doesn't support AdvancedWriter, using standard write", card.UID)
+		}
+
+		// Standard write path
+		if err := card.WriteMessage(msg); err != nil {
+			return fmt.Errorf("writeMessageToCard (UID: %s): error from card.WriteMessage: %w", card.UID, err)
+		}
+
+		log.Printf("writeMessageToCard (UID: %s): card write completed successfully.", card.UID)
+		return nil
+	}
+
+	// Partial update mode: merge records from provided message into existing message
+	log.Printf("writeMessageToCard (UID: %s): attempting NDEF partial update", card.UID)
+
+	cachedMsgBuilder := cachedNdef.ToBuilder()
+	newMsgBuilder := msg.ToBuilder()
+
+	if opts.Index <= -1 || opts.Index >= len(cachedMsgBuilder.Records) {
+		// Append mode: add all new records
+		log.Printf("writeMessageToCard (UID: %s): appending %d new record(s)", card.UID, len(newMsgBuilder.Records))
+		cachedMsgBuilder.Records = append(cachedMsgBuilder.Records, newMsgBuilder.Records...)
+	} else {
+		// Replace mode: replace record at index with first new record
+		log.Printf("writeMessageToCard (UID: %s): replacing record at index %d", card.UID, opts.Index)
+		if len(newMsgBuilder.Records) > 0 {
+			cachedMsgBuilder.Records[opts.Index] = newMsgBuilder.Records[0]
+		}
+	}
+
+	// Build and write updated message
+	updatedMsg := cachedMsgBuilder.MustBuild()
+	card.Reset()
+	if err := card.WriteMessage(updatedMsg); err != nil {
+		log.Printf("writeMessageToCard (UID: %s): NDEF partial write failed: %v", card.UID, err)
+		return fmt.Errorf("writeMessageToCard (UID: %s): partial write failed: %w", card.UID, err)
+	}
+
+	log.Printf("writeMessageToCard (UID: %s): NDEF partial write succeeded", card.UID)
+	return nil
+}
+
+// WriteMessageWithOptions writes an NDEF message to a detected NFC card with options for record manipulation.
+func (r *NFCReader) WriteMessageWithOptions(msg *NDEFMessage, opts WriteOptions) error {
 	return r.withTagOperation(func() error {
-		// Check write permission
-		r.statusMux.RLock()
-		mode := r.mode
-		r.statusMux.RUnlock()
-
-		if mode == ModeReadOnly {
-			return fmt.Errorf("reader is in read-only mode, write operations are not allowed")
+		card, err := r.prepareCardForWrite()
+		if err != nil {
+			return err
 		}
 
-		if !r.deviceManager.HasDevice() {
-			return fmt.Errorf("no NFC device connected")
-		}
-
-		r.statusMux.Lock()
-		r.isWriting = true
-		r.statusMux.Unlock()
 		defer func() {
 			r.statusMux.Lock()
 			r.isWriting = false
 			r.statusMux.Unlock()
 		}()
 
-		tags, err := r.GetTags()
-		if err != nil {
-			return fmt.Errorf("failed to get tags for writing: %w", err)
-		}
-
-		if len(tags) == 0 {
-			return fmt.Errorf("no card detected for writing")
-		}
-
-		// Multi-card guard: require exactly one tag
-		if len(tags) > 1 {
-			return fmt.Errorf("multiple cards detected (%d tags), please present only one card for writing", len(tags))
-		}
-
-		tag := tags[0] // Safe because we checked len(tags) == 1
-
-		// Verify the single tag matches our cache (if cache has a card)
-		currentPresentCardUID := r.cache.GetLastScanned()
-		if currentPresentCardUID == "" {
-			// Cache is empty (e.g., first write in write-only mode)
-			// Since we have exactly one tag, it's safe to use it and populate cache
-			log.Printf("Cache empty, using sole detected tag UID: %s", tag.UID())
-			r.cache.UpdateLastSeenTime(tag.UID())
-			r.cache.HasChanged(tag.UID())
-		} else if currentPresentCardUID != tag.UID() {
-			// Cache has a different card - unsafe to proceed
-			return fmt.Errorf("tag UID mismatch: cache has %s but detected tag is %s", currentPresentCardUID, tag.UID())
-		}
-
-		// Create Card wrapper for the tag
-		card := NewCard(tag)
-
-		log.Printf("Attempting to write to card UID: %s, Type: %s", card.UID, card.Type)
-		if err := r.writeData(card, text, opts); err != nil {
+		log.Printf("Attempting to write NDEF message to card UID: %s, Type: %s", card.UID, card.Type)
+		if err := r.writeMessageToCard(card, msg, opts); err != nil {
 			return fmt.Errorf("failed to write to card UID %s (Type: %s): %w", card.UID, card.Type, err)
 		}
 
-		log.Printf("Successfully wrote to card UID: %s", card.UID)
+		log.Printf("Successfully wrote NDEF message to card UID: %s", card.UID)
 		return nil
 	})
 }

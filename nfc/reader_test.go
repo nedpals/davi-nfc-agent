@@ -734,3 +734,389 @@ func TestNFCReader_WriteOnlyModeCachePopulation(t *testing.T) {
 	}
 	t.Log("Write-only mode cache population works correctly")
 }
+
+// TestNFCReader_WriteMessageWithOptions_TextRecord tests writing a text NDEF message.
+func TestNFCReader_WriteMessageWithOptions_TextRecord(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag with existing NDEF data
+	mockTag := NewMockClassicTag("04A1B2C3")
+	mockTag.IsConnected = true
+	existingNDEF := EncodeNdefMessageWithTextRecord("Original", "en")
+	mockTag.Data = existingNDEF
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Build NDEF text message
+	msg := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFText{Content: "Hello World", Language: "en"},
+		},
+	}
+	ndefMsg := msg.MustBuild()
+
+	// Write with overwrite option
+	err = reader.WriteMessageWithOptions(ndefMsg, WriteOptions{
+		Overwrite: true,
+		Index:     -1,
+	})
+	if err != nil {
+		t.Errorf("WriteMessageWithOptions() failed: %v", err)
+	}
+
+	// Verify data was written
+	data, _ := mockTag.ReadData()
+	if len(data) == 0 {
+		t.Error("Expected data to be written to tag")
+	}
+
+	// Verify the message content
+	records, err := parseNDEFRecords(data)
+	if err != nil {
+		t.Fatalf("Failed to parse written NDEF: %v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("Expected at least one NDEF record")
+	}
+	if text, ok := records[0].GetText(); ok {
+		if text != "Hello World" {
+			t.Errorf("Expected text 'Hello World', got '%s'", text)
+		}
+	} else {
+		t.Error("Expected first record to be a text record")
+	}
+}
+
+// TestNFCReader_WriteMessageWithOptions_URIRecord tests writing a URI NDEF message.
+func TestNFCReader_WriteMessageWithOptions_URIRecord(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag
+	mockTag := NewMockClassicTag("04B2C3D4")
+	mockTag.IsConnected = true
+	existingNDEF := EncodeNdefMessageWithTextRecord("Original", "en")
+	mockTag.Data = existingNDEF
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Build NDEF URI message
+	msg := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFURI{Content: "https://example.com"},
+		},
+	}
+	ndefMsg := msg.MustBuild()
+
+	// Write URI message
+	err = reader.WriteMessageWithOptions(ndefMsg, WriteOptions{
+		Overwrite: true,
+		Index:     -1,
+	})
+	if err != nil {
+		t.Errorf("WriteMessageWithOptions() failed: %v", err)
+	}
+
+	// Verify data was written
+	data, _ := mockTag.ReadData()
+	if len(data) == 0 {
+		t.Error("Expected data to be written to tag")
+	}
+
+	// Verify the message content
+	records, err := parseNDEFRecords(data)
+	if err != nil {
+		t.Fatalf("Failed to parse written NDEF: %v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("Expected at least one NDEF record")
+	}
+	if uri, ok := records[0].GetURI(); ok {
+		if uri != "https://example.com" {
+			t.Errorf("Expected URI 'https://example.com', got '%s'", uri)
+		}
+	} else {
+		t.Error("Expected first record to be a URI record")
+	}
+}
+
+// TestNFCReader_WriteMessageWithOptions_AppendMode tests appending records to existing NDEF.
+func TestNFCReader_WriteMessageWithOptions_AppendMode(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag with existing NDEF (one text record)
+	mockTag := NewMockClassicTag("04C3D4E5")
+	mockTag.IsConnected = true
+	existingNDEF := EncodeNdefMessageWithTextRecord("First Record", "en")
+	mockTag.Data = existingNDEF
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Build second record to append
+	msg := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFText{Content: "Second Record", Language: "en"},
+		},
+	}
+	ndefMsg := msg.MustBuild()
+
+	// Write in append mode
+	err = reader.WriteMessageWithOptions(ndefMsg, WriteOptions{
+		Overwrite: false,
+		Index:     -1, // -1 means append
+	})
+	if err != nil {
+		t.Errorf("WriteMessageWithOptions() append failed: %v", err)
+	}
+
+	// Verify data was written
+	data, _ := mockTag.ReadData()
+	if len(data) == 0 {
+		t.Error("Expected data to be written to tag")
+	}
+
+	// Verify we now have 2 records
+	records, err := parseNDEFRecords(data)
+	if err != nil {
+		t.Fatalf("Failed to parse written NDEF: %v", err)
+	}
+	if len(records) != 2 {
+		t.Errorf("Expected 2 records after append, got %d", len(records))
+	}
+
+	// Verify first record unchanged
+	if text, ok := records[0].GetText(); ok {
+		if text != "First Record" {
+			t.Errorf("Expected first record 'First Record', got '%s'", text)
+		}
+	}
+
+	// Verify second record appended
+	if len(records) >= 2 {
+		if text, ok := records[1].GetText(); ok {
+			if text != "Second Record" {
+				t.Errorf("Expected second record 'Second Record', got '%s'", text)
+			}
+		}
+	}
+}
+
+// TestNFCReader_WriteMessageWithOptions_ReplaceAtIndex tests replacing a record at specific index.
+func TestNFCReader_WriteMessageWithOptions_ReplaceAtIndex(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag with two existing text records
+	mockTag := NewMockClassicTag("04D4E5F6")
+	mockTag.IsConnected = true
+
+	// Build initial message with 2 records
+	initialMsg := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFText{Content: "Record 0", Language: "en"},
+			&NDEFText{Content: "Record 1", Language: "en"},
+		},
+	}
+	existingNDEF, _ := initialMsg.MustBuild().Encode()
+	mockTag.Data = existingNDEF
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Build replacement record
+	msg := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFText{Content: "Replaced Record 1", Language: "en"},
+		},
+	}
+	ndefMsg := msg.MustBuild()
+
+	// Write to replace record at index 1
+	err = reader.WriteMessageWithOptions(ndefMsg, WriteOptions{
+		Overwrite: false,
+		Index:     1,
+	})
+	if err != nil {
+		t.Errorf("WriteMessageWithOptions() replace at index failed: %v", err)
+	}
+
+	// Verify data was written
+	data, _ := mockTag.ReadData()
+	if len(data) == 0 {
+		t.Error("Expected data to be written to tag")
+	}
+
+	// Verify we still have 2 records
+	records, err := parseNDEFRecords(data)
+	if err != nil {
+		t.Fatalf("Failed to parse written NDEF: %v", err)
+	}
+	if len(records) != 2 {
+		t.Errorf("Expected 2 records after replace, got %d", len(records))
+	}
+
+	// Verify first record unchanged
+	if text, ok := records[0].GetText(); ok {
+		if text != "Record 0" {
+			t.Errorf("Expected first record 'Record 0', got '%s'", text)
+		}
+	}
+
+	// Verify second record replaced
+	if len(records) >= 2 {
+		if text, ok := records[1].GetText(); ok {
+			if text != "Replaced Record 1" {
+				t.Errorf("Expected second record 'Replaced Record 1', got '%s'", text)
+			}
+		}
+	}
+}
+
+// TestNFCReader_WriteMessageWithOptions_MultipleCards tests that write fails with multiple cards.
+func TestNFCReader_WriteMessageWithOptions_MultipleCards(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create TWO mock tags
+	mockTag1 := NewMockClassicTag("04E5F6A1")
+	mockTag1.IsConnected = true
+	mockTag2 := NewMockClassicTag("04F6A1B2")
+	mockTag2.IsConnected = true
+
+	// Create mock device with BOTH tags
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag1, mockTag2})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Build NDEF message
+	msg := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFText{Content: "Test", Language: "en"},
+		},
+	}
+	ndefMsg := msg.MustBuild()
+
+	// Attempt write - should fail with multiple cards
+	err = reader.WriteMessageWithOptions(ndefMsg, WriteOptions{
+		Overwrite: true,
+		Index:     -1,
+	})
+
+	// Expect error about multiple cards
+	if err == nil {
+		t.Error("Expected error when writing with multiple cards present, got nil")
+	} else if !contains(err.Error(), "multiple cards") {
+		t.Errorf("Expected error about multiple cards, got: %v", err)
+	}
+}
+
+// TestNFCReader_WriteMessageWithOptions_NoCard tests that write fails with no card.
+func TestNFCReader_WriteMessageWithOptions_NoCard(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock device with NO tags
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Build NDEF message
+	msg := &NDEFMessageBuilder{
+		Records: []NDEFRecordBuilder{
+			&NDEFText{Content: "Test", Language: "en"},
+		},
+	}
+	ndefMsg := msg.MustBuild()
+
+	// Attempt write - should fail with no card
+	err = reader.WriteMessageWithOptions(ndefMsg, WriteOptions{
+		Overwrite: true,
+		Index:     -1,
+	})
+
+	// Expect error about no card
+	if err == nil {
+		t.Error("Expected error when writing with no card present, got nil")
+	} else if !contains(err.Error(), "no card") {
+		t.Errorf("Expected error about no card, got: %v", err)
+	}
+}
