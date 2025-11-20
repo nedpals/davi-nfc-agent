@@ -127,6 +127,7 @@ Pre-built binaries for various platforms are available in the [releases](https:/
 - `-device`: Path to NFC device (optional, autodetects if not specified)
 - `-port`: Port to listen on for WebSocket connections (default: 18080)
 - `-cli`: Run in CLI mode instead of system tray mode (default: system tray)
+- `-api-secret`: API secret for session authentication (optional, recommended for untrusted environments)
 
 ### System Tray Mode
 
@@ -144,10 +145,153 @@ To run in CLI mode without system tray:
 
 ## WebSocket API
 
-### Connecting to the WebSocket
+### Session Management
+
+The agent uses a session-based authentication system to prevent unauthorized access and session hijacking.
+
+#### Acquiring a Session
+
+Before connecting to the WebSocket, you must first acquire a session token via the `/handshake` endpoint:
 
 ```javascript
-const socket = new WebSocket('ws://localhost:18080/ws');
+// Acquire session token
+const response = await fetch('http://localhost:18080/handshake', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    secret: 'your-api-secret' // Optional, only required if -api-secret flag is set
+  })
+});
+
+const { token } = await response.json();
+```
+
+**Session Features:**
+- **Cryptographically secure tokens**: Sessions use 256-bit random tokens
+- **Origin binding**: Sessions are bound to the origin that acquired them
+- **IP binding**: Sessions are bound to the client's IP address
+- **Auto-timeout**: Sessions expire after 60 seconds of inactivity
+- **Single session limit**: Only one active session at a time
+
+**Session Lifecycle:**
+1. Client calls `/handshake` to acquire a session token
+2. Token is bound to the client's origin and IP address
+3. Client uses token to connect to WebSocket and make requests
+4. Session automatically refreshes on activity
+5. Session expires after 60 seconds of inactivity or when WebSocket disconnects
+
+#### Using the Session Token
+
+Pass the token when connecting to the WebSocket:
+
+```javascript
+// Connect with session token (via query parameter)
+const socket = new WebSocket(`ws://localhost:18080/ws?token=${token}`);
+
+// Or via header (if your WebSocket client supports it)
+const socket = new WebSocket('ws://localhost:18080/ws', {
+  headers: { 'X-Session-Token': token }
+});
+```
+
+#### Releasing a Session
+
+Sessions are automatically released when:
+- The WebSocket connection closes
+- The session times out (60 seconds of inactivity)
+- A client explicitly releases via WebSocket message:
+
+```javascript
+socket.send(JSON.stringify({
+  type: 'release'
+}));
+```
+
+#### API Secret Protection
+
+For additional security in untrusted environments, use the `-api-secret` flag:
+
+```bash
+./davi-nfc-agent -api-secret "your-secret-here"
+```
+
+When an API secret is configured:
+- All handshake requests must include the correct secret
+- Prevents unauthorized session acquisition
+
+**Example with API secret:**
+```bash
+# Start agent with API secret
+./davi-nfc-agent -api-secret "mySecretKey123"
+```
+
+```javascript
+// Client must provide the secret
+const response = await fetch('http://localhost:18080/handshake', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ secret: 'mySecretKey123' })
+});
+```
+
+#### Complete Example (JavaScript)
+
+```javascript
+// Full session workflow
+async function connectToNFC() {
+  // 1. Acquire session
+  const handshake = await fetch('http://localhost:18080/handshake', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secret: 'mySecretKey123' }) // Optional
+  });
+
+  if (!handshake.ok) {
+    throw new Error('Session already claimed or invalid secret');
+  }
+
+  const { token } = await handshake.json();
+
+  // 2. Connect to WebSocket with token
+  const socket = new WebSocket(`ws://localhost:18080/ws?token=${token}`);
+
+  socket.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    console.log('Received:', message);
+  };
+
+  // 3. Session auto-releases on disconnect
+  socket.onclose = () => {
+    console.log('Session released');
+  };
+
+  return socket;
+}
+```
+
+#### CLI Example (curl)
+
+```bash
+# 1. Acquire session token
+TOKEN=$(curl -X POST http://localhost:18080/handshake \
+  -H "Content-Type: application/json" \
+  -d '{"secret":"mySecretKey123"}' \
+  | jq -r '.token')
+
+echo "Session token: $TOKEN"
+
+# 2. Connect to WebSocket with token (using websocat or similar)
+websocat "ws://localhost:18080/ws?token=$TOKEN"
+
+# Or use with any WebSocket client that supports query parameters
+```
+
+### Connecting to the WebSocket
+
+After acquiring a session token via `/handshake`, connect to the WebSocket:
+
+```javascript
+const socket = new WebSocket(`ws://localhost:18080/ws?token=${token}`);
 ```
 
 ### Messages from server

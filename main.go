@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -45,6 +46,8 @@ var (
 
 	// Session management
 	sessionToken   string
+	sessionOrigin  string // Bound origin for the session
+	sessionIP      string // Bound IP address for the session
 	sessionMux     sync.RWMutex
 	sessionTimeout = 60 * time.Second
 	sessionTimer   *time.Timer
@@ -64,19 +67,20 @@ func getLastBroadcastCard() *nfc.Card {
 	return lastBroadcastCard
 }
 
-// generateSessionToken generates a random session token
+// generateSessionToken generates a cryptographically secure random session token
 func generateSessionToken() string {
 	// Generate a random 32-byte token and encode as hex
 	b := make([]byte, 32)
-	for i := range b {
-		b[i] = byte(time.Now().UnixNano() % 256)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("Failed to generate session token: %v", err)
 	}
 	return fmt.Sprintf("%x", b)
 }
 
 // acquireSession attempts to acquire the session token
 // Returns the token if successful, or empty string if already claimed
-func acquireSession(secret string) string {
+// origin and remoteAddr are used for optional session binding
+func acquireSession(secret string, origin string, remoteAddr string) string {
 	sessionMux.Lock()
 	defer sessionMux.Unlock()
 
@@ -88,6 +92,8 @@ func acquireSession(secret string) string {
 	// If no active session, create one
 	if sessionToken == "" {
 		sessionToken = generateSessionToken()
+		sessionOrigin = origin
+		sessionIP = remoteAddr
 
 		// Reset the session timeout timer
 		if sessionTimer != nil {
@@ -98,7 +104,7 @@ func acquireSession(secret string) string {
 			log.Println("Session timeout - token released")
 		})
 
-		log.Printf("Session acquired: %s", sessionToken[:8]+"...")
+		log.Printf("Session acquired: %s (origin: %s, ip: %s)", sessionToken[:8]+"...", origin, remoteAddr)
 		return sessionToken
 	}
 
@@ -107,10 +113,29 @@ func acquireSession(secret string) string {
 }
 
 // validateSession checks if the provided token matches the current session
-func validateSession(token string) bool {
+// and optionally validates origin and IP binding
+func validateSession(token string, origin string, remoteAddr string) bool {
 	sessionMux.RLock()
 	defer sessionMux.RUnlock()
-	return sessionToken != "" && sessionToken == token
+
+	// Check token match
+	if sessionToken == "" || sessionToken != token {
+		return false
+	}
+
+	// Validate origin binding if it was set during acquisition
+	if sessionOrigin != "" && origin != sessionOrigin {
+		log.Printf("Session validation failed: origin mismatch (expected: %s, got: %s)", sessionOrigin, origin)
+		return false
+	}
+
+	// Validate IP binding if it was set during acquisition
+	if sessionIP != "" && remoteAddr != sessionIP {
+		log.Printf("Session validation failed: IP mismatch (expected: %s, got: %s)", sessionIP, remoteAddr)
+		return false
+	}
+
+	return true
 }
 
 // releaseSession releases the current session token
@@ -121,6 +146,8 @@ func releaseSession() {
 	if sessionToken != "" {
 		log.Printf("Session released: %s", sessionToken[:8]+"...")
 		sessionToken = ""
+		sessionOrigin = ""
+		sessionIP = ""
 
 		if sessionTimer != nil {
 			sessionTimer.Stop()
@@ -293,7 +320,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		token = r.Header.Get("X-Session-Token")
 	}
 
-	if !validateSession(token) {
+	// Get origin and remote address for validation
+	origin := r.Header.Get("Origin")
+	remoteAddr := r.RemoteAddr
+
+	if !validateSession(token, origin, remoteAddr) {
 		log.Printf("Invalid or missing session token")
 		http.Error(w, "Unauthorized: Invalid or missing session token", http.StatusUnauthorized)
 		return

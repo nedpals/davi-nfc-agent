@@ -117,8 +117,12 @@ func startServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 		}
 		json.NewDecoder(r.Body).Decode(&requestBody)
 
-		// Attempt to acquire session
-		token := acquireSession(requestBody.Secret)
+		// Get origin and remote address for session binding
+		origin := r.Header.Get("Origin")
+		remoteAddr := r.RemoteAddr
+
+		// Attempt to acquire session with origin and IP binding
+		token := acquireSession(requestBody.Secret, origin, remoteAddr)
 		if token == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
@@ -132,21 +136,6 @@ func startServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"token": token,
-		})
-	}))
-
-	// Session release endpoint
-	http.HandleFunc("/release", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		releaseSession()
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
 		})
 	}))
 
