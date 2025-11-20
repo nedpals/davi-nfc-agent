@@ -38,9 +38,16 @@ var (
 	devicePathFlag    string
 	portFlag          int
 	systrayFlag       bool
+	apiSecretFlag     string
 	nfcManager        nfc.Manager
 	lastBroadcastCard *nfc.Card // Track last broadcast card for systray display
 	lastCardMux       sync.RWMutex
+
+	// Session management
+	sessionToken   string
+	sessionMux     sync.RWMutex
+	sessionTimeout = 60 * time.Second
+	sessionTimer   *time.Timer
 )
 
 // setLastBroadcastCard safely sets the last broadcast card
@@ -55,6 +62,81 @@ func getLastBroadcastCard() *nfc.Card {
 	lastCardMux.RLock()
 	defer lastCardMux.RUnlock()
 	return lastBroadcastCard
+}
+
+// generateSessionToken generates a random session token
+func generateSessionToken() string {
+	// Generate a random 32-byte token and encode as hex
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = byte(time.Now().UnixNano() % 256)
+	}
+	return fmt.Sprintf("%x", b)
+}
+
+// acquireSession attempts to acquire the session token
+// Returns the token if successful, or empty string if already claimed
+func acquireSession(secret string) string {
+	sessionMux.Lock()
+	defer sessionMux.Unlock()
+
+	// Check if API secret is required and validate
+	if apiSecretFlag != "" && secret != apiSecretFlag {
+		return ""
+	}
+
+	// If no active session, create one
+	if sessionToken == "" {
+		sessionToken = generateSessionToken()
+
+		// Reset the session timeout timer
+		if sessionTimer != nil {
+			sessionTimer.Stop()
+		}
+		sessionTimer = time.AfterFunc(sessionTimeout, func() {
+			releaseSession()
+			log.Println("Session timeout - token released")
+		})
+
+		log.Printf("Session acquired: %s", sessionToken[:8]+"...")
+		return sessionToken
+	}
+
+	// Session already claimed
+	return ""
+}
+
+// validateSession checks if the provided token matches the current session
+func validateSession(token string) bool {
+	sessionMux.RLock()
+	defer sessionMux.RUnlock()
+	return sessionToken != "" && sessionToken == token
+}
+
+// releaseSession releases the current session token
+func releaseSession() {
+	sessionMux.Lock()
+	defer sessionMux.Unlock()
+
+	if sessionToken != "" {
+		log.Printf("Session released: %s", sessionToken[:8]+"...")
+		sessionToken = ""
+
+		if sessionTimer != nil {
+			sessionTimer.Stop()
+			sessionTimer = nil
+		}
+	}
+}
+
+// refreshSessionTimeout resets the session timeout timer
+func refreshSessionTimeout() {
+	sessionMux.Lock()
+	defer sessionMux.Unlock()
+
+	if sessionTimer != nil {
+		sessionTimer.Reset(sessionTimeout)
+	}
 }
 
 // sendErrorResponse sends an error response to a WebSocket connection
@@ -149,15 +231,8 @@ func handleWriteRequest(conn *websocket.Conn, wsMessage WebSocketMessage, ctx co
 		return
 	}
 
-	// Encode and write
-	ndefData, err := ndefMsg.Encode()
-	if err != nil {
-		log.Printf("Failed to encode NDEF message: %v", err)
-		sendErrorResponse(conn, "writeResponse", "Failed to encode NDEF message")
-		return
-	}
-
-	err = reader.WriteCardDataWithOptions(string(ndefData), writeOpts)
+	// Use the new WriteMessageWithOptions to preserve NDEF structure
+	err = reader.WriteMessageWithOptions(ndefMsg, writeOpts)
 	if err != nil {
 		log.Printf("Write failed: %v", err)
 		sendErrorResponse(conn, "writeResponse", err.Error())
@@ -212,6 +287,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
+	// Validate session token
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		token = r.Header.Get("X-Session-Token")
+	}
+
+	if !validateSession(token) {
+		log.Printf("Invalid or missing session token")
+		http.Error(w, "Unauthorized: Invalid or missing session token", http.StatusUnauthorized)
+		return
+	}
+
+	// Refresh session timeout on successful connection
+	refreshSessionTimeout()
+
 	reader := getReaderFromContext(r.Context())
 	if reader == nil {
 		log.Printf("No NFC reader in context")
@@ -224,7 +314,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		conn.Close()
+		// Release session when WebSocket disconnects
+		releaseSession()
+	}()
 
 	clientsMux.Lock()
 	clients[conn] = true
@@ -260,6 +354,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
+		// Refresh session timeout on any incoming message
+		refreshSessionTimeout()
+
 		if messageType == websocket.TextMessage {
 			var wsMessage WebSocketMessage
 			if err := json.Unmarshal(message, &wsMessage); err != nil {
@@ -270,6 +367,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			switch wsMessage.Type {
 			case "writeRequest":
 				handleWriteRequest(conn, wsMessage, r.Context())
+			case "release":
+				// Client explicitly releases the session
+				releaseSession()
+				conn.WriteJSON(WebSocketMessage{
+					Type: "releaseResponse",
+					Payload: map[string]interface{}{
+						"success": true,
+					},
+				})
 			}
 		}
 	}
@@ -366,7 +472,9 @@ func broadcastToClients(data nfc.NFCData) { // Use nfc.NFCData
 		Payload: payload,
 	}
 
-	clientsMux.RLock()
+	clientsMux.Lock()
+	defer clientsMux.Unlock()
+
 	for client := range clients {
 		err := client.WriteJSON(message)
 		if err != nil {
@@ -375,7 +483,6 @@ func broadcastToClients(data nfc.NFCData) { // Use nfc.NFCData
 			delete(clients, client)
 		}
 	}
-	clientsMux.RUnlock()
 }
 
 // getReaderFromContext retrieves the NFCReader instance from the context.
@@ -763,7 +870,8 @@ func startAgentWithDevice(devicePath string) error {
 		currentDevice = devicePath
 	}
 
-	startServer(currentReader, portFlag)
+	// Start server in a goroutine so it doesn't block systray operations
+	go startServer(currentReader, portFlag)
 	return nil
 }
 
@@ -786,6 +894,7 @@ func main() {
 	flag.StringVar(&devicePathFlag, "device", "", "Path to NFC device (optional)")
 	flag.IntVar(&portFlag, "port", defaultPort, "Port to listen on for the web interface")
 	flag.BoolVar(&systrayFlag, "cli", false, "Run in CLI mode (default: system tray mode)")
+	flag.StringVar(&apiSecretFlag, "api-secret", "", "API secret for session handshake (optional)")
 	flag.Parse()
 
 	// Initialize the global NFC manager
@@ -800,8 +909,17 @@ func main() {
 		}
 		defer reader.Close()
 
-		// Start the web interface
-		startServer(reader, portFlag)
+		// Set up signal handling for graceful shutdown
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+		// Start server in a goroutine
+		go startServer(reader, portFlag)
+
+		// Wait for shutdown signal
+		<-sigChan
+		log.Println("Shutdown signal received, stopping server...")
+		stopServer()
 	} else {
 		// Default systray mode
 		sigChan := make(chan os.Signal, 1)

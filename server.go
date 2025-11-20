@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -50,7 +51,9 @@ func broadcastDeviceStatus(status nfc.DeviceStatus) { // Use nfc.DeviceStatus
 		Payload: status,
 	}
 
-	clientsMux.RLock()
+	clientsMux.Lock()
+	defer clientsMux.Unlock()
+
 	for client := range clients {
 		err := client.WriteJSON(message)
 		if err != nil {
@@ -59,7 +62,6 @@ func broadcastDeviceStatus(status nfc.DeviceStatus) { // Use nfc.DeviceStatus
 			delete(clients, client)
 		}
 	}
-	clientsMux.RUnlock()
 }
 
 var (
@@ -82,7 +84,6 @@ func stopServer() {
 
 func startServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 	defer recoverServer(reader, port)
-	defer gracefulShutdown(reader)
 
 	// version := nfc.Version() // This was from github.com/clausecker/nfc/v2, direct usage removed
 	// log.Printf("Starting NFC Agent using libnfc %s", version)
@@ -102,6 +103,52 @@ func startServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 
 	// Set up HTTP routes with context
 	http.DefaultServeMux = http.NewServeMux() // Reset mux for clean restart
+
+	// Session handshake endpoint
+	http.HandleFunc("/handshake", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse API secret from request body if provided
+		var requestBody struct {
+			Secret string `json:"secret,omitempty"`
+		}
+		json.NewDecoder(r.Body).Decode(&requestBody)
+
+		// Attempt to acquire session
+		token := acquireSession(requestBody.Secret)
+		if token == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Session already claimed or invalid secret",
+			})
+			return
+		}
+
+		// Return token
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"token": token,
+		})
+	}))
+
+	// Session release endpoint
+	http.HandleFunc("/release", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		releaseSession()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+		})
+	}))
 
 	// Configure WebSocket with permissive CORS policy
 	http.HandleFunc("/ws", enableCORS(func(w http.ResponseWriter, r *http.Request) {
@@ -176,4 +223,11 @@ func startServer(reader *nfc.NFCReader, port int) { // Use nfc.NFCReader
 			}
 		}
 	}()
+
+	// Block until shutdown is requested
+	<-serverCtx.Done()
+	log.Println("Server context cancelled, initiating shutdown...")
+
+	// Perform graceful shutdown
+	gracefulShutdown(reader)
 }
