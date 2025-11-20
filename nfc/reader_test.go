@@ -1,6 +1,7 @@
 package nfc
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -492,4 +493,244 @@ func TestNFCReader_SetMode(t *testing.T) {
 	if reader.GetMode() != ModeReadWrite {
 		t.Errorf("Expected mode ModeReadWrite after SetMode, got %v", reader.GetMode())
 	}
+}
+
+// TestNFCReader_WriteErrorPropagation tests that write errors are properly propagated.
+func TestNFCReader_WriteErrorPropagation(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag that will fail writes
+	mockTag := NewMockTag("04A1B2C3")
+	mockTag.TagType = "MIFARE Classic 1K"
+	mockTag.IsConnected = true
+	mockTag.Data = EncodeNdefMessageWithTextRecord("Hello", "en")
+	mockTag.WriteDataError = fmt.Errorf("simulated write failure") // Force write to fail
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Update cache to simulate card present
+	reader.cache.HasChanged("04A1B2C3")
+	reader.cache.UpdateLastSeenTime("04A1B2C3")
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Attempt write - should fail and return error
+	err = reader.WriteCardData("Test Write")
+	if err == nil {
+		t.Error("Expected write to fail when tag returns error, but got no error")
+	}
+	t.Logf("Write correctly returned error: %v", err)
+}
+
+// TestNFCReader_MultipleCardsGuard tests that writes are blocked when multiple cards are detected.
+func TestNFCReader_MultipleCardsGuard(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create multiple mock tags
+	tag1 := NewMockTag("04A1B2C3")
+	tag1.TagType = "MIFARE Classic 1K"
+	tag1.IsConnected = true
+	tag1.Data = EncodeNdefMessageWithTextRecord("Tag 1", "en")
+
+	tag2 := NewMockTag("04D5E6F7")
+	tag2.TagType = "MIFARE Classic 1K"
+	tag2.IsConnected = true
+	tag2.Data = EncodeNdefMessageWithTextRecord("Tag 2", "en")
+
+	// Create mock device with MULTIPLE tags
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{tag1, tag2})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Update cache to simulate one card present
+	reader.cache.HasChanged("04A1B2C3")
+	reader.cache.UpdateLastSeenTime("04A1B2C3")
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Attempt write - should fail due to multiple cards
+	err = reader.WriteCardData("Test Write")
+	if err == nil {
+		t.Fatal("Expected write to fail when multiple cards are detected, but got no error")
+	}
+
+	// Verify the error message mentions multiple cards
+	if !contains(err.Error(), "multiple cards") {
+		t.Errorf("Expected error message to mention 'multiple cards', got: %v", err)
+	}
+	t.Logf("Write correctly blocked with error: %v", err)
+}
+
+// TestNFCReader_UIDMismatchGuard tests that writes are blocked when card UID doesn't match cache.
+func TestNFCReader_UIDMismatchGuard(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag with specific UID
+	mockTag := NewMockTag("04A1B2C3")
+	mockTag.TagType = "MIFARE Classic 1K"
+	mockTag.IsConnected = true
+	mockTag.Data = EncodeNdefMessageWithTextRecord("Hello", "en")
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Update cache with DIFFERENT UID
+	reader.cache.HasChanged("04DIFFERENT")
+	reader.cache.UpdateLastSeenTime("04DIFFERENT")
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Attempt write - should fail due to UID mismatch
+	err = reader.WriteCardData("Test Write")
+	if err == nil {
+		t.Fatal("Expected write to fail when card UID doesn't match cache, but got no error")
+	}
+
+	// Verify the error message mentions mismatch
+	if !contains(err.Error(), "mismatch") {
+		t.Errorf("Expected error message to mention 'mismatch', got: %v", err)
+	}
+	t.Logf("Write correctly blocked with error: %v", err)
+}
+
+// TestNFCReader_SingleCardWriteSucceeds tests that writes succeed when exactly one card is present and matches cache.
+func TestNFCReader_SingleCardWriteSucceeds(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag
+	mockTag := NewMockTag("04A1B2C3")
+	mockTag.TagType = "MIFARE Classic 1K"
+	mockTag.IsConnected = true
+	mockTag.Data = EncodeNdefMessageWithTextRecord("Hello", "en")
+
+	// Create mock device with SINGLE tag
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+
+	// Update cache with MATCHING UID
+	reader.cache.HasChanged("04A1B2C3")
+	reader.cache.UpdateLastSeenTime("04A1B2C3")
+
+	// Give reader time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Attempt write - should succeed
+	err = reader.WriteCardData("Test Write")
+	if err != nil {
+		t.Errorf("Expected write to succeed with single matching card, got error: %v", err)
+	}
+
+	// Verify data was written
+	data, _ := mockTag.ReadData()
+	if len(data) == 0 {
+		t.Error("Expected data to be written to tag")
+	}
+	t.Log("Write succeeded as expected")
+}
+
+// Helper function to check if string contains substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNFCReader_WriteOnlyModeCachePopulation tests that write-only mode populates cache for writes.
+func TestNFCReader_WriteOnlyModeCachePopulation(t *testing.T) {
+	// Create mock manager
+	manager := NewMockManager()
+	manager.DevicesList = []string{"mock:usb:001"}
+
+	// Create mock tag
+	mockTag := NewMockTag("04A1B2C3")
+	mockTag.TagType = "MIFARE Classic 1K"
+	mockTag.IsConnected = true
+	mockTag.Data = EncodeNdefMessageWithTextRecord("Hello", "en")
+
+	// Create mock device
+	mockDevice := NewMockDevice()
+	mockDevice.SetTags([]Tag{mockTag})
+	manager.MockDevice = mockDevice
+
+	// Create NFCReader in write-only mode
+	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to create NFCReader: %v", err)
+	}
+	defer reader.Close()
+	defer reader.Stop()
+
+	// Set to write-only mode
+	reader.SetMode(ModeWriteOnly)
+
+	// Start reader to populate cache
+	reader.Start()
+
+	// Give reader time to populate cache
+	time.Sleep(300 * time.Millisecond)
+
+	// Write should succeed even without explicit cache population
+	err = reader.WriteCardData("Test Write")
+	if err != nil {
+		t.Errorf("Expected write to succeed in write-only mode after cache population, got error: %v", err)
+	}
+
+	// Verify data was written
+	data, _ := mockTag.ReadData()
+	if len(data) == 0 {
+		t.Error("Expected data to be written to tag")
+	}
+	t.Log("Write-only mode cache population works correctly")
 }

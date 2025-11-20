@@ -242,7 +242,15 @@ func (r *NFCReader) handleTagPolling(tags []Tag) {
 	r.statusMux.RUnlock()
 
 	if mode == ModeWriteOnly {
-		// In write-only mode, skip reading card data
+		// In write-only mode, skip reading card data but still update cache for write operations
+		for _, tag := range tags {
+			uid := tag.UID()
+			if uid != "" {
+				r.cache.UpdateLastSeenTime(uid)
+				// Mark as seen so writes can proceed
+				r.cache.HasChanged(uid)
+			}
+		}
 		return
 	}
 
@@ -407,6 +415,11 @@ type WriteOptions struct {
 	// -1 means append, >= 0 means replace at that index.
 	// Ignored if Overwrite is true or card doesn't support NDEF.
 	Index int
+
+	// ForceInitialize forces reinitialization of MIFARE Classic cards even if they
+	// contain existing data. WARNING: This will erase all existing data on the card.
+	// Only set this to true if you explicitly want to wipe and reinitialize the card.
+	ForceInitialize bool
 }
 
 // writeData writes text to a card with options.
@@ -440,6 +453,28 @@ func (r *NFCReader) writeData(card *Card, text string, opts WriteOptions) error 
 			msg = NewTextMessageFromString(text)
 		}
 
+		// Check if tag supports advanced write options
+		data, err := msg.Encode()
+		if err != nil {
+			return fmt.Errorf("writeData (UID: %s, Type: %s): error encoding message: %w", card.UID, card.Type, err)
+		}
+
+		// If tag supports AdvancedWriter interface and ForceInitialize is set, use it
+		if opts.ForceInitialize {
+			if advWriter, ok := card.tag.(AdvancedWriter); ok {
+				tagOpts := TagWriteOptions{
+					ForceInitialize: opts.ForceInitialize,
+				}
+				if err := advWriter.WriteDataWithOptions(data, tagOpts); err != nil {
+					return fmt.Errorf("writeData (UID: %s, Type: %s): error from WriteDataWithOptions: %w", card.UID, card.Type, err)
+				}
+				log.Printf("writeData (UID: %s, Type: %s): card write with ForceInitialize completed successfully.", card.UID, card.Type)
+				return nil
+			}
+			log.Printf("writeData (UID: %s, Type: %s): ForceInitialize requested but tag doesn't support AdvancedWriter, using standard write", card.UID, card.Type)
+		}
+
+		// Standard write path
 		if err := card.WriteMessage(msg); err != nil {
 			return fmt.Errorf("writeData (UID: %s, Type: %s): error from card.WriteMessage: %w", card.UID, card.Type, err)
 		}
@@ -470,7 +505,17 @@ func (r *NFCReader) writeData(card *Card, text string, opts WriteOptions) error 
 	updatedMsg := cachedMsgBuilder.MustBuild()
 	card.Reset()
 	if err := card.WriteMessage(updatedMsg); err != nil {
-		log.Printf("writeData (UID: %s): NDEF partial write failed: %v, falling back to overwrite", card.UID, err)
+		log.Printf("writeData (UID: %s): NDEF partial write failed: %v, attempting fallback to overwrite", card.UID, err)
+		// Fallback to overwrite mode on partial write failure
+		fallbackOpts := WriteOptions{
+			Overwrite: true,
+			Index:     -1,
+		}
+		if fallbackErr := r.writeData(card, text, fallbackOpts); fallbackErr != nil {
+			return fmt.Errorf("writeData (UID: %s): both partial write and overwrite fallback failed: partial error: %w, fallback error: %v", card.UID, err, fallbackErr)
+		}
+		log.Printf("writeData (UID: %s): fallback overwrite succeeded after partial write failure", card.UID)
+		return nil
 	}
 
 	log.Printf("writeData (UID: %s): NDEF partial write succeeded", card.UID)
@@ -518,31 +563,36 @@ func (r *NFCReader) WriteCardDataWithOptions(text string, opts WriteOptions) err
 			return fmt.Errorf("no card detected for writing")
 		}
 
-		if !r.cache.IsCardPresent() {
-			// Do not proceed to avoid writing multiple cards
-			return fmt.Errorf("multiple cards detected, please present only one card for writing")
+		// Multi-card guard: require exactly one tag
+		if len(tags) > 1 {
+			return fmt.Errorf("multiple cards detected (%d tags), please present only one card for writing", len(tags))
 		}
 
+		tag := tags[0] // Safe because we checked len(tags) == 1
+
+		// Verify the single tag matches our cache (if cache has a card)
 		currentPresentCardUID := r.cache.GetLastScanned()
-		for _, tag := range tags {
-			if currentPresentCardUID != tag.UID() {
-				log.Printf("Skipping tag UID %s, does not match current card UID", tag.UID())
-				continue
-			}
-
-			// Create Card wrapper for the tag
-			card := NewCard(tag)
-
-			log.Printf("Attempting to write to card UID: %s, Type: %s", card.UID, card.Type)
-			errWrite := r.writeData(card, text, opts)
-			if errWrite == nil {
-				log.Printf("Successfully wrote to card UID: %s", card.UID)
-				return nil // Success
-			}
-			log.Printf("Failed to write to card UID %s (Type: %s): %v. Trying next card if any.", card.UID, card.Type, errWrite)
+		if currentPresentCardUID == "" {
+			// Cache is empty (e.g., first write in write-only mode)
+			// Since we have exactly one tag, it's safe to use it and populate cache
+			log.Printf("Cache empty, using sole detected tag UID: %s", tag.UID())
+			r.cache.UpdateLastSeenTime(tag.UID())
+			r.cache.HasChanged(tag.UID())
+		} else if currentPresentCardUID != tag.UID() {
+			// Cache has a different card - unsafe to proceed
+			return fmt.Errorf("tag UID mismatch: cache has %s but detected tag is %s", currentPresentCardUID, tag.UID())
 		}
 
-		return fmt.Errorf("no compatible or writable tag found, or write operation failed for all detected tags")
+		// Create Card wrapper for the tag
+		card := NewCard(tag)
+
+		log.Printf("Attempting to write to card UID: %s, Type: %s", card.UID, card.Type)
+		if err := r.writeData(card, text, opts); err != nil {
+			return fmt.Errorf("failed to write to card UID %s (Type: %s): %w", card.UID, card.Type, err)
+		}
+
+		log.Printf("Successfully wrote to card UID: %s", card.UID)
+		return nil
 	})
 }
 

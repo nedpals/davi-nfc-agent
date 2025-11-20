@@ -36,3 +36,18 @@ type Tag interface {
 type FreefareTagProvider interface {
 	GetFreefareTag() freefare.Tag
 }
+
+// TagWriteOptions defines options for tag write operations.
+type TagWriteOptions struct {
+	// ForceInitialize forces reinitialization of the tag even if it contains existing data.
+	// WARNING: This will erase all existing data on the tag.
+	// Only use this if you explicitly want to wipe and reinitialize the tag.
+	ForceInitialize bool
+}
+
+// AdvancedWriter is an optional interface that tags can implement to support
+// write operations with options. If a tag implements this interface, the reader
+// will use WriteDataWithOptions instead of WriteData when options are provided.
+type AdvancedWriter interface {
+	WriteDataWithOptions(data []byte, opts TagWriteOptions) error
+}

@@ -367,17 +367,76 @@ func (c *ClassicTag) MakeReadOnly() error {
 	return nil
 }
 
+// WriteDataWithOptions writes NDEF data to the Classic tag with the specified options.
+func (c *ClassicTag) WriteDataWithOptions(data []byte, opts TagWriteOptions) error {
+	return c.writeDataInternal(data, opts.ForceInitialize)
+}
+
+// WriteData writes NDEF data to the Classic tag with default options (no force initialization).
 func (c *ClassicTag) WriteData(data []byte) error {
+	return c.writeDataInternal(data, false)
+}
+
+// writeDataInternal contains the actual write logic, used by both WriteData and WriteDataWithOptions.
+func (c *ClassicTag) writeDataInternal(data []byte, forceInitialize bool) error {
 	if err := c.tag.Connect(); err != nil {
 		return fmt.Errorf("ClassicTag.WriteData connect error: %w", err)
 	}
 	defer c.tag.Disconnect()
 
-	sector0TrailerBlock := freefare.ClassicSectorLastBlock(0)
-	authErr := c.tag.Authenticate(sector0TrailerBlock, FactoryKey, int(freefare.KeyA))
+	// Check if card needs initialization
+	needsInit := false
 
-	if authErr == nil {
-		log.Println("ClassicTag.WriteData: Card in factory mode. Initializing for NDEF...")
+	if forceInitialize {
+		log.Println("ClassicTag.WriteData: ForceInitialize=true, will reinitialize card")
+		// Verify we can authenticate with factory keys before forcing init
+		sector0TrailerBlock := freefare.ClassicSectorLastBlock(0)
+		c.tag.Disconnect()
+		if err := c.tag.Connect(); err != nil {
+			return fmt.Errorf("WriteData: reconnect error: %w", err)
+		}
+		authErr := c.tag.Authenticate(sector0TrailerBlock, FactoryKey, int(freefare.KeyA))
+		if authErr != nil {
+			return fmt.Errorf("WriteData: ForceInitialize requested but card does not have factory keys: %w", authErr)
+		}
+		needsInit = true
+	} else {
+		// First, try to read existing NDEF data to see if card is already initialized
+		existingData, readErr := c.ReadData()
+
+		if readErr != nil {
+			log.Printf("ClassicTag.WriteData: ReadData failed (%v), checking if card is in factory mode", readErr)
+			// Could not read NDEF data - check if it's a factory-fresh card
+			sector0TrailerBlock := freefare.ClassicSectorLastBlock(0)
+			c.tag.Disconnect()
+			if err := c.tag.Connect(); err != nil {
+				return fmt.Errorf("WriteData: reconnect error: %w", err)
+			}
+			authErr := c.tag.Authenticate(sector0TrailerBlock, FactoryKey, int(freefare.KeyA))
+
+			if authErr == nil {
+				log.Println("ClassicTag.WriteData: Card in factory mode (has factory keys)")
+				needsInit = true
+			} else {
+				// Not factory mode and can't read NDEF - this is an error state
+				return fmt.Errorf("WriteData: card has non-factory keys but no readable NDEF data: %w", readErr)
+			}
+		} else if existingData == nil {
+			log.Println("ClassicTag.WriteData: Card has MAD but no NDEF data, will initialize NDEF structure")
+			needsInit = true
+		} else {
+			log.Printf("ClassicTag.WriteData: Card already has NDEF data (%d bytes), will overwrite", len(existingData))
+			needsInit = false
+		}
+	}
+
+	if needsInit {
+		log.Println("ClassicTag.WriteData: Initializing card for NDEF...")
+		c.tag.Disconnect()
+		if err := c.tag.Connect(); err != nil {
+			return fmt.Errorf("WriteData: reconnect for init error: %w", err)
+		}
+
 		maxSectorIdx := 15
 		if c.NumericType() == int(freefare.Classic4k) {
 			maxSectorIdx = 39
@@ -408,8 +467,6 @@ func (c *ClassicTag) WriteData(data []byte) error {
 			log.Printf("ClassicTag.WriteData: Initialized trailer for sector %d", currentSector)
 		}
 		log.Println("ClassicTag.WriteData: Card initialized from factory mode.")
-	} else {
-		log.Printf("ClassicTag.WriteData: Card not in factory mode (auth error: %v) or already initialized.", authErr)
 	}
 
 	if len(data) > 0 {
@@ -536,10 +593,6 @@ func (c *ClassicTag) WriteData(data []byte) error {
 			return fmt.Errorf("WriteData NDEF (empty): failed to write all data. Wrote %d of %d bytes", bytesWritten, totalBytesToWrite)
 		}
 		log.Printf("ClassicTag.WriteData: Successfully wrote empty NDEF message.")
-	}
-
-	if authErr != nil && data == nil {
-		return fmt.Errorf("card not in factory mode (auth error: %w) and no data to write", authErr)
 	}
 
 	return nil

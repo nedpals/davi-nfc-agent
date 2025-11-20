@@ -182,19 +182,11 @@ func (i *ISO14443Tag) Transceive(txData []byte) ([]byte, error) {
 func (i *ISO14443Tag) ReadData() ([]byte, error) {
 	log.Printf("ReadData (NDEF) called on Type 4 tag %s", i.UID())
 
-	// 1. Select NDEF Application (AID D2760000850101) - MOVED TO Connect()
-	// apduSelectApp := []byte{claISO7816, insSelectFile, p1SelectByDFName, p2SelectFirstOrOnly, byte(len(aidNDEF))}
-	// apduSelectApp = append(apduSelectApp, aidNDEF...)
-	// apduSelectApp = append(apduSelectApp, 0x00) // Le = 00, expect data in response
-
-	// resp, err := i.Transceive(apduSelectApp)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to select NDEF application: %w", err)
-	// }
-	// if err := checkSW1SW2(resp, sw1sw2Success); err != nil {
-	// 	return nil, fmt.Errorf("error selecting NDEF application: %w", err)
-	// }
-	// log.Println("NDEF application selected successfully.")
+	// Connect to the tag and select NDEF application
+	if err := i.Connect(); err != nil {
+		return nil, fmt.Errorf("ReadData: failed to connect to tag: %w", err)
+	}
+	defer i.Disconnect()
 
 	// 2. Select Capability Container (CC) File (FID E103)
 	// APDU: 00 A4 00 0C 02 <FID_CC> (P1=00 select by FID, P2=0C no data expected in response to SELECT)
@@ -442,19 +434,11 @@ func (i *ISO14443Tag) WriteData(data []byte) error {
 		return fmt.Errorf("NDEF data too large (%d bytes), max supported is %d", ndefDataLen, 0xFFFF-2)
 	}
 
-	// 1. Select NDEF Application (AID D2760000850101) - MOVED TO Connect()
-	// apduSelectApp := []byte{claISO7816, insSelectFile, p1SelectByDFName, p2SelectFirstOrOnly, byte(len(aidNDEF))}
-	// apduSelectApp = append(apduSelectApp, aidNDEF...)
-	// apduSelectApp = append(apduSelectApp, 0x00) // Le = 00
-
-	// resp, err := i.Transceive(apduSelectApp)
-	// if err != nil {
-	// 	return fmt.Errorf("WriteData: failed to select NDEF application: %w", err)
-	// }
-	// if err := checkSW1SW2(resp, sw1sw2Success); err != nil {
-	// 	return fmt.Errorf("WriteData: error selecting NDEF application: %w", err)
-	// }
-	// log.Println("WriteData: NDEF application selected.")
+	// Connect to the tag and select NDEF application
+	if err := i.Connect(); err != nil {
+		return fmt.Errorf("WriteData: failed to connect to tag: %w", err)
+	}
+	defer i.Disconnect()
 
 	// 2. Select Capability Container (CC) File (FID E103) - Optional but good for checks
 	apduSelectCC := []byte{claISO7816, insSelectFile, p1SelectByID, p2SelectFirstOrOnly, byte(len(fidCC))}
@@ -644,8 +628,11 @@ func (i *ISO14443Tag) WriteData(data []byte) error {
 func (i *ISO14443Tag) IsWritable() (bool, error) {
 	log.Printf("IsWritable called on Type 4 tag %s", i.UID())
 
-	// Select NDEF Application (already done in Connect, but ensure we're connected)
-	// We'll read the CC file to check write access
+	// Connect to the tag and select NDEF application
+	if err := i.Connect(); err != nil {
+		return false, fmt.Errorf("IsWritable: failed to connect to tag: %w", err)
+	}
+	defer i.Disconnect()
 
 	// 1. Select Capability Container (CC) File (FID E103)
 	apduSelectCC := []byte{claISO7816, insSelectFile, p1SelectByID, p2SelectFirstOrOnly, byte(len(fidCC))}
@@ -699,6 +686,12 @@ func (i *ISO14443Tag) IsWritable() (bool, error) {
 
 func (i *ISO14443Tag) CanMakeReadOnly() (bool, error) {
 	log.Printf("CanMakeReadOnly called on Type 4 tag %s", i.UID())
+
+	// Connect to the tag and select NDEF application
+	if err := i.Connect(); err != nil {
+		return false, fmt.Errorf("CanMakeReadOnly: failed to connect to tag: %w", err)
+	}
+	defer i.Disconnect()
 
 	// To make a tag read-only, we need to check:
 	// 1. Current write access is not already 0xFF (already read-only)
@@ -779,6 +772,12 @@ func (i *ISO14443Tag) CanMakeReadOnly() (bool, error) {
 
 func (i *ISO14443Tag) MakeReadOnly() error {
 	log.Printf("MakeReadOnly called on Type 4 tag %s", i.UID())
+
+	// Connect to the tag and select NDEF application
+	if err := i.Connect(); err != nil {
+		return fmt.Errorf("MakeReadOnly: failed to connect to tag: %w", err)
+	}
+	defer i.Disconnect()
 
 	// To make the tag read-only, we need to update the WriteAccess byte in the
 	// Capability Container's NDEF File Control TLV to 0xFF
