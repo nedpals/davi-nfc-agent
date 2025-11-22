@@ -85,14 +85,15 @@ jobs:
           pkg-config --cflags libusb-1.0 || true
           pkg-config --libs libusb-1.0 || true
 
-          # Cross-compile with Zig
+          # Cross-compile with Zig - set CPPFLAGS and LDFLAGS directly
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0" \
-          LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0" \
+          CPPFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/libusb-1.0" \
+          LDFLAGS="-L$BUILD_ROOT/lib" \
+          LIBS="-lusb-1.0" \
           ./configure \
             --host=${{ matrix.zig_target }} \
             --prefix=$BUILD_ROOT \
@@ -224,10 +225,10 @@ jobs:
           pkg-config --libs libusb-1.0 || true
 
           CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
-          LDFLAGS="-arch $ARCH_FLAG" \
+          CPPFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/libusb-1.0" \
+          LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib" \
+          LIBS="-lusb-1.0" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0" \
-          LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0" \
           ./configure \
             --prefix=$BUILD_ROOT \
             --enable-static \
@@ -371,8 +372,9 @@ jobs:
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0" \
-          LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0" \
+          CPPFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/libusb-1.0" \
+          LDFLAGS="-L$BUILD_ROOT/lib" \
+          LIBS="-lusb-1.0" \
           ./configure \
             --host=x86_64-w64-mingw32 \
             --prefix=$BUILD_ROOT \
