@@ -72,6 +72,13 @@ jobs:
           make install
           cd ..
 
+          # Verify installation
+          echo "=== Verifying libusb installation ==="
+          ls -la $BUILD_ROOT/include/ || echo "No include directory"
+          ls -la $BUILD_ROOT/lib/ || echo "No lib directory"
+          find $BUILD_ROOT -name "libusb.h" || echo "libusb.h not found"
+          find $BUILD_ROOT -name "*.pc" || echo "No .pc files found"
+
       - name: Build libnfc for ${{ matrix.arch }}
         run: |
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
@@ -219,6 +226,13 @@ jobs:
           make -j$(sysctl -n hw.ncpu)
           make install
           cd ..
+
+          # Verify installation
+          echo "=== Verifying libusb installation ==="
+          ls -la $BUILD_ROOT/include/ || echo "No include directory"
+          ls -la $BUILD_ROOT/lib/ || echo "No lib directory"
+          find $BUILD_ROOT -name "libusb.h" || echo "libusb.h not found"
+          find $BUILD_ROOT -name "*.pc" || echo "No .pc files found"
 
       - name: Build libnfc for ${{ matrix.arch }}
         run: |
