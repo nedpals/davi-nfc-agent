@@ -723,11 +723,12 @@ jobs:
           make -C include/nfc install
           make install-pkgconfigDATA
 
-          # Patch the installed nfc.h to remove any existing NFC_EXPORT definition and force static linking
-          # We need to remove the original #ifndef NFC_EXPORT block and replace it
-          sed -i '/#ifndef NFC_EXPORT/,/#endif.*NFC_EXPORT/d' $BUILD_ROOT/include/nfc/nfc.h
+          # Patch the installed nfc.h to force static linking
+          # The header likely has nested #ifdef blocks, so we need to remove ALL NFC_EXPORT definitions
+          # Find and remove any line that defines NFC_EXPORT (including nested blocks)
+          sed -i '/^[[:space:]]*#[[:space:]]*define[[:space:]]*NFC_EXPORT/d' $BUILD_ROOT/include/nfc/nfc.h
 
-          # Add our static definition at the top
+          # Now add our static definition at the very top, before any includes
           echo '#ifndef NFC_EXPORT' > /tmp/nfc_patch.h
           echo '#define NFC_EXPORT' >> /tmp/nfc_patch.h
           echo '#endif' >> /tmp/nfc_patch.h
@@ -738,6 +739,8 @@ jobs:
           # Verify the patch and library installation
           echo "=== Checking nfc.h patch ==="
           head -10 $BUILD_ROOT/include/nfc/nfc.h
+          echo "=== Verifying no dllimport in header ==="
+          grep -n "define.*NFC_EXPORT" $BUILD_ROOT/include/nfc/nfc.h | head -5 || echo "No NFC_EXPORT definitions found (good!)"
           echo "=== Checking installed libraries ==="
           ls -lh $BUILD_ROOT/lib/libnfc* || true
           ls -lh $BUILD_ROOT/lib/pkgconfig/libnfc.pc || true
