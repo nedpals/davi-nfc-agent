@@ -722,6 +722,9 @@ jobs:
           # Install headers and pkg-config file manually since we're not running top-level make install
           make -C include/nfc install
           make install-pkgconfigDATA
+
+          # Patch the installed nfc.h to always use static declarations on Windows
+          sed -i '1i#ifndef NFC_EXPORT\n#define NFC_EXPORT\n#endif' $BUILD_ROOT/include/nfc/nfc.h
           cd ..
 
       - name: Build libfreefare for Windows
