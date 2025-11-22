@@ -224,14 +224,16 @@ jobs:
             CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
           fi
 
+          # Fix missing stdlib.h include in mifare_desfire_crypto.c
+          sed -i '/#include "mifare_desfire_crypto.h"/a #include <stdlib.h>' libfreefare/mifare_desfire_crypto.c
+
           # Cross-compile with Zig - pass LDFLAGS so configure can find libcrypto
-          # Use -std=gnu99 to get proper stdlib.h declarations
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include -std=gnu99" \
+          CFLAGS="-I$BUILD_ROOT/include" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
           CRYPTO_LIBS="$CRYPTO_LIBS" \
@@ -462,8 +464,26 @@ jobs:
             CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
           fi
 
-          # macOS needs -D_DARWIN_C_SOURCE for endian functions
-          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include -D_DARWIN_C_SOURCE" \
+          # Create a compat header for macOS endian functions
+          cat > libfreefare/freefare_endian.h << 'EOF'
+          #ifndef FREEFARE_ENDIAN_H
+          #define FREEFARE_ENDIAN_H
+          #ifdef __APPLE__
+          #include <libkern/OSByteOrder.h>
+          #define htole16(x) OSSwapHostToLittleInt16(x)
+          #define htole32(x) OSSwapHostToLittleInt32(x)
+          #define le16toh(x) OSSwapLittleToHostInt16(x)
+          #define le32toh(x) OSSwapLittleToHostInt32(x)
+          #endif
+          #endif
+          EOF
+
+          # Patch files to include the compat header
+          for file in libfreefare/mifare_classic.c libfreefare/mifare_desfire.c libfreefare/mifare_desfire_aid.c; do
+            sed -i '1i#include "freefare_endian.h"' "$file"
+          done
+
+          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include" \
           LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
@@ -679,7 +699,7 @@ jobs:
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -I$(pwd) -DHAVE_WINSCARD_H $LIBUSB_CFLAGS" \
+          CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -I$(pwd) -DHAVE_WINSCARD_H -DLIBNFC_STATIC $LIBUSB_CFLAGS" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
           LIBS="-lusb $LIBUSB_LIBS -lws2_32" \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
