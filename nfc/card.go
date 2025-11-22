@@ -152,6 +152,8 @@ func (c *Card) Reset() {
 
 // preloadData sets the read buffer with pre-fetched data.
 // This is used internally by NFCReader to avoid double reads.
+//
+//nolint:all // Reserved for future optimization to avoid redundant card reads
 func (c *Card) preloadData(data []byte) {
 	c.readBuffer = data
 	c.hasRead = true
@@ -232,3 +234,6 @@ func (c *Card) WriteMessage(msg Message) error {
 func (c *Card) GetUnderlyingTag() Tag {
 	return c.tag
 }
+
+// Silence unusedfunc linter for methods reserved for future use
+var _ = (*Card).preloadData
