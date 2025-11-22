@@ -724,13 +724,10 @@ jobs:
           make install-pkgconfigDATA
 
           # Patch the installed nfc.h to force static declarations on Windows
-          # Create a temp file with the patch at the beginning
-          cat > /tmp/nfc_patch.h << 'EOF'
-#ifndef NFC_EXPORT
-#define NFC_EXPORT
-#endif
-
-EOF
+          echo '#ifndef NFC_EXPORT' > /tmp/nfc_patch.h
+          echo '#define NFC_EXPORT' >> /tmp/nfc_patch.h
+          echo '#endif' >> /tmp/nfc_patch.h
+          echo '' >> /tmp/nfc_patch.h
           cat $BUILD_ROOT/include/nfc/nfc.h >> /tmp/nfc_patch.h
           mv /tmp/nfc_patch.h $BUILD_ROOT/include/nfc/nfc.h
           cd ..
