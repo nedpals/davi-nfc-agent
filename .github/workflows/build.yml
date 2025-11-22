@@ -888,15 +888,29 @@ jobs:
           GOARCH: ${{ matrix.go_arch }}
           CC: zig cc -target ${{ matrix.zig_target }}
           CXX: zig c++ -target ${{ matrix.zig_target }}
-          CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT=
+          CGO_CFLAGS: "-I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT="
           CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -static
         run: |
           echo "=== Verifying build environment ==="
           echo "CGO_CFLAGS: $CGO_CFLAGS"
           echo "CGO_LDFLAGS: $CGO_LDFLAGS"
           ls -lh ${{ env.BUILD_ROOT }}/lib/*.a | grep -E '(nfc|freefare)' || true
+
+          # Test if the header has the correct definition
+          echo "=== Testing NFC_EXPORT macro ==="
+          cat > /tmp/test_nfc_export.c << 'EOF'
+          #include <nfc/nfc.h>
+          #ifndef NFC_EXPORT
+          #error NFC_EXPORT not defined
+          #endif
+          #define STRINGIFY(x) #x
+          #define TOSTRING(x) STRINGIFY(x)
+          const char* nfc_export_value = TOSTRING(NFC_EXPORT);
+          EOF
+          zig cc -target ${{ matrix.zig_target }} -I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT= -E /tmp/test_nfc_export.c | grep -A2 "nfc_export_value" || echo "Could not find test output"
+
           echo "=== Building Go binary ==="
-          go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
+          go build -v -x -o davi-nfc-agent-windows-${{ matrix.arch }}.exe . 2>&1 | head -100
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
