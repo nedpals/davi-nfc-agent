@@ -19,18 +19,15 @@ import (
 
 var (
 	// CLI flags
-	defaultPort       = 18080
-	devicePathFlag    string
-	portFlag          int
-	systrayFlag       bool
-	apiSecretFlag     string
-	additionalOrigins string
+	defaultPort    = 18080
+	devicePathFlag string
+	portFlag       int
+	systrayFlag    bool
+	apiSecretFlag  string
 
 	// Global state
-	nfcManager            nfc.Manager
+	nfcManager            nfc.Manager = nfc.NewManager()
 	nfcReader             *nfc.NFCReader
-	sessionManager        *server.SessionManager
-	clientManager         *server.WebsocketClientManager
 	currentDevice         string
 	allowedCardTypes      = make(map[string]bool) // Empty means all types allowed
 	currentServerInstance *server.Server
@@ -39,12 +36,10 @@ var (
 
 func buildServerConfig(reader *nfc.NFCReader) server.Config {
 	return server.Config{
-		Reader:                  reader,
-		Port:                    portFlag,
-		SessionManager:          sessionManager,
-		AllowedCardTypes:        allowedCardTypes,
-		OnBroadcastToClients:    clientManager.BroadcastTagData,
-		OnBroadcastDeviceStatus: clientManager.BroadcastDeviceStatus,
+		Reader:           reader,
+		Port:             portFlag,
+		SessionManager:   server.NewSessionManager(apiSecretFlag, sessionTimeout),
+		AllowedCardTypes: allowedCardTypes,
 	}
 }
 
@@ -208,7 +203,10 @@ func onReady() {
 		lastType := ""
 
 		for range ticker.C {
-			card := clientManager.GetLastCard()
+			var card *nfc.Card
+			if currentServerInstance != nil {
+				card = currentServerInstance.GetLastCard()
+			}
 			var uid, cardType string
 			if card != nil {
 				uid = card.UID
@@ -405,12 +403,7 @@ func main() {
 	flag.IntVar(&portFlag, "port", defaultPort, "Port to listen on for the web interface")
 	flag.BoolVar(&systrayFlag, "cli", false, "Run in CLI mode (default: system tray mode)")
 	flag.StringVar(&apiSecretFlag, "api-secret", "", "API secret for session handshake (optional)")
-	flag.StringVar(&additionalOrigins, "origins", "", "Additional allowed origins (comma-separated)")
 	flag.Parse()
-
-	nfcManager = nfc.NewManager()
-	sessionManager = server.NewSessionManager(apiSecretFlag, sessionTimeout)
-	clientManager = server.NewClientManager()
 
 	// Run in CLI mode only if explicitly requested
 	if systrayFlag {

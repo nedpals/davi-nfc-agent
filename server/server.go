@@ -18,17 +18,18 @@ type readerContextKeySymbol struct{}
 
 var readerContextKey = readerContextKeySymbol{}
 
+// WebsocketMessage represents a message sent to WebSocket clients.
+type WebsocketMessage struct {
+	Type    string `json:"type"`
+	Payload any    `json:"payload"`
+}
+
 // Config holds the server configuration
 type Config struct {
-	Reader                  *nfc.NFCReader
-	Port                    int
-	SessionManager          *SessionManager
-	Clients                 map[*websocket.Conn]bool
-	ClientsMux              *sync.RWMutex
-	Upgrader                *websocket.Upgrader
-	AllowedCardTypes        map[string]bool
-	OnBroadcastToClients    func(data nfc.NFCData)
-	OnBroadcastDeviceStatus func(status nfc.DeviceStatus)
+	Reader           *nfc.NFCReader
+	Port             int
+	SessionManager   *SessionManager
+	AllowedCardTypes map[string]bool
 }
 
 // Server manages the HTTP and WebSocket server
@@ -37,13 +38,158 @@ type Server struct {
 	httpServer *http.Server
 	ctx        context.Context
 	cancel     context.CancelFunc
+	lastCard   *nfc.Card
+	cardMu     sync.RWMutex
+	clients    map[*websocket.Conn]bool
+	clientsMux sync.RWMutex
+	upgrader   websocket.Upgrader
 }
 
 // New creates a new server instance
 func New(config Config) *Server {
 	return &Server{
-		config: config,
+		config:  config,
+		clients: make(map[*websocket.Conn]bool),
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true // Allow all origins
+			},
+		},
 	}
+}
+
+// GetLastCard returns the last broadcast card
+func (s *Server) GetLastCard() *nfc.Card {
+	s.cardMu.RLock()
+	defer s.cardMu.RUnlock()
+	return s.lastCard
+}
+
+// setLastCard sets the last broadcast card (internal use)
+func (s *Server) setLastCard(card *nfc.Card) {
+	s.cardMu.Lock()
+	defer s.cardMu.Unlock()
+	s.lastCard = card
+}
+
+// broadcast sends a message to all connected clients
+func (s *Server) broadcast(message *WebsocketMessage) {
+	s.clientsMux.Lock()
+	defer s.clientsMux.Unlock()
+
+	jsonMessage, err := json.Marshal(message)
+	if err != nil {
+		log.Printf("Failed to marshal WebSocket message: %v", err)
+		return
+	}
+
+	for client := range s.clients {
+		err := client.WriteJSON(jsonMessage)
+		if err != nil {
+			log.Printf("WebSocket write error: %v", err)
+			client.Close()
+			delete(s.clients, client)
+		}
+	}
+}
+
+// BroadcastDeviceStatus sends the device status to all connected WebSocket clients
+func (s *Server) BroadcastDeviceStatus(status nfc.DeviceStatus) {
+	s.broadcast(&WebsocketMessage{
+		Type:    "deviceStatus",
+		Payload: status,
+	})
+}
+
+// BroadcastTagData sends NFCData to all connected WebSocket clients
+func (s *Server) BroadcastTagData(data nfc.NFCData) {
+	var errStr *string = nil
+	if data.Err != nil {
+		errStr = new(string)
+		*errStr = data.Err.Error()
+	}
+
+	var payload map[string]interface{}
+
+	if data.Card != nil {
+		// Update last broadcast card for systray display
+		s.setLastCard(data.Card)
+
+		// Build the structured payload
+		payload = map[string]interface{}{
+			"uid":        data.Card.UID,
+			"type":       data.Card.Type,
+			"technology": data.Card.Technology,
+			"scannedAt":  data.Card.ScannedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"err":        errStr,
+		}
+
+		// Try to read and parse message from card
+		if msg, err := data.Card.ReadMessage(); err == nil {
+			var text string
+			var messageInfo map[string]interface{}
+
+			if ndefMsg, ok := msg.(*nfc.NDEFMessage); ok {
+				// NDEF message - extract text and build records array
+				text, _ = ndefMsg.GetText()
+
+				records := make([]map[string]interface{}, 0, len(ndefMsg.Records()))
+				for _, record := range ndefMsg.Records() {
+					recordInfo := map[string]interface{}{
+						"tnf":  record.TNF,
+						"type": string(record.Type),
+					}
+
+					// Add ID if present
+					if len(record.ID) > 0 {
+						recordInfo["id"] = string(record.ID)
+					}
+
+					// Extract type-specific data
+					if recordText, ok := record.GetText(); ok {
+						recordInfo["text"] = recordText
+					} else if recordURI, ok := record.GetURI(); ok {
+						recordInfo["uri"] = recordURI
+					}
+
+					// Always include raw payload (as base64 for binary safety)
+					recordInfo["payload"] = record.Payload
+
+					records = append(records, recordInfo)
+				}
+
+				messageInfo = map[string]interface{}{
+					"type":    "ndef",
+					"records": records,
+				}
+			} else if textMsg, ok := msg.(*nfc.TextMessage); ok {
+				// Raw text message
+				text = textMsg.Text
+				messageInfo = map[string]interface{}{
+					"type": "raw",
+					"data": textMsg.Bytes(),
+				}
+			}
+
+			payload["message"] = messageInfo
+			payload["text"] = text
+		} else {
+			// Error reading message
+			payload["text"] = ""
+		}
+	} else {
+		// No card data available
+		payload = map[string]interface{}{
+			"uid":  "",
+			"text": "",
+			"err":  errStr,
+		}
+	}
+
+	s.broadcast(&WebsocketMessage{
+		Type:    "tagData",
+		Payload: payload,
+	})
 }
 
 // enableCORS is a middleware that adds CORS headers to responses
@@ -133,12 +279,8 @@ func (s *Server) Start() error {
 		})
 	}))
 
-	// Configure WebSocket with permissive CORS policy
+	// Configure WebSocket endpoint
 	http.HandleFunc("/ws", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		// Set WebSocket upgrader to allow all origins
-		s.config.Upgrader.CheckOrigin = func(r *http.Request) bool {
-			return true // Allow all origins
-		}
 		s.handleWebSocket(w, r.WithContext(baseCtx))
 	}))
 
@@ -177,7 +319,7 @@ func (s *Server) Start() error {
 					if len(s.config.AllowedCardTypes) > 0 && !s.config.AllowedCardTypes[data.Card.Type] {
 						log.Printf("Card type '%s' not in allowed list, ignoring", data.Card.Type)
 						// Send error message to clients
-						s.config.OnBroadcastToClients(nfc.NFCData{
+						s.BroadcastTagData(nfc.NFCData{
 							Card: nil,
 							Err:  fmt.Errorf("card type '%s' not allowed by filter", data.Card.Type),
 						})
@@ -199,9 +341,9 @@ func (s *Server) Start() error {
 					}
 					fmt.Printf("UID: %s\nDecoded text: %s\n", data.Card.UID, text)
 				}
-				s.config.OnBroadcastToClients(data)
+				s.BroadcastTagData(data)
 			case statusUpdate := <-reader.StatusUpdates():
-				s.config.OnBroadcastDeviceStatus(statusUpdate)
+				s.BroadcastDeviceStatus(statusUpdate)
 			}
 		}
 	}()
@@ -259,7 +401,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := s.config.Upgrader.Upgrade(w, r, nil)
+	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
@@ -270,9 +412,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		s.config.SessionManager.Release()
 	}()
 
-	s.config.ClientsMux.Lock()
-	s.config.Clients[conn] = true
-	s.config.ClientsMux.Unlock()
+	s.clientsMux.Lock()
+	s.clients[conn] = true
+	s.clientsMux.Unlock()
 
 	// Send initial device status
 	status := reader.GetDeviceStatus()
@@ -298,9 +440,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	for {
 		messageType, message, err := conn.ReadMessage()
 		if err != nil {
-			s.config.ClientsMux.Lock()
-			delete(s.config.Clients, conn)
-			s.config.ClientsMux.Unlock()
+			s.clientsMux.Lock()
+			delete(s.clients, conn)
+			s.clientsMux.Unlock()
 			break
 		}
 
