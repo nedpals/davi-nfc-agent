@@ -261,7 +261,7 @@ jobs:
           CC: zig cc -target ${{ matrix.zig_target }}
           CXX: zig c++ -target ${{ matrix.zig_target }}
           CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -static
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lcrypto -lusb-1.0 -static
         run: |
           go build -v -ldflags="-linkmode external -extldflags '-static'" -o davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }} .
 
@@ -759,8 +759,20 @@ jobs:
           #endif
           EOF
 
-          # Verify libcrypto exists
+          # Verify libcrypto and libnfc exist
           ls -la $BUILD_ROOT/lib/libcrypto.a
+          ls -la $BUILD_ROOT/lib/libnfc.a
+          ls -la $BUILD_ROOT/lib/pkgconfig/libnfc.pc
+
+          # Get libnfc flags from pkg-config
+          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
+          if pkg-config --exists libnfc; then
+            LIBNFC_CFLAGS=$(pkg-config --cflags libnfc)
+            LIBNFC_LIBS=$(pkg-config --libs libnfc)
+          else
+            LIBNFC_CFLAGS="-I$BUILD_ROOT/include"
+            LIBNFC_LIBS="-L$BUILD_ROOT/lib -lnfc"
+          fi
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
@@ -772,6 +784,8 @@ jobs:
           LDFLAGS="-L$BUILD_ROOT/lib -static" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
           CRYPTO_LIBS="-L$BUILD_ROOT/lib $BUILD_ROOT/lib/libcrypto.a -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32" \
+          libnfc_CFLAGS="$LIBNFC_CFLAGS" \
+          libnfc_LIBS="$LIBNFC_LIBS" \
           ac_cv_lib_crypto_DES_ecb_encrypt=yes \
           ./configure \
             --host=x86_64-w64-mingw32 \
