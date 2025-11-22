@@ -143,11 +143,13 @@ jobs:
 
           # Cross-compile with Zig - use pkg-config values
           # Now that we have libusb-compat, the USB drivers will work
+          # Add $BUILD_ROOT/include to find usb.h from libusb-compat
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          CFLAGS="-I$BUILD_ROOT/include $LIBUSB_CFLAGS" \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
           libusb_LIBS="$LIBUSB_LIBS" \
           ./configure \
@@ -323,7 +325,7 @@ jobs:
             LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
           fi
 
-          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
+          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include $LIBUSB_CFLAGS" \
           LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
@@ -513,11 +515,13 @@ jobs:
             LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
           fi
 
+          # Windows needs the contrib/win32 directory for err.h
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 $LIBUSB_CFLAGS" \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
           libusb_LIBS="$LIBUSB_LIBS" \
           ./configure \
