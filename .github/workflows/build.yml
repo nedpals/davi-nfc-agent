@@ -114,6 +114,7 @@ jobs:
           zig cc -target ${{ matrix.zig_target }} $LIBUSB_CFLAGS -c test.c && echo "libusb header test: SUCCESS" || echo "libusb header test: FAILED"
 
           # Cross-compile with Zig - use pkg-config values
+          # Note: --without-libusb disables old libusb-0.1 API (the one looking for usb.h)
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
@@ -126,6 +127,7 @@ jobs:
             --prefix=$BUILD_ROOT \
             --enable-static \
             --disable-shared \
+            --without-libusb \
             --with-drivers=pn53x_usb,acr122_usb || (cat config.log && exit 1)
 
           make -j$(nproc)
@@ -276,6 +278,7 @@ jobs:
             --prefix=$BUILD_ROOT \
             --enable-static \
             --disable-shared \
+            --without-libusb \
             --with-drivers=pn53x_usb,acr122_usb
 
           make -j$(sysctl -n hw.ncpu)
@@ -368,18 +371,29 @@ jobs:
           ls -la
           find . -name "*.h" -o -name "*.a" | head -20
 
-          # Copy to build root - adjust path based on actual structure
+          # Copy to build root - the header is at include/libusb.h (not libusb-1.0 subdirectory)
           mkdir -p $BUILD_ROOT/include/libusb-1.0
           mkdir -p $BUILD_ROOT/lib
 
-          # The 7z extracts to a directory without the version number
-          if [ -d "include" ]; then
-            cp include/libusb-1.0/*.h $BUILD_ROOT/include/libusb-1.0/
+          # Copy header - it's at include/libusb.h
+          if [ -f "include/libusb.h" ]; then
+            cp include/libusb.h $BUILD_ROOT/include/libusb-1.0/
+            echo "Copied libusb.h"
+          else
+            echo "ERROR: include/libusb.h not found!"
+            exit 1
           fi
+
+          # Copy library
           if [ -f "MinGW64/static/libusb-1.0.a" ]; then
             cp MinGW64/static/libusb-1.0.a $BUILD_ROOT/lib/
+            echo "Copied libusb-1.0.a from MinGW64"
           elif [ -f "MS64/static/libusb-1.0.a" ]; then
             cp MS64/static/libusb-1.0.a $BUILD_ROOT/lib/
+            echo "Copied libusb-1.0.a from MS64"
+          else
+            echo "ERROR: libusb-1.0.a not found!"
+            exit 1
           fi
 
           # Create pkg-config file
@@ -431,6 +445,7 @@ jobs:
             --prefix=$BUILD_ROOT \
             --enable-static \
             --disable-shared \
+            --without-libusb \
             --with-drivers=pn53x_usb,acr122_usb
 
           make -j$(nproc)
