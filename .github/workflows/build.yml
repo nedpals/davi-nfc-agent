@@ -91,28 +91,36 @@ jobs:
           ls -la $BUILD_ROOT/include/ || true
           ls -la $BUILD_ROOT/lib/ || true
 
-          # Verify libusb is found
+          # Verify libusb is found and get correct flags
           export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
           echo "=== PKG_CONFIG_PATH: $PKG_CONFIG_PATH ==="
           ls -la $PKG_CONFIG_PATH/ || true
-          pkg-config --exists libusb-1.0 && echo "libusb-1.0 found" || echo "libusb-1.0 NOT found"
-          pkg-config --cflags libusb-1.0 || true
-          pkg-config --libs libusb-1.0 || true
+
+          if pkg-config --exists libusb-1.0; then
+            echo "libusb-1.0 found via pkg-config"
+            LIBUSB_CFLAGS=$(pkg-config --cflags libusb-1.0)
+            LIBUSB_LIBS=$(pkg-config --libs libusb-1.0)
+            echo "LIBUSB_CFLAGS: $LIBUSB_CFLAGS"
+            echo "LIBUSB_LIBS: $LIBUSB_LIBS"
+          else
+            echo "libusb-1.0 NOT found via pkg-config"
+            LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0"
+            LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
+          fi
 
           # Try to compile a simple test to verify headers work
-          echo '#include <libusb-1.0/libusb.h>' > test.c
+          echo '#include <libusb.h>' > test.c
           echo 'int main() { return 0; }' >> test.c
-          zig cc -target ${{ matrix.zig_target }} -I$BUILD_ROOT/include/libusb-1.0 -c test.c && echo "libusb header test: SUCCESS" || echo "libusb header test: FAILED"
+          zig cc -target ${{ matrix.zig_target }} $LIBUSB_CFLAGS -c test.c && echo "libusb header test: SUCCESS" || echo "libusb header test: FAILED"
 
-          # Cross-compile with Zig - set CPPFLAGS and LDFLAGS directly
+          # Cross-compile with Zig - use pkg-config values
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CPPFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/libusb-1.0" \
-          LDFLAGS="-L$BUILD_ROOT/lib" \
-          LIBS="-lusb-1.0" \
+          libusb_CFLAGS="$LIBUSB_CFLAGS" \
+          libusb_LIBS="$LIBUSB_LIBS" \
           ./configure \
             --host=${{ matrix.zig_target }} \
             --prefix=$BUILD_ROOT \
@@ -244,17 +252,26 @@ jobs:
           SDK_PATH=$(xcrun --show-sdk-path)
           ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
 
-          # Verify libusb is found
+          # Verify libusb is found and get correct flags
           export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-          pkg-config --exists libusb-1.0 && echo "libusb-1.0 found" || echo "libusb-1.0 NOT found"
-          pkg-config --cflags libusb-1.0 || true
-          pkg-config --libs libusb-1.0 || true
+
+          if pkg-config --exists libusb-1.0; then
+            echo "libusb-1.0 found via pkg-config"
+            LIBUSB_CFLAGS=$(pkg-config --cflags libusb-1.0)
+            LIBUSB_LIBS=$(pkg-config --libs libusb-1.0)
+            echo "LIBUSB_CFLAGS: $LIBUSB_CFLAGS"
+            echo "LIBUSB_LIBS: $LIBUSB_LIBS"
+          else
+            echo "libusb-1.0 NOT found via pkg-config"
+            LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0"
+            LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
+          fi
 
           CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
-          CPPFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/libusb-1.0" \
           LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib" \
-          LIBS="-lusb-1.0" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          libusb_CFLAGS="$LIBUSB_CFLAGS" \
+          libusb_LIBS="$LIBUSB_LIBS" \
           ./configure \
             --prefix=$BUILD_ROOT \
             --enable-static \
@@ -387,20 +404,28 @@ jobs:
           cd libnfc-${{ env.LIBNFC_VERSION }}
           autoreconf -vis
 
-          # Verify libusb is found
+          # Verify libusb is found and get correct flags
           export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-          pkg-config --exists libusb-1.0 && echo "libusb-1.0 found" || echo "libusb-1.0 NOT found"
-          pkg-config --cflags libusb-1.0 || true
-          pkg-config --libs libusb-1.0 || true
+
+          if pkg-config --exists libusb-1.0; then
+            echo "libusb-1.0 found via pkg-config"
+            LIBUSB_CFLAGS=$(pkg-config --cflags libusb-1.0)
+            LIBUSB_LIBS=$(pkg-config --libs libusb-1.0)
+            echo "LIBUSB_CFLAGS: $LIBUSB_CFLAGS"
+            echo "LIBUSB_LIBS: $LIBUSB_LIBS"
+          else
+            echo "libusb-1.0 NOT found via pkg-config"
+            LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0"
+            LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
+          fi
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CPPFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/libusb-1.0" \
-          LDFLAGS="-L$BUILD_ROOT/lib" \
-          LIBS="-lusb-1.0" \
+          libusb_CFLAGS="$LIBUSB_CFLAGS" \
+          libusb_LIBS="$LIBUSB_LIBS" \
           ./configure \
             --host=x86_64-w64-mingw32 \
             --prefix=$BUILD_ROOT \
