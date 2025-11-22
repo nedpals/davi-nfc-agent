@@ -695,10 +695,10 @@ jobs:
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
-          # Patch nfc.c, log.c, and utils to include windows.h for setenv/unsetenv compatibility
-          sed -i $'1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif\n' libnfc/nfc.c
-          sed -i $'1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif\n' libnfc/log.c
-          find examples utils -name "*.c" -exec sed -i $'1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif\n' {} \;
+          # Comment out setenv/unsetenv calls in libnfc (they're just for debug logging)
+          sed -i 's/setenv(/\/\/setenv(/g' libnfc/nfc.c
+          sed -i 's/unsetenv(/\/\/unsetenv(/g' libnfc/nfc.c
+          sed -i 's/setenv(/\/\/setenv(/g' libnfc/log.c
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
