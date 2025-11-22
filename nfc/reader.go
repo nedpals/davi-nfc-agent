@@ -422,7 +422,6 @@ type WriteOptions struct {
 	ForceInitialize bool
 }
 
-
 // WriteCardData attempts to write data to a detected NFC card using default options (overwrite mode).
 func (r *NFCReader) WriteCardData(text string) error {
 	msg := &NDEFMessageBuilder{
@@ -627,4 +626,8 @@ func (r *NFCReader) GetTags() ([]Tag, error) {
 		return nil, fmt.Errorf("getTags: error from device.GetTags: %w", err)
 	}
 	return tags, nil
+}
+
+func (r *NFCReader) DevicePath() string {
+	return r.deviceManager.DevicePath()
 }

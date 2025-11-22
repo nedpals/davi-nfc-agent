@@ -14,73 +14,21 @@ import (
 	"fyne.io/systray"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/server"
 )
+
+const DEFAULT_PORT = 18080
 
 var (
 	// CLI flags
-	defaultPort    = 18080
 	devicePathFlag string
 	portFlag       int
 	systrayFlag    bool
 	apiSecretFlag  string
 
 	// Global state
-	nfcManager            nfc.Manager = nfc.NewManager()
-	nfcReader             *nfc.NFCReader
-	currentDevice         string
-	allowedCardTypes      = make(map[string]bool) // Empty means all types allowed
-	currentServerInstance *server.Server
+	agent         *Agent
+	currentDevice string
 )
-
-func buildServerConfig(reader *nfc.NFCReader) server.Config {
-	return server.Config{
-		Reader:           reader,
-		Port:             portFlag,
-		SessionManager:   server.NewSessionManager(apiSecretFlag, 60*time.Second),
-		AllowedCardTypes: allowedCardTypes,
-	}
-}
-
-func startAgentWithDevice(devicePath string) error {
-	// Use the device path if specified, otherwise use auto-detect
-	if devicePath == "" {
-		devicePath = devicePathFlag
-	}
-
-	nfcReader, err := nfc.NewNFCReader(devicePath, nfcManager, 5*time.Second)
-	if err != nil {
-		log.Printf("Error initializing NFC reader: %v", err)
-		return err
-	}
-
-	// Store the actual device being used
-	if nfcReader != nil && devicePath != "" {
-		currentDevice = devicePath
-	}
-
-	// Create and start server in a goroutine so it doesn't block systray operations
-	currentServerInstance = server.New(buildServerConfig(nfcReader))
-	go currentServerInstance.Start()
-	return nil
-}
-
-func stopAgent() {
-	log.Println("Stopping agent...")
-
-	// First stop the server to prevent new operations
-	if currentServerInstance != nil {
-		currentServerInstance.Stop()
-		currentServerInstance = nil
-	}
-
-	// Then stop the NFC reader (this will wait for worker to finish and close device)
-	if nfcReader != nil {
-		nfcReader.Stop()
-		nfcReader = nil
-		log.Println("Agent stopped successfully")
-	}
-}
 
 func onReady() {
 	systray.SetIcon(iconData)
@@ -152,7 +100,7 @@ func onReady() {
 		deviceMenuItems = make(map[string]*systray.MenuItem)
 
 		// Get available devices
-		devices, err := nfcManager.ListDevices()
+		devices, err := agent.Manager.ListDevices()
 		if err != nil {
 			log.Printf("Error listing devices: %v", err)
 			return
@@ -173,7 +121,7 @@ func onReady() {
 
 	// Auto-start the agent
 	go func() {
-		if err := startAgentWithDevice(currentDevice); err == nil {
+		if err := agent.Start(currentDevice); err == nil {
 			mStatus.SetTitle("Running")
 			mConnection.SetTitle("Connection: Connected")
 			if currentDevice != "" {
@@ -197,8 +145,8 @@ func onReady() {
 
 		for range ticker.C {
 			var card *nfc.Card
-			if currentServerInstance != nil {
-				card = currentServerInstance.GetLastCard()
+			if agent.Server != nil {
+				card = agent.Server.GetLastCard()
 			}
 			var uid, cardType string
 			if card != nil {
@@ -230,7 +178,7 @@ func onReady() {
 		for {
 			select {
 			case <-mStart.ClickedCh:
-				if err := startAgentWithDevice(currentDevice); err == nil {
+				if err := agent.Start(currentDevice); err == nil {
 					mStatus.SetTitle("Running")
 					mConnection.SetTitle("Connection: Connected")
 					if currentDevice != "" {
@@ -243,7 +191,7 @@ func onReady() {
 					mConnection.SetTitle("Connection: Failed")
 				}
 			case <-mStop.ClickedCh:
-				stopAgent()
+				agent.Stop()
 				mStatus.SetTitle("Stopped")
 				mConnection.SetTitle("Connection: Disconnected")
 				mStop.Disable()
@@ -251,8 +199,8 @@ func onReady() {
 			case <-mRefreshDevices.ClickedCh:
 				updateDeviceList()
 			case <-mReadWriteMode.ClickedCh:
-				if !mReadWriteMode.Checked() && nfcReader != nil {
-					nfcReader.SetMode(nfc.ModeReadWrite)
+				if !mReadWriteMode.Checked() && agent.Reader != nil {
+					agent.Reader.SetMode(nfc.ModeReadWrite)
 					mMode.SetTitle("Mode: Read/Write")
 					mReadWriteMode.Check()
 					mReadMode.Uncheck()
@@ -260,8 +208,8 @@ func onReady() {
 					log.Println("Switched to read/write mode")
 				}
 			case <-mReadMode.ClickedCh:
-				if !mReadMode.Checked() && nfcReader != nil {
-					nfcReader.SetMode(nfc.ModeReadOnly)
+				if !mReadMode.Checked() && agent.Reader != nil {
+					agent.Reader.SetMode(nfc.ModeReadOnly)
 					mMode.SetTitle("Mode: Read Only")
 					mReadMode.Check()
 					mReadWriteMode.Uncheck()
@@ -269,8 +217,8 @@ func onReady() {
 					log.Println("Switched to read-only mode")
 				}
 			case <-mWriteMode.ClickedCh:
-				if !mWriteMode.Checked() && nfcReader != nil {
-					nfcReader.SetMode(nfc.ModeWriteOnly)
+				if !mWriteMode.Checked() && agent.Reader != nil {
+					agent.Reader.SetMode(nfc.ModeWriteOnly)
 					mMode.SetTitle("Mode: Write Only")
 					mWriteMode.Check()
 					mReadWriteMode.Uncheck()
@@ -283,66 +231,67 @@ func onReady() {
 				mFilterMifareUltra.Uncheck()
 				mFilterDESFire.Uncheck()
 				mFilterType4.Uncheck()
-				allowedCardTypes = make(map[string]bool) // Empty means all allowed
-				log.Println("Card filter: All types allowed")
+				agent.AllowAllCardTypes()
 			case <-mFilterMifare.ClickedCh:
 				mFilterAll.Uncheck()
+
+				agent.SetAllowCardType(CardTypeMifareClassic1K, !mFilterMifare.Checked())
+				agent.SetAllowCardType(CardTypeMifareClassic4K, !mFilterMifare.Checked())
+
 				if mFilterMifare.Checked() {
 					mFilterMifare.Uncheck()
-					delete(allowedCardTypes, "MIFARE Classic 1K")
-					delete(allowedCardTypes, "MIFARE Classic 4K")
 				} else {
 					mFilterMifare.Check()
-					allowedCardTypes["MIFARE Classic 1K"] = true
-					allowedCardTypes["MIFARE Classic 4K"] = true
 				}
+
 				// Check if no filters active, then revert to All
-				if len(allowedCardTypes) == 0 {
+				if agent.AllowedCardTypesLength() == 0 {
 					mFilterAll.Check()
 				}
-				log.Printf("Card filter updated: %v", allowedCardTypes)
 			case <-mFilterMifareUltra.ClickedCh:
 				mFilterAll.Uncheck()
+
+				agent.SetAllowCardType(CardTypeMifareUltralight, !mFilterMifareUltra.Checked())
+
 				if mFilterMifareUltra.Checked() {
 					mFilterMifareUltra.Uncheck()
-					delete(allowedCardTypes, "MIFARE Ultralight")
 				} else {
 					mFilterMifareUltra.Check()
-					allowedCardTypes["MIFARE Ultralight"] = true
 				}
+
 				// Check if no filters active, then revert to All
-				if len(allowedCardTypes) == 0 {
+				if agent.AllowedCardTypesLength() == 0 {
 					mFilterAll.Check()
 				}
-				log.Printf("Card filter updated: %v", allowedCardTypes)
 			case <-mFilterDESFire.ClickedCh:
 				mFilterAll.Uncheck()
+
+				agent.SetAllowCardType(CardTypeDesfire, !mFilterDESFire.Checked())
+
 				if mFilterDESFire.Checked() {
 					mFilterDESFire.Uncheck()
-					delete(allowedCardTypes, "DESFire")
 				} else {
 					mFilterDESFire.Check()
-					allowedCardTypes["DESFire"] = true
 				}
 				// Check if no filters active, then revert to All
-				if len(allowedCardTypes) == 0 {
+				if agent.AllowedCardTypesLength() == 0 {
 					mFilterAll.Check()
 				}
-				log.Printf("Card filter updated: %v", allowedCardTypes)
 			case <-mFilterType4.ClickedCh:
 				mFilterAll.Uncheck()
+
+				agent.SetAllowCardType(CardTypeType4, !mFilterType4.Checked())
+
 				if mFilterType4.Checked() {
 					mFilterType4.Uncheck()
-					delete(allowedCardTypes, string(nfc.TagTypeType4))
 				} else {
 					mFilterType4.Check()
-					allowedCardTypes[string(nfc.TagTypeType4)] = true
 				}
+
 				// Check if no filters active, then revert to All
-				if len(allowedCardTypes) == 0 {
+				if agent.AllowedCardTypesLength() == 0 {
 					mFilterAll.Check()
 				}
-				log.Printf("Card filter updated: %v", allowedCardTypes)
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
@@ -362,10 +311,9 @@ func onReady() {
 						currentDevice = deviceName
 
 						// Restart agent with new device
-						wasRunning := nfcReader != nil
-						if wasRunning {
-							stopAgent()
-							if err := startAgentWithDevice(currentDevice); err == nil {
+						if agent.Reader != nil {
+							agent.Stop()
+							if err := agent.Start(currentDevice); err == nil {
 								mStatus.SetTitle("Running")
 								mConnection.SetTitle("Connection: Connected (" + currentDevice + ")")
 								mStop.Enable()
@@ -387,23 +335,28 @@ func onReady() {
 }
 
 func onExit() {
-	stopAgent()
+	agent.Stop()
 }
 
 func main() {
 	// Command line flags
 	flag.StringVar(&devicePathFlag, "device", "", "Path to NFC device (optional)")
-	flag.IntVar(&portFlag, "port", defaultPort, "Port to listen on for the web interface")
+	flag.IntVar(&portFlag, "port", DEFAULT_PORT, "Port to listen on for the web interface")
 	flag.BoolVar(&systrayFlag, "cli", false, "Run in CLI mode (default: system tray mode)")
 	flag.StringVar(&apiSecretFlag, "api-secret", "", "API secret for session handshake (optional)")
 	flag.Parse()
 
+	agent = NewAgent(nfc.NewManager())
+
+	agent.ServerPort = portFlag
+	agent.APISecret = apiSecretFlag
+
 	// Run in CLI mode only if explicitly requested
 	if systrayFlag {
-		if err := startAgentWithDevice(devicePathFlag); err != nil {
+		if err := agent.Start(devicePathFlag); err != nil {
 			log.Fatalf("Failed to start agent: %v", err)
 		}
-		defer stopAgent()
+		defer agent.Stop()
 
 		// Set up signal handling for graceful shutdown
 		sigChan := make(chan os.Signal, 1)
