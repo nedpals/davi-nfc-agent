@@ -730,6 +730,13 @@ jobs:
           echo '' >> /tmp/nfc_patch.h
           cat $BUILD_ROOT/include/nfc/nfc.h >> /tmp/nfc_patch.h
           mv /tmp/nfc_patch.h $BUILD_ROOT/include/nfc/nfc.h
+
+          # Verify the patch and library installation
+          echo "=== Checking nfc.h patch ==="
+          head -5 $BUILD_ROOT/include/nfc/nfc.h
+          echo "=== Checking installed libraries ==="
+          ls -lh $BUILD_ROOT/lib/libnfc* || true
+          ls -lh $BUILD_ROOT/lib/pkgconfig/libnfc.pc || true
           cd ..
 
       - name: Build libfreefare for Windows
@@ -880,6 +887,11 @@ jobs:
           CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT=
           CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -static
         run: |
+          echo "=== Verifying build environment ==="
+          echo "CGO_CFLAGS: $CGO_CFLAGS"
+          echo "CGO_LDFLAGS: $CGO_LDFLAGS"
+          ls -lh ${{ env.BUILD_ROOT }}/lib/*.a | grep -E '(nfc|freefare)' || true
+          echo "=== Building Go binary ==="
           go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
 
       - name: Upload artifact
