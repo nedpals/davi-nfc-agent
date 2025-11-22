@@ -723,7 +723,11 @@ jobs:
           make -C include/nfc install
           make install-pkgconfigDATA
 
-          # Patch the installed nfc.h to force static declarations on Windows
+          # Patch the installed nfc.h to remove any existing NFC_EXPORT definition and force static linking
+          # We need to remove the original #ifndef NFC_EXPORT block and replace it
+          sed -i '/#ifndef NFC_EXPORT/,/#endif.*NFC_EXPORT/d' $BUILD_ROOT/include/nfc/nfc.h
+
+          # Add our static definition at the top
           echo '#ifndef NFC_EXPORT' > /tmp/nfc_patch.h
           echo '#define NFC_EXPORT' >> /tmp/nfc_patch.h
           echo '#endif' >> /tmp/nfc_patch.h
@@ -733,7 +737,7 @@ jobs:
 
           # Verify the patch and library installation
           echo "=== Checking nfc.h patch ==="
-          head -5 $BUILD_ROOT/include/nfc/nfc.h
+          head -10 $BUILD_ROOT/include/nfc/nfc.h
           echo "=== Checking installed libraries ==="
           ls -lh $BUILD_ROOT/lib/libnfc* || true
           ls -lh $BUILD_ROOT/lib/pkgconfig/libnfc.pc || true
