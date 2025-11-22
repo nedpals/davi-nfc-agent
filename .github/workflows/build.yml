@@ -804,6 +804,56 @@ jobs:
           # Verify nfc headers are installed
           ls -la $BUILD_ROOT/include/nfc/
 
+          # Create a minimal err.h for Windows
+          cat > $BUILD_ROOT/include/err.h << 'EOF'
+          #ifndef _ERR_H_COMPAT
+          #define _ERR_H_COMPAT
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <stdarg.h>
+          #include <errno.h>
+          #include <string.h>
+
+          static inline void err(int eval, const char *fmt, ...) {
+              va_list ap;
+              va_start(ap, fmt);
+              if (fmt) {
+                  vfprintf(stderr, fmt, ap);
+                  fprintf(stderr, ": %s\n", strerror(errno));
+              }
+              va_end(ap);
+              exit(eval);
+          }
+
+          static inline void errx(int eval, const char *fmt, ...) {
+              va_list ap;
+              va_start(ap, fmt);
+              if (fmt) vfprintf(stderr, fmt, ap);
+              fprintf(stderr, "\n");
+              va_end(ap);
+              exit(eval);
+          }
+
+          static inline void warn(const char *fmt, ...) {
+              va_list ap;
+              va_start(ap, fmt);
+              if (fmt) {
+                  vfprintf(stderr, fmt, ap);
+                  fprintf(stderr, ": %s\n", strerror(errno));
+              }
+              va_end(ap);
+          }
+
+          static inline void warnx(const char *fmt, ...) {
+              va_list ap;
+              va_start(ap, fmt);
+              if (fmt) vfprintf(stderr, fmt, ap);
+              fprintf(stderr, "\n");
+              va_end(ap);
+          }
+          #endif
+          EOF
+
           # Build only the library - run from top level so CFLAGS propagate correctly
           make -j$(nproc) -C libfreefare CFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/nfc -DLIBNFC_STATIC"
           make -C libfreefare install
