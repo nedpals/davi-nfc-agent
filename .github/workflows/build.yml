@@ -695,31 +695,39 @@ jobs:
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
-          # Patch nfc.c and log.c to include windows.h for setenv/unsetenv compatibility
-          for file in libnfc/nfc.c libnfc/log.c; do
-            echo '#ifdef _WIN32' > /tmp/patch_header.txt
-            echo '#include "contrib/windows.h"' >> /tmp/patch_header.txt
-            echo '#endif' >> /tmp/patch_header.txt
-            cat "$file" >> /tmp/patch_header.txt
-            mv /tmp/patch_header.txt "$file"
-          done
+          # Create a Windows compatibility library for setenv/unsetenv
+          cat > $BUILD_ROOT/lib/windows_compat.c << 'EOF'
+          #include <stdlib.h>
+          #include <string.h>
+          #include <windows.h>
 
-          # Verify the patch worked
-          echo "=== Verifying nfc.c patch ==="
-          head -5 libnfc/nfc.c
-          echo "=== Verifying log.c patch ==="
-          head -5 libnfc/log.c
+          int setenv(const char *name, const char *value, int overwrite) {
+              if (!overwrite && getenv(name)) {
+                  return 0;
+              }
+              size_t len = strlen(name) + strlen(value) + 2;
+              char *str = malloc(len);
+              if (!str) return -1;
+              snprintf(str, len, "%s=%s", name, value);
+              int ret = _putenv(str);
+              free(str);
+              return ret;
+          }
 
-          # Patch examples and utils
-          for file in $(find examples utils -name "*.c" 2>/dev/null || true); do
-            if [ -f "$file" ]; then
-              echo '#ifdef _WIN32' > /tmp/patch_header.txt
-              echo '#include "contrib/windows.h"' >> /tmp/patch_header.txt
-              echo '#endif' >> /tmp/patch_header.txt
-              cat "$file" >> /tmp/patch_header.txt
-              mv /tmp/patch_header.txt "$file"
-            fi
-          done
+          int unsetenv(const char *name) {
+              size_t len = strlen(name) + 2;
+              char *str = malloc(len);
+              if (!str) return -1;
+              snprintf(str, len, "%s=", name);
+              int ret = _putenv(str);
+              free(str);
+              return ret;
+          }
+          EOF
+
+          # Compile the compatibility library
+          zig cc -target ${{ matrix.zig_target }} -c $BUILD_ROOT/lib/windows_compat.c -o $BUILD_ROOT/lib/windows_compat.o
+          zig ar rcs $BUILD_ROOT/lib/libwindows_compat.a $BUILD_ROOT/lib/windows_compat.o
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
@@ -911,7 +919,7 @@ jobs:
           CC: zig cc -target ${{ matrix.zig_target }}
           CXX: zig c++ -target ${{ matrix.zig_target }}
           CGO_CFLAGS: "-I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT="
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -ldnsapi -static
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lwindows_compat -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -ldnsapi -static
         run: |
           go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
 
