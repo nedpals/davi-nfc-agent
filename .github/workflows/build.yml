@@ -10,6 +10,7 @@ env:
   LIBNFC_VERSION: "1.8.0"
   LIBFREEFARE_VERSION: "0.4.0"
   LIBUSB_VERSION: "1.0.27"
+  LIBUSB_COMPAT_VERSION: "0.1.8"
 
 jobs:
   build-linux:
@@ -79,6 +80,33 @@ jobs:
           find $BUILD_ROOT -name "libusb.h" || echo "libusb.h not found"
           find $BUILD_ROOT -name "*.pc" || echo "No .pc files found"
 
+      - name: Build libusb-compat for ${{ matrix.arch }}
+        run: |
+          # libusb-compat provides the old libusb-0.1 API (usb.h) on top of libusb-1.0
+          wget https://github.com/libusb/libusb-compat-0.1/releases/download/v${{ env.LIBUSB_COMPAT_VERSION }}/libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
+          tar xjf libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
+          cd libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}
+
+          # Cross-compile with Zig
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          ./configure \
+            --host=${{ matrix.zig_target }} \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
+
+          make -j$(nproc)
+          make install
+          cd ..
+
+          echo "=== Verifying libusb-compat installation ==="
+          find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
+          find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
+
       - name: Build libnfc for ${{ matrix.arch }}
         run: |
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
@@ -114,7 +142,7 @@ jobs:
           zig cc -target ${{ matrix.zig_target }} $LIBUSB_CFLAGS -c test.c && echo "libusb header test: SUCCESS" || echo "libusb header test: FAILED"
 
           # Cross-compile with Zig - use pkg-config values
-          # Note: --without-libusb disables old libusb-0.1 API (the one looking for usb.h)
+          # Now that we have libusb-compat, the USB drivers will work
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
@@ -127,7 +155,6 @@ jobs:
             --prefix=$BUILD_ROOT \
             --enable-static \
             --disable-shared \
-            --without-libusb \
             --with-drivers=pn53x_usb,acr122_usb || (cat config.log && exit 1)
 
           make -j$(nproc)
@@ -244,6 +271,33 @@ jobs:
           find $BUILD_ROOT -name "libusb.h" || echo "libusb.h not found"
           find $BUILD_ROOT -name "*.pc" || echo "No .pc files found"
 
+      - name: Build libusb-compat for ${{ matrix.arch }}
+        run: |
+          # libusb-compat provides the old libusb-0.1 API (usb.h) on top of libusb-1.0
+          wget https://github.com/libusb/libusb-compat-0.1/releases/download/v${{ env.LIBUSB_COMPAT_VERSION }}/libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
+          tar xjf libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
+          cd libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}
+
+          SDK_PATH=$(xcrun --show-sdk-path)
+          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
+
+          # Build with native clang
+          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
+          LDFLAGS="-arch $ARCH_FLAG" \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          ./configure \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
+
+          make -j$(sysctl -n hw.ncpu)
+          make install
+          cd ..
+
+          echo "=== Verifying libusb-compat installation ==="
+          find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
+          find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
+
       - name: Build libnfc for ${{ matrix.arch }}
         run: |
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
@@ -278,7 +332,6 @@ jobs:
             --prefix=$BUILD_ROOT \
             --enable-static \
             --disable-shared \
-            --without-libusb \
             --with-drivers=pn53x_usb,acr122_usb
 
           make -j$(sysctl -n hw.ncpu)
@@ -411,6 +464,33 @@ jobs:
           Cflags: -I\${includedir}/libusb-1.0
           EOF
 
+      - name: Build libusb-compat for Windows
+        run: |
+          # libusb-compat provides the old libusb-0.1 API (usb.h) on top of libusb-1.0
+          wget https://github.com/libusb/libusb-compat-0.1/releases/download/v${{ env.LIBUSB_COMPAT_VERSION }}/libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
+          tar xjf libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
+          cd libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}
+
+          # Cross-compile with Zig
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          ./configure \
+            --host=x86_64-w64-mingw32 \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
+
+          make -j$(nproc)
+          make install
+          cd ..
+
+          echo "=== Verifying libusb-compat installation ==="
+          find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
+          find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
+
       - name: Build libnfc for Windows
         run: |
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
@@ -445,7 +525,6 @@ jobs:
             --prefix=$BUILD_ROOT \
             --enable-static \
             --disable-shared \
-            --without-libusb \
             --with-drivers=pn53x_usb,acr122_usb
 
           make -j$(nproc)
