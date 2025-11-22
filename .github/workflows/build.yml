@@ -800,8 +800,11 @@ jobs:
             --enable-static \
             --disable-shared
 
-          # Build only the library
-          make -j$(nproc) -C libfreefare
+          # Verify nfc headers are installed
+          ls -la $BUILD_ROOT/include/nfc/
+
+          # Build only the library - run from top level so CFLAGS propagate correctly
+          make -j$(nproc) -C libfreefare CFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/nfc -DLIBNFC_STATIC"
           make -C libfreefare install
           cd ..
 
