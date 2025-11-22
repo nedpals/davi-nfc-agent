@@ -11,6 +11,7 @@ env:
   LIBFREEFARE_VERSION: "0.4.0"
   LIBUSB_VERSION: "1.0.27"
   LIBUSB_COMPAT_VERSION: "0.1.8"
+  OPENSSL_VERSION: "1.1.1w"
 
 jobs:
   build-linux:
@@ -43,7 +44,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config autoconf automake libtool wget libssl-dev
+          sudo apt-get install -y pkg-config autoconf automake libtool wget
 
       - name: Setup build directory
         run: |
@@ -106,6 +107,30 @@ jobs:
           echo "=== Verifying libusb-compat installation ==="
           find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
           find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
+
+      - name: Build OpenSSL for ${{ matrix.arch }}
+        run: |
+          wget https://www.openssl.org/source/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
+          tar xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
+          cd openssl-${{ env.OPENSSL_VERSION }}
+
+          # Configure OpenSSL for cross-compilation
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            OPENSSL_TARGET="linux-x86_64"
+          else
+            OPENSSL_TARGET="linux-aarch64"
+          fi
+
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          ./Configure $OPENSSL_TARGET \
+            --prefix=$BUILD_ROOT \
+            --openssldir=$BUILD_ROOT/ssl \
+            no-shared \
+            no-tests
+
+          make -j$(nproc)
+          make install_sw
+          cd ..
 
       - name: Build libnfc for ${{ matrix.arch }}
         run: |
@@ -303,6 +328,34 @@ jobs:
           find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
           find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
 
+      - name: Build OpenSSL for ${{ matrix.arch }}
+        run: |
+          wget https://www.openssl.org/source/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
+          tar xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
+          cd openssl-${{ env.OPENSSL_VERSION }}
+
+          SDK_PATH=$(xcrun --show-sdk-path)
+          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
+
+          # Configure OpenSSL for macOS
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            OPENSSL_TARGET="darwin64-x86_64-cc"
+          else
+            OPENSSL_TARGET="darwin64-arm64-cc"
+          fi
+
+          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
+          LDFLAGS="-arch $ARCH_FLAG" \
+          ./Configure $OPENSSL_TARGET \
+            --prefix=$BUILD_ROOT \
+            --openssldir=$BUILD_ROOT/ssl \
+            no-shared \
+            no-tests
+
+          make -j$(sysctl -n hw.ncpu)
+          make install_sw
+          cd ..
+
       - name: Build libnfc for ${{ matrix.arch }}
         run: |
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
@@ -412,7 +465,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config autoconf automake libtool wget libssl-dev
+          sudo apt-get install -y pkg-config autoconf automake libtool wget
 
       - name: Setup build directory
         run: |
@@ -497,6 +550,25 @@ jobs:
           find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
           find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
 
+      - name: Build OpenSSL for Windows
+        run: |
+          wget https://www.openssl.org/source/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
+          tar xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
+          cd openssl-${{ env.OPENSSL_VERSION }}
+
+          # Configure OpenSSL for Windows with Zig
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          ./Configure mingw64 \
+            --prefix=$BUILD_ROOT \
+            --openssldir=$BUILD_ROOT/ssl \
+            --cross-compile-prefix=x86_64-w64-mingw32- \
+            no-shared \
+            no-tests
+
+          make -j$(nproc)
+          make install_sw
+          cd ..
+
       - name: Build libnfc for Windows
         run: |
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
@@ -523,12 +595,15 @@ jobs:
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
+          # Patch nfc.c to include windows.h for setenv/unsetenv compatibility
+          sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/nfc.c
+
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -DHAVE_WINSCARD_H $LIBUSB_CFLAGS" \
+          CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -I$(pwd) -DHAVE_WINSCARD_H $LIBUSB_CFLAGS" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
           LIBS="-lusb $LIBUSB_LIBS -lws2_32" \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
