@@ -224,10 +224,6 @@ jobs:
             CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
           fi
 
-          # Fix missing stdlib.h include in mifare_desfire_crypto.c
-          awk '/#include "mifare_desfire_crypto.h"/ {print; print "#include <stdlib.h>"; next} 1' libfreefare/mifare_desfire_crypto.c > libfreefare/mifare_desfire_crypto.c.tmp
-          mv libfreefare/mifare_desfire_crypto.c.tmp libfreefare/mifare_desfire_crypto.c
-
           # Cross-compile with Zig - pass LDFLAGS so configure can find libcrypto
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
@@ -243,6 +239,9 @@ jobs:
             --prefix=$BUILD_ROOT \
             --enable-static \
             --disable-shared
+
+          # Fix missing stdlib.h include in mifare_desfire_crypto.c (after configure)
+          sed -i '1i#include <stdlib.h>' libfreefare/mifare_desfire_crypto.c
 
           make -j$(nproc)
           make install
@@ -760,6 +759,9 @@ jobs:
           #endif
           EOF
 
+          # Verify libcrypto exists
+          ls -la $BUILD_ROOT/lib/libcrypto.a
+
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
@@ -767,10 +769,10 @@ jobs:
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
           CFLAGS="-I$BUILD_ROOT/include -DLIBNFC_STATIC" \
           CPPFLAGS="-DLIBNFC_STATIC" \
-          LDFLAGS="-L$BUILD_ROOT/lib" \
-          LIBS="-lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32" \
+          LDFLAGS="-L$BUILD_ROOT/lib -static" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
-          CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32" \
+          CRYPTO_LIBS="-L$BUILD_ROOT/lib $BUILD_ROOT/lib/libcrypto.a -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32" \
+          ac_cv_lib_crypto_DES_ecb_encrypt=yes \
           ./configure \
             --host=x86_64-w64-mingw32 \
             --prefix=$BUILD_ROOT \
