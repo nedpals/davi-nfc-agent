@@ -108,19 +108,28 @@ jobs:
 
       - name: Set up cross-compilation environment
         run: |
-          # Linux cross-compilation using Zig
-          # Use the correct target format for Zig: <arch>-<os>-<abi>
+          # Detect system architecture
+          CURRENT_ARCH=$(uname -m)
+          echo "Current architecture: $CURRENT_ARCH"
+
+          # Detect system glibc version
+          GLIBC_VERSION=$(ldd --version | head -n1 | grep -oP '\d+\.\d+$')
+          echo "Detected glibc version: $GLIBC_VERSION"
 
           # Set CGO flags to include libnfc and libfreefare headers/libs
           echo "CGO_CFLAGS=-I/usr/include -I/usr/include/nfc" >> $GITHUB_ENV
           echo "CGO_LDFLAGS=-L/usr/lib -L/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
 
+          # Use native compiler for amd64 since GitHub runners are x86_64
+          # Only use Zig for cross-compilation to arm64
           if [[ "${{ matrix.arch }}" == "amd64" ]]; then
-            echo "CC=zig cc -target x86_64-linux-gnu" >> $GITHUB_ENV
-            echo "CXX=zig c++ -target x86_64-linux-gnu" >> $GITHUB_ENV
+            echo "CC=gcc" >> $GITHUB_ENV
+            echo "CXX=g++" >> $GITHUB_ENV
+            echo "Using native GCC for amd64"
           elif [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            echo "CC=zig cc -target aarch64-linux-gnu" >> $GITHUB_ENV
-            echo "CXX=zig c++ -target aarch64-linux-gnu" >> $GITHUB_ENV
+            echo "CC=zig cc -target aarch64-linux-gnu.${GLIBC_VERSION}" >> $GITHUB_ENV
+            echo "CXX=zig c++ -target aarch64-linux-gnu.${GLIBC_VERSION}" >> $GITHUB_ENV
+            echo "Using Zig for arm64 cross-compilation"
           fi
 
       - name: Build
