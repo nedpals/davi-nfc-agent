@@ -56,7 +56,7 @@ jobs:
           tar xjf libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
           cd libusb-${{ env.LIBUSB_VERSION }}
 
-          # Cross-compile with Zig
+          # Cross-compile with Zig - disable udev for cross-compilation
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
@@ -65,7 +65,8 @@ jobs:
             --host=${{ matrix.zig_target }} \
             --prefix=$BUILD_ROOT \
             --enable-static \
-            --disable-shared
+            --disable-shared \
+            --disable-udev
 
           make -j$(nproc)
           make install
@@ -183,10 +184,12 @@ jobs:
           tar xjf libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
           cd libusb-${{ env.LIBUSB_VERSION }}
 
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
+          # Get SDK path for frameworks
+          SDK_PATH=$(xcrun --show-sdk-path)
+
+          # Build with native clang (not Zig) to avoid framework issues
+          CFLAGS="-arch ${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }} -isysroot $SDK_PATH" \
+          LDFLAGS="-arch ${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}" \
           ./configure \
             --prefix=$BUILD_ROOT \
             --enable-static \
@@ -203,10 +206,11 @@ jobs:
           cd libnfc-${{ env.LIBNFC_VERSION }}
           autoreconf -vis
 
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
+          SDK_PATH=$(xcrun --show-sdk-path)
+          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
+
+          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
+          LDFLAGS="-arch $ARCH_FLAG" \
           PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
           ./configure \
             --prefix=$BUILD_ROOT \
@@ -225,10 +229,11 @@ jobs:
           cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
           autoreconf -vis
 
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
+          SDK_PATH=$(xcrun --show-sdk-path)
+          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
+
+          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
+          LDFLAGS="-arch $ARCH_FLAG" \
           PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
           ./configure \
             --prefix=$BUILD_ROOT \
@@ -244,11 +249,14 @@ jobs:
           CGO_ENABLED: 1
           GOOS: darwin
           GOARCH: ${{ matrix.go_arch }}
-          CC: zig cc -target ${{ matrix.zig_target }}
-          CXX: zig c++ -target ${{ matrix.zig_target }}
           CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -framework IOKit -framework CoreFoundation
         run: |
+          SDK_PATH=$(xcrun --show-sdk-path)
+          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
+
+          CC="clang -arch $ARCH_FLAG -isysroot $SDK_PATH" \
+          CXX="clang++ -arch $ARCH_FLAG -isysroot $SDK_PATH" \
           go build -v -o davi-nfc-agent-darwin-${{ matrix.arch }} .
 
       - name: Upload artifact
@@ -290,25 +298,32 @@ jobs:
           echo "BUILD_ROOT=$HOME/cross-build/${{ matrix.arch }}" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$HOME/cross-build/${{ matrix.arch }}/lib/pkgconfig" >> $GITHUB_ENV
 
-      - name: Build libusb for Windows
+      - name: Download prebuilt libusb for Windows
         run: |
-          wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
-          tar xjf libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
-          cd libusb-${{ env.LIBUSB_VERSION }}
+          # Use prebuilt Windows binaries to avoid libtool/Zig issues
+          wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.7z
+          7z x libusb-${{ env.LIBUSB_VERSION }}.7z
 
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          ./configure \
-            --host=x86_64-w64-mingw32 \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared
+          # Copy to build root
+          mkdir -p $BUILD_ROOT/include/libusb-1.0
+          mkdir -p $BUILD_ROOT/lib
+          cp libusb-${{ env.LIBUSB_VERSION }}/include/libusb-1.0/*.h $BUILD_ROOT/include/libusb-1.0/
+          cp libusb-${{ env.LIBUSB_VERSION }}/MinGW64/static/libusb-1.0.a $BUILD_ROOT/lib/
 
-          make -j$(nproc)
-          make install
-          cd ..
+          # Create pkg-config file
+          mkdir -p $BUILD_ROOT/lib/pkgconfig
+          cat > $BUILD_ROOT/lib/pkgconfig/libusb-1.0.pc << EOF
+          prefix=$BUILD_ROOT
+          exec_prefix=\${prefix}
+          libdir=\${exec_prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: libusb-1.0
+          Description: C API for USB device access
+          Version: ${{ env.LIBUSB_VERSION }}
+          Libs: -L\${libdir} -lusb-1.0
+          Cflags: -I\${includedir}/libusb-1.0
+          EOF
 
       - name: Build libnfc for Windows
         run: |
