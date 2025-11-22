@@ -122,6 +122,8 @@ jobs:
           fi
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
           ./Configure $OPENSSL_TARGET \
             --prefix=$BUILD_ROOT \
             --openssldir=$BUILD_ROOT/ssl \
@@ -131,6 +133,20 @@ jobs:
           make -j$(nproc)
           make install_sw
           cd ..
+
+          # Create pkg-config file for libcrypto
+          cat > $BUILD_ROOT/lib/pkgconfig/libcrypto.pc << EOF
+          prefix=$BUILD_ROOT
+          exec_prefix=\${prefix}
+          libdir=\${exec_prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: OpenSSL-libcrypto
+          Description: OpenSSL cryptography library
+          Version: ${{ env.OPENSSL_VERSION }}
+          Libs: -L\${libdir} -lcrypto
+          Cflags: -I\${includedir}
+          EOF
 
       - name: Build libnfc for ${{ matrix.arch }}
         run: |
@@ -356,6 +372,20 @@ jobs:
           make install_sw
           cd ..
 
+          # Create pkg-config file for libcrypto
+          cat > $BUILD_ROOT/lib/pkgconfig/libcrypto.pc << EOF
+          prefix=$BUILD_ROOT
+          exec_prefix=\${prefix}
+          libdir=\${exec_prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: OpenSSL-libcrypto
+          Description: OpenSSL cryptography library
+          Version: ${{ env.OPENSSL_VERSION }}
+          Libs: -L\${libdir} -lcrypto
+          Cflags: -I\${includedir}
+          EOF
+
       - name: Build libnfc for ${{ matrix.arch }}
         run: |
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
@@ -556,18 +586,34 @@ jobs:
           tar xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
           cd openssl-${{ env.OPENSSL_VERSION }}
 
-          # Configure OpenSSL for Windows with Zig
+          # Configure OpenSSL for Windows with Zig - don't use cross-compile-prefix
           CC="zig cc -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          RC="llvm-rc" \
           ./Configure mingw64 \
             --prefix=$BUILD_ROOT \
             --openssldir=$BUILD_ROOT/ssl \
-            --cross-compile-prefix=x86_64-w64-mingw32- \
             no-shared \
             no-tests
 
           make -j$(nproc)
           make install_sw
           cd ..
+
+          # Create pkg-config file for libcrypto
+          cat > $BUILD_ROOT/lib/pkgconfig/libcrypto.pc << EOF
+          prefix=$BUILD_ROOT
+          exec_prefix=\${prefix}
+          libdir=\${exec_prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: OpenSSL-libcrypto
+          Description: OpenSSL cryptography library
+          Version: ${{ env.OPENSSL_VERSION }}
+          Libs: -L\${libdir} -lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32
+          Cflags: -I\${includedir}
+          EOF
 
       - name: Build libnfc for Windows
         run: |
