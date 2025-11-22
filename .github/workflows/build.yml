@@ -93,10 +93,28 @@ jobs:
           sudo make install
           cd ..
 
+      - name: Verify libnfc installation
+        run: |
+          # Verify libnfc headers are installed
+          echo "Checking for nfc/nfc.h..."
+          find /usr/include -name "nfc.h" 2>/dev/null || echo "nfc.h not found in /usr/include"
+
+          # Check pkg-config
+          pkg-config --cflags --libs libnfc || echo "pkg-config cannot find libnfc"
+          pkg-config --cflags --libs libfreefare || echo "pkg-config cannot find libfreefare"
+
+          # List installed packages
+          dpkg -l | grep -E "(libnfc|libfreefare)"
+
       - name: Set up cross-compilation environment
         run: |
           # Linux cross-compilation using Zig
           # Use the correct target format for Zig: <arch>-<os>-<abi>
+
+          # Set CGO flags to include libnfc and libfreefare headers/libs
+          echo "CGO_CFLAGS=-I/usr/include -I/usr/include/nfc" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L/usr/lib -L/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
+
           if [[ "${{ matrix.arch }}" == "amd64" ]]; then
             echo "CC=zig cc -target x86_64-linux-gnu" >> $GITHUB_ENV
             echo "CXX=zig c++ -target x86_64-linux-gnu" >> $GITHUB_ENV
@@ -104,7 +122,7 @@ jobs:
             echo "CC=zig cc -target aarch64-linux-gnu" >> $GITHUB_ENV
             echo "CXX=zig c++ -target aarch64-linux-gnu" >> $GITHUB_ENV
           fi
-          
+
       - name: Build
         env:
           GOOS: ${{ matrix.os }}
