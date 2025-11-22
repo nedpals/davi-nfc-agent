@@ -697,6 +697,7 @@ jobs:
 
           # Create a Windows compatibility library for setenv/unsetenv
           cat > $BUILD_ROOT/lib/windows_compat.c << 'EOF'
+          #include <stdio.h>
           #include <stdlib.h>
           #include <string.h>
           #include <windows.h>
