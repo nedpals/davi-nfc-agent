@@ -770,10 +770,14 @@ jobs:
           # Get libnfc flags from pkg-config
           export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
           if pkg-config --exists libnfc; then
+            echo "libnfc found via pkg-config"
             LIBNFC_CFLAGS=$(pkg-config --cflags libnfc)
             LIBNFC_LIBS=$(pkg-config --libs libnfc)
+            echo "LIBNFC_CFLAGS: $LIBNFC_CFLAGS"
+            echo "LIBNFC_LIBS: $LIBNFC_LIBS"
           else
-            LIBNFC_CFLAGS="-I$BUILD_ROOT/include"
+            echo "libnfc NOT found via pkg-config, using fallback"
+            LIBNFC_CFLAGS="-I$BUILD_ROOT/include/nfc"
             LIBNFC_LIBS="-L$BUILD_ROOT/lib -lnfc"
           fi
 
@@ -782,7 +786,7 @@ jobs:
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include -DLIBNFC_STATIC" \
+          CFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/nfc -DLIBNFC_STATIC" \
           CPPFLAGS="-DLIBNFC_STATIC" \
           LDFLAGS="-L$BUILD_ROOT/lib -static" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
