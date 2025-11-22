@@ -878,7 +878,7 @@ jobs:
           CC: zig cc -target ${{ matrix.zig_target }}
           CXX: zig c++ -target ${{ matrix.zig_target }}
           CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT=
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -static
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -static
         run: |
           go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
 
