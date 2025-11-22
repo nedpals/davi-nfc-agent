@@ -225,7 +225,8 @@ jobs:
           fi
 
           # Fix missing stdlib.h include in mifare_desfire_crypto.c
-          sed -i $'/#include "mifare_desfire_crypto.h"/a\\\n#include <stdlib.h>' libfreefare/mifare_desfire_crypto.c
+          awk '/#include "mifare_desfire_crypto.h"/ {print; print "#include <stdlib.h>"; next} 1' libfreefare/mifare_desfire_crypto.c > libfreefare/mifare_desfire_crypto.c.tmp
+          mv libfreefare/mifare_desfire_crypto.c.tmp libfreefare/mifare_desfire_crypto.c
 
           # Cross-compile with Zig - pass LDFLAGS so configure can find libcrypto
           CC="zig cc -target ${{ matrix.zig_target }}" \
@@ -506,7 +507,7 @@ jobs:
           GOOS: darwin
           GOARCH: ${{ matrix.go_arch }}
           CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -framework IOKit -framework CoreFoundation
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lcrypto -lusb-1.0 -framework IOKit -framework CoreFoundation -framework Security
         run: |
           SDK_PATH=$(xcrun --show-sdk-path)
           ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
@@ -767,8 +768,9 @@ jobs:
           CFLAGS="-I$BUILD_ROOT/include -DLIBNFC_STATIC" \
           CPPFLAGS="-DLIBNFC_STATIC" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
+          LIBS="-lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
-          CRYPTO_LIBS="$CRYPTO_LIBS" \
+          CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32" \
           ./configure \
             --host=x86_64-w64-mingw32 \
             --prefix=$BUILD_ROOT \
