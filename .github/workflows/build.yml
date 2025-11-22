@@ -214,12 +214,24 @@ jobs:
           cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
           autoreconf -vis
 
+          # Get crypto flags from pkg-config
+          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
+          if pkg-config --exists libcrypto; then
+            CRYPTO_CFLAGS=$(pkg-config --cflags libcrypto)
+            CRYPTO_LIBS=$(pkg-config --libs libcrypto)
+          else
+            CRYPTO_CFLAGS="-I$BUILD_ROOT/include"
+            CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
+          fi
+
           # Cross-compile with Zig
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
+          CRYPTO_LIBS="$CRYPTO_LIBS" \
           ./configure \
             --host=${{ matrix.zig_target }} \
             --prefix=$BUILD_ROOT \
@@ -437,9 +449,21 @@ jobs:
           SDK_PATH=$(xcrun --show-sdk-path)
           ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
 
+          # Get crypto flags from pkg-config
+          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
+          if pkg-config --exists libcrypto; then
+            CRYPTO_CFLAGS=$(pkg-config --cflags libcrypto)
+            CRYPTO_LIBS=$(pkg-config --libs libcrypto)
+          else
+            CRYPTO_CFLAGS="-I$BUILD_ROOT/include"
+            CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
+          fi
+
           CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
           LDFLAGS="-arch $ARCH_FLAG" \
-          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
+          CRYPTO_LIBS="$CRYPTO_LIBS" \
           ./configure \
             --prefix=$BUILD_ROOT \
             --enable-static \
@@ -586,19 +610,19 @@ jobs:
           tar xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
           cd openssl-${{ env.OPENSSL_VERSION }}
 
-          # Configure OpenSSL for Windows with Zig - don't use cross-compile-prefix
+          # Configure OpenSSL for Windows with Zig - skip resource compilation
           CC="zig cc -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
-          RC="llvm-rc" \
           ./Configure mingw64 \
             --prefix=$BUILD_ROOT \
             --openssldir=$BUILD_ROOT/ssl \
             no-shared \
             no-tests
 
-          make -j$(nproc)
-          make install_sw
+          # Make without RC (resource compiler) - we don't need .res files for static libs
+          make -j$(nproc) build_libs
+          make install_dev
           cd ..
 
           # Create pkg-config file for libcrypto
@@ -672,11 +696,23 @@ jobs:
           cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
           autoreconf -vis
 
+          # Get crypto flags from pkg-config
+          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
+          if pkg-config --exists libcrypto; then
+            CRYPTO_CFLAGS=$(pkg-config --cflags libcrypto)
+            CRYPTO_LIBS=$(pkg-config --libs libcrypto)
+          else
+            CRYPTO_CFLAGS="-I$BUILD_ROOT/include"
+            CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32"
+          fi
+
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
+          CRYPTO_LIBS="$CRYPTO_LIBS" \
           ./configure \
             --host=x86_64-w64-mingw32 \
             --prefix=$BUILD_ROOT \
