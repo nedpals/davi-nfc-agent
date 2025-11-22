@@ -718,6 +718,9 @@ jobs:
           # Build only the library, skip examples and utils
           make -j$(nproc) -C libnfc
           make -C libnfc install
+
+          # Install pkg-config file manually since we're not running top-level make install
+          make install-pkgconfigDATA
           cd ..
 
       - name: Build libfreefare for Windows
