@@ -695,10 +695,10 @@ jobs:
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
-          # Comment out setenv/unsetenv calls in libnfc (they're just for debug logging)
-          sed -i 's/setenv(/\/\/setenv(/g' libnfc/nfc.c
-          sed -i 's/unsetenv(/\/\/unsetenv(/g' libnfc/nfc.c
-          sed -i 's/setenv(/\/\/setenv(/g' libnfc/log.c
+          # Patch nfc.c, log.c, and utils to include windows.h for setenv/unsetenv compatibility
+          sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/nfc.c
+          sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/log.c
+          find examples utils -name "*.c" -exec sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' {} \;
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
@@ -717,9 +717,6 @@ jobs:
             --enable-static \
             --disable-shared \
             --with-drivers=pn53x_usb,acr122_usb
-
-          # Clean any existing build artifacts to ensure patches are picked up
-          make -C libnfc clean || true
 
           # Build only the library, skip examples and utils
           make -j$(nproc) -C libnfc
@@ -742,6 +739,14 @@ jobs:
           cat $BUILD_ROOT/include/nfc/nfc.h >> /tmp/nfc_patch.h
           mv /tmp/nfc_patch.h $BUILD_ROOT/include/nfc/nfc.h
 
+          # Verify the patch and library installation
+          echo "=== Checking nfc.h patch ==="
+          head -10 $BUILD_ROOT/include/nfc/nfc.h
+          echo "=== Verifying no dllimport in header ==="
+          grep -n "define.*NFC_EXPORT" $BUILD_ROOT/include/nfc/nfc.h | head -5 || echo "No NFC_EXPORT definitions found (good!)"
+          echo "=== Checking installed libraries ==="
+          ls -lh $BUILD_ROOT/lib/libnfc* || true
+          ls -lh $BUILD_ROOT/lib/pkgconfig/libnfc.pc || true
           cd ..
 
       - name: Build libfreefare for Windows
@@ -890,9 +895,28 @@ jobs:
           CC: zig cc -target ${{ matrix.zig_target }}
           CXX: zig c++ -target ${{ matrix.zig_target }}
           CGO_CFLAGS: "-I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT="
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -ldnsapi -static
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -static
         run: |
-          go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
+          echo "=== Verifying build environment ==="
+          echo "CGO_CFLAGS: $CGO_CFLAGS"
+          echo "CGO_LDFLAGS: $CGO_LDFLAGS"
+          ls -lh ${{ env.BUILD_ROOT }}/lib/*.a | grep -E '(nfc|freefare)' || true
+
+          # Test if the header has the correct definition
+          echo "=== Testing NFC_EXPORT macro ==="
+          cat > /tmp/test_nfc_export.c << 'EOF'
+          #include <nfc/nfc.h>
+          #ifndef NFC_EXPORT
+          #error NFC_EXPORT not defined
+          #endif
+          #define STRINGIFY(x) #x
+          #define TOSTRING(x) STRINGIFY(x)
+          const char* nfc_export_value = TOSTRING(NFC_EXPORT);
+          EOF
+          zig cc -target ${{ matrix.zig_target }} -I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT= -E /tmp/test_nfc_export.c | grep -A2 "nfc_export_value" || echo "Could not find test output"
+
+          echo "=== Building Go binary ==="
+          go build -v -x -o davi-nfc-agent-windows-${{ matrix.arch }}.exe . 2>&1 | head -100
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
