@@ -704,6 +704,12 @@ jobs:
             mv /tmp/patch_header.txt "$file"
           done
 
+          # Verify the patch worked
+          echo "=== Verifying nfc.c patch ==="
+          head -5 libnfc/nfc.c
+          echo "=== Verifying log.c patch ==="
+          head -5 libnfc/log.c
+
           # Patch examples and utils
           for file in $(find examples utils -name "*.c" 2>/dev/null || true); do
             if [ -f "$file" ]; then
@@ -732,6 +738,9 @@ jobs:
             --enable-static \
             --disable-shared \
             --with-drivers=pn53x_usb,acr122_usb
+
+          # Clean any existing build artifacts to ensure patches are picked up
+          make -C libnfc clean || true
 
           # Build only the library, skip examples and utils
           make -j$(nproc) -C libnfc
