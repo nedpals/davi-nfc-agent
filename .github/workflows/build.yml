@@ -9,11 +9,22 @@ on:
 env:
   LIBNFC_VERSION: "1.8.0"
   LIBFREEFARE_VERSION: "0.4.0"
+  LIBUSB_VERSION: "1.0.27"
 
 jobs:
-  # Linux amd64 - Native compilation (no cross-compile)
-  build-linux-amd64:
+  build-linux:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            zig_target: x86_64-linux-gnu
+            go_arch: amd64
+          - os: linux
+            arch: arm64
+            zig_target: aarch64-linux-gnu
+            go_arch: arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -22,161 +33,348 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.11.0  # Use 0.11.0 - known working version
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config autoconf automake libtool libusb-1.0-0-dev
-          sudo apt-get install -y libnfc-dev libfreefare-dev
+          sudo apt-get install -y pkg-config autoconf automake libtool wget
 
-      - name: Verify installation
+      - name: Setup build directory
         run: |
-          pkg-config --modversion libnfc libfreefare
-          find /usr/include -name "nfc.h"
+          mkdir -p $HOME/cross-build/${{ matrix.arch }}
+          echo "BUILD_ROOT=$HOME/cross-build/${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$HOME/cross-build/${{ matrix.arch }}/lib/pkgconfig" >> $GITHUB_ENV
 
-      - name: Build
-        env:
-          CGO_ENABLED: 1
-          GOOS: linux
-          GOARCH: amd64
+      - name: Build libusb for ${{ matrix.arch }}
         run: |
-          go build -v -o davi-nfc-agent-linux-amd64 .
+          wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
+          tar xjf libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
+          cd libusb-${{ env.LIBUSB_VERSION }}
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: davi-nfc-agent-linux-amd64
-          path: davi-nfc-agent-linux-amd64
+          # Cross-compile with Zig
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          ./configure \
+            --host=${{ matrix.zig_target }} \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
 
-  # macOS - Native compilation using separate runners
-  build-macos-amd64:
-    runs-on: macos-13  # Intel runner
+          make -j$(nproc)
+          make install
+          cd ..
 
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install dependencies
-        run: |
-          brew install pkg-config libusb libnfc libfreefare
-
-      - name: Build
-        env:
-          CGO_ENABLED: 1
-          GOOS: darwin
-          GOARCH: amd64
-        run: |
-          go build -v -o davi-nfc-agent-darwin-amd64 .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: davi-nfc-agent-darwin-amd64
-          path: davi-nfc-agent-darwin-amd64
-
-  build-macos-arm64:
-    runs-on: macos-latest  # ARM64 runner
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install dependencies
-        run: |
-          brew install pkg-config libusb libnfc libfreefare
-
-      - name: Build
-        env:
-          CGO_ENABLED: 1
-          GOOS: darwin
-          GOARCH: arm64
-        run: |
-          go build -v -o davi-nfc-agent-darwin-arm64 .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: davi-nfc-agent-darwin-arm64
-          path: davi-nfc-agent-darwin-arm64
-
-  # Windows amd64 only - native build with MSYS2
-  build-windows-amd64:
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-pkg-config
-            mingw-w64-x86_64-libusb
-            autoconf
-            automake
-            libtool
-            git
-            wget
-
-      - name: Build libnfc
-        shell: msys2 {0}
+      - name: Build libnfc for ${{ matrix.arch }}
         run: |
           wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
           tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
           cd libnfc-${{ env.LIBNFC_VERSION }}
           autoreconf -vis
-          ./configure --prefix=/mingw64 --with-drivers=acr122_usb,arygon,pn53x_usb
-          make
+
+          # Cross-compile with Zig
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          ./configure \
+            --host=${{ matrix.zig_target }} \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared \
+            --with-drivers=pn53x_usb,acr122_usb
+
+          make -j$(nproc)
           make install
           cd ..
 
-      - name: Build libfreefare
-        shell: msys2 {0}
+      - name: Build libfreefare for ${{ matrix.arch }}
         run: |
           wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-${{ env.LIBFREEFARE_VERSION }}/libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
           tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
           cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
           autoreconf -vis
-          PKG_CONFIG_PATH=/mingw64/lib/pkgconfig ./configure --prefix=/mingw64
-          make
+
+          # Cross-compile with Zig
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          ./configure \
+            --host=${{ matrix.zig_target }} \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
+
+          make -j$(nproc)
           make install
           cd ..
 
-      - name: Build
-        shell: msys2 {0}
+      - name: Verify libraries
+        run: |
+          ls -la $BUILD_ROOT/lib/
+          pkg-config --modversion libnfc || echo "libnfc not found"
+          pkg-config --modversion libfreefare || echo "libfreefare not found"
+
+      - name: Build Go binary
         env:
           CGO_ENABLED: 1
-          GOOS: windows
-          GOARCH: amd64
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.go_arch }}
+          CC: zig cc -target ${{ matrix.zig_target }}
+          CXX: zig c++ -target ${{ matrix.zig_target }}
+          CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -static
         run: |
-          export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig"
-          pkg-config --modversion libnfc libfreefare
-          go build -v -o davi-nfc-agent-windows-amd64.exe .
+          go build -v -ldflags="-linkmode external -extldflags '-static'" -o davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: davi-nfc-agent-windows-amd64
-          path: davi-nfc-agent-windows-amd64.exe
+          name: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
+          path: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            zig_target: x86_64-macos
+            go_arch: amd64
+          - arch: arm64
+            zig_target: aarch64-macos
+            go_arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.11.0
+
+      - name: Install build dependencies
+        run: |
+          brew install autoconf automake libtool wget pkg-config
+
+      - name: Setup build directory
+        run: |
+          mkdir -p $HOME/cross-build/${{ matrix.arch }}
+          echo "BUILD_ROOT=$HOME/cross-build/${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$HOME/cross-build/${{ matrix.arch }}/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Build libusb for ${{ matrix.arch }}
+        run: |
+          wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
+          tar xjf libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
+          cd libusb-${{ env.LIBUSB_VERSION }}
+
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          ./configure \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
+
+          make -j$(sysctl -n hw.ncpu)
+          make install
+          cd ..
+
+      - name: Build libnfc for ${{ matrix.arch }}
+        run: |
+          wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
+          tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
+          cd libnfc-${{ env.LIBNFC_VERSION }}
+          autoreconf -vis
+
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          ./configure \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared \
+            --with-drivers=pn53x_usb,acr122_usb
+
+          make -j$(sysctl -n hw.ncpu)
+          make install
+          cd ..
+
+      - name: Build libfreefare for ${{ matrix.arch }}
+        run: |
+          wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-${{ env.LIBFREEFARE_VERSION }}/libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
+          tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
+          cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
+          autoreconf -vis
+
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          ./configure \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
+
+          make -j$(sysctl -n hw.ncpu)
+          make install
+          cd ..
+
+      - name: Build Go binary
+        env:
+          CGO_ENABLED: 1
+          GOOS: darwin
+          GOARCH: ${{ matrix.go_arch }}
+          CC: zig cc -target ${{ matrix.zig_target }}
+          CXX: zig c++ -target ${{ matrix.zig_target }}
+          CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib
+        run: |
+          go build -v -o davi-nfc-agent-darwin-${{ matrix.arch }} .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: davi-nfc-agent-darwin-${{ matrix.arch }}
+          path: davi-nfc-agent-darwin-${{ matrix.arch }}
+
+  build-windows:
+    runs-on: ubuntu-latest  # Cross-compile from Linux
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            zig_target: x86_64-windows-gnu
+            go_arch: amd64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.11.0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config autoconf automake libtool wget
+
+      - name: Setup build directory
+        run: |
+          mkdir -p $HOME/cross-build/${{ matrix.arch }}
+          echo "BUILD_ROOT=$HOME/cross-build/${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$HOME/cross-build/${{ matrix.arch }}/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Build libusb for Windows
+        run: |
+          wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
+          tar xjf libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
+          cd libusb-${{ env.LIBUSB_VERSION }}
+
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          ./configure \
+            --host=x86_64-w64-mingw32 \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
+
+          make -j$(nproc)
+          make install
+          cd ..
+
+      - name: Build libnfc for Windows
+        run: |
+          wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
+          tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
+          cd libnfc-${{ env.LIBNFC_VERSION }}
+          autoreconf -vis
+
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          ./configure \
+            --host=x86_64-w64-mingw32 \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared \
+            --with-drivers=pn53x_usb,acr122_usb
+
+          make -j$(nproc)
+          make install
+          cd ..
+
+      - name: Build libfreefare for Windows
+        run: |
+          wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-${{ env.LIBFREEFARE_VERSION }}/libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
+          tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
+          cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
+          autoreconf -vis
+
+          CC="zig cc -target ${{ matrix.zig_target }}" \
+          CXX="zig c++ -target ${{ matrix.zig_target }}" \
+          AR="zig ar" \
+          RANLIB="zig ranlib" \
+          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          ./configure \
+            --host=x86_64-w64-mingw32 \
+            --prefix=$BUILD_ROOT \
+            --enable-static \
+            --disable-shared
+
+          make -j$(nproc)
+          make install
+          cd ..
+
+      - name: Build Go binary
+        env:
+          CGO_ENABLED: 1
+          GOOS: windows
+          GOARCH: ${{ matrix.go_arch }}
+          CC: zig cc -target ${{ matrix.zig_target }}
+          CXX: zig c++ -target ${{ matrix.zig_target }}
+          CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib
+        run: |
+          go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: davi-nfc-agent-windows-${{ matrix.arch }}
+          path: davi-nfc-agent-windows-${{ matrix.arch }}.exe
 
   create-release:
-    needs: [build-linux-amd64, build-macos-amd64, build-macos-arm64, build-windows-amd64]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
 
