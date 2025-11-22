@@ -723,8 +723,16 @@ jobs:
           make -C include/nfc install
           make install-pkgconfigDATA
 
-          # Patch the installed nfc.h to always use static declarations on Windows
-          sed -i '1i#ifndef NFC_EXPORT\n#define NFC_EXPORT\n#endif' $BUILD_ROOT/include/nfc/nfc.h
+          # Patch the installed nfc.h to force static declarations on Windows
+          # Create a temp file with the patch at the beginning
+          cat > /tmp/nfc_patch.h << 'EOF'
+#ifndef NFC_EXPORT
+#define NFC_EXPORT
+#endif
+
+EOF
+          cat $BUILD_ROOT/include/nfc/nfc.h >> /tmp/nfc_patch.h
+          mv /tmp/nfc_patch.h $BUILD_ROOT/include/nfc/nfc.h
           cd ..
 
       - name: Build libfreefare for Windows
