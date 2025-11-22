@@ -225,12 +225,13 @@ jobs:
           fi
 
           # Cross-compile with Zig - pass LDFLAGS so configure can find libcrypto
+          # Use -std=gnu99 to get proper stdlib.h declarations
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include" \
+          CFLAGS="-I$BUILD_ROOT/include -std=gnu99" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
           CRYPTO_LIBS="$CRYPTO_LIBS" \
@@ -461,7 +462,8 @@ jobs:
             CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
           fi
 
-          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include" \
+          # macOS needs -D_DARWIN_C_SOURCE for endian functions
+          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include -D_DARWIN_C_SOURCE" \
           LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
@@ -667,9 +669,10 @@ jobs:
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
-          # Patch nfc.c and log.c to include windows.h for setenv/unsetenv compatibility
+          # Patch nfc.c, log.c, and utils to include windows.h for setenv/unsetenv compatibility
           sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/nfc.c
           sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/log.c
+          find examples utils -name "*.c" -exec sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' {} \;
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
