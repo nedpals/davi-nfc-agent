@@ -43,7 +43,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config autoconf automake libtool wget
+          sudo apt-get install -y pkg-config autoconf automake libtool wget libssl-dev
 
       - name: Setup build directory
         run: |
@@ -329,7 +329,7 @@ jobs:
           fi
 
           CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include $LIBUSB_CFLAGS" \
-          LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib" \
+          LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib -framework CoreFoundation -framework IOKit -framework Security" \
           LIBS="-lusb $LIBUSB_LIBS" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
@@ -412,7 +412,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config autoconf automake libtool wget
+          sudo apt-get install -y pkg-config autoconf automake libtool wget libssl-dev
 
       - name: Setup build directory
         run: |
@@ -519,7 +519,7 @@ jobs:
             LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
           fi
 
-          # Windows needs the contrib/win32 directory for err.h
+          # Windows needs the contrib/win32 directory for err.h and also has setenv/unsetenv stubs
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
@@ -528,9 +528,9 @@ jobs:
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 $LIBUSB_CFLAGS" \
+          CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -DHAVE_WINSCARD_H $LIBUSB_CFLAGS" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
-          LIBS="-lusb $LIBUSB_LIBS" \
+          LIBS="-lusb $LIBUSB_LIBS -lws2_32" \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
           libusb_LIBS="$LIBUSB_LIBS" \
           ./configure \
