@@ -719,7 +719,8 @@ jobs:
           make -j$(nproc) -C libnfc
           make -C libnfc install
 
-          # Install pkg-config file manually since we're not running top-level make install
+          # Install headers and pkg-config file manually since we're not running top-level make install
+          make install-includeHEADERS
           make install-pkgconfigDATA
           cd ..
 
