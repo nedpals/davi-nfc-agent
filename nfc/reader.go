@@ -34,32 +34,41 @@ const (
 
 // NFCReader manages NFC device interactions and broadcasts tag data.
 type NFCReader struct {
-	deviceManager     *DeviceManager
-	dataChan          chan NFCData      // Broadcasts successfully read NFC data
-	statusChan        chan DeviceStatus // Broadcasts device status updates
-	stopChan          chan struct{}     // Signals the worker to stop
-	cache             *TagCache         // Caches tag data
-	mode              ReaderMode        // Access mode for the reader
-	statusMux         sync.RWMutex
-	cardPresent       bool           // Internal tracking of card presence
-	isWriting         bool           // Tracks if a write operation is in progress
-	operationMutex    sync.Mutex     // Protects tag operations (read/write)
-	operationTimeout  time.Duration  // Timeout for tag operations
-	deviceCheckTicker *time.Ticker   // Ticker for periodic device checks
-	cardCheckTicker   *time.Ticker   // Ticker for periodic card presence checks (based on cache)
-	workerWg          sync.WaitGroup // Tracks worker goroutine completion
+	deviceManager    *DeviceManager
+	dataChan         chan NFCData      // Broadcasts successfully read NFC data
+	statusChan       chan DeviceStatus // Broadcasts device status updates
+	stopChan         chan struct{}     // Signals the worker to stop
+	cache            *TagCache         // Caches tag data
+	mode             ReaderMode        // Access mode for the reader
+	clock            Clock             // Clock abstraction for time operations
+	statusMux        sync.RWMutex
+	cardPresent      bool           // Internal tracking of card presence
+	isWriting        bool           // Tracks if a write operation is in progress
+	operationMutex   sync.Mutex     // Protects tag operations (read/write)
+	operationTimeout time.Duration  // Timeout for tag operations
+	cardCheckTicker  Ticker         // Ticker for periodic card presence checks (based on cache)
+	workerWg         sync.WaitGroup // Tracks worker goroutine completion
 }
 
 // NewNFCReader creates and initializes a new NFCReader instance with default ModeReadWrite.
 func NewNFCReader(deviceStr string, manager Manager, opTimeout time.Duration) (*NFCReader, error) {
+	return NewNFCReaderWithClock(deviceStr, manager, opTimeout, nil)
+}
+
+// NewNFCReaderWithClock creates and initializes a new NFCReader with a custom clock.
+// If clock is nil, uses RealClock.
+func NewNFCReaderWithClock(deviceStr string, manager Manager, opTimeout time.Duration, clock Clock) (*NFCReader, error) {
 	if manager == nil {
 		return nil, fmt.Errorf("NFCManager cannot be nil")
 	}
 	if opTimeout <= 0 {
 		opTimeout = 5 * time.Second // Default operation timeout
 	}
+	if clock == nil {
+		clock = NewRealClock()
+	}
 
-	deviceManager := NewDeviceManager(manager, deviceStr)
+	deviceManager := NewDeviceManager(manager, deviceStr, clock)
 
 	reader := &NFCReader{
 		deviceManager:    deviceManager,
@@ -68,14 +77,14 @@ func NewNFCReader(deviceStr string, manager Manager, opTimeout time.Duration) (*
 		stopChan:         make(chan struct{}),
 		cache:            NewTagCache(),
 		mode:             ModeReadWrite, // Default to read/write mode
+		clock:            clock,
 		cardPresent:      false,
 		operationTimeout: opTimeout,
 	}
 
 	// Attempt initial connection synchronously
-	// If it fails, the worker will retry via handleDeviceCheck
-	retryCount := 0
-	reader.handleDeviceCheck(&retryCount)
+	// If it fails, the worker will retry via device check ticker
+	_ = deviceManager.EnsureConnected(make(chan struct{}))
 
 	return reader, nil
 }
@@ -169,19 +178,40 @@ func (r *NFCReader) readCardPresent() bool {
 	return r.cardPresent
 }
 
-// handleDeviceCheck attempts to connect to the device if not connected and not in cooldown.
-func (r *NFCReader) handleDeviceCheck(retryCount *int) {
-	if !r.deviceManager.HasDevice() && !r.deviceManager.InCooldown() {
-		log.Println("Device check ticker: No device or not in cooldown, attempting connect.")
-		if err := r.deviceManager.TryConnect(); err != nil {
-			log.Printf("Device check ticker: Connection attempt failed: %v", err)
-			r.broadcastDeviceStatus(fmt.Sprintf("Connection failed: %v", err))
-		} else {
-			log.Println("Device check ticker: Connection successful.")
-			*retryCount = 0
-			r.LogDeviceInfo()
-			r.broadcastDeviceStatus() // Use default message from GetDeviceStatus
-		}
+// handleDeviceEvent processes device lifecycle events from DeviceManager.
+func (r *NFCReader) handleDeviceEvent(event DeviceEvent) {
+	switch event.Type {
+	case DeviceConnected:
+		log.Printf("Device event: Connected - %s", event.Message)
+		r.LogDeviceInfo()
+		r.broadcastDeviceStatus() // Use default message
+
+	case DeviceDisconnected:
+		log.Printf("Device event: Disconnected - %s", event.Message)
+		r.broadcastDeviceStatus("Device disconnected")
+
+	case DeviceReconnecting:
+		log.Printf("Device event: Reconnecting - %s", event.Message)
+		r.broadcastDeviceStatus(fmt.Sprintf("Reconnecting: %s", event.Message))
+
+	case DeviceReconnectFailed:
+		log.Printf("Device event: Reconnect failed - %s", event.Message)
+		r.broadcastDeviceStatus(fmt.Sprintf("Connection failed: %s", event.Message))
+
+	case CooldownStarted:
+		log.Printf("Device event: Cooldown started - %s", event.Message)
+		r.broadcastDeviceStatus("Device in cooldown")
+
+	case CooldownEnded:
+		log.Printf("Device event: Cooldown ended - %s", event.Message)
+		r.broadcastDeviceStatus("Attempting reconnection after cooldown")
+
+	case DeviceError:
+		log.Printf("Device event: Error - %s", event.Message)
+		// Error already handled by DeviceManager
+
+	default:
+		log.Printf("Device event: Unknown type %d - %s", event.Type, event.Message)
 	}
 }
 
@@ -202,15 +232,15 @@ func (r *NFCReader) handleCardCheck() {
 
 // handleDeviceErrors processes errors from getTags and determines recovery action.
 // Returns true if the error was handled and the caller should continue the loop.
-func (r *NFCReader) handleDeviceErrors(err error, retryCount *int) bool {
+// Retry logic is now managed internally by DeviceManager.
+func (r *NFCReader) handleDeviceErrors(err error) bool {
 	// Clear write flag on error
 	r.statusMux.Lock()
 	r.isWriting = false
 	r.statusMux.Unlock()
 
-	// Delegate error handling to DeviceManager
-	newRetryCount, needsCooldown := r.deviceManager.HandleError(err, *retryCount, r.stopChan)
-	*retryCount = newRetryCount
+	// Delegate error handling to DeviceManager (retry logic is now managed internally)
+	needsCooldown := r.deviceManager.HandleError(err, r.stopChan)
 
 	if needsCooldown {
 		r.broadcastDeviceStatus("Device in cooldown")
@@ -220,7 +250,6 @@ func (r *NFCReader) handleDeviceErrors(err error, retryCount *int) bool {
 	// Check if device was reconnected successfully
 	if r.deviceManager.HasDevice() {
 		r.broadcastDeviceStatus() // Use default message from GetDeviceStatus
-		*retryCount = 0
 		return true
 	}
 
@@ -228,7 +257,7 @@ func (r *NFCReader) handleDeviceErrors(err error, retryCount *int) bool {
 	if !IsIOError(err) && !IsDeviceConfigError(err) && !IsTimeoutError(err) && !IsDeviceClosedError(err) {
 		log.Printf("Unhandled error from getTags: %v. Sending to dataChan.", err)
 		r.dataChan <- NFCData{Card: nil, Err: fmt.Errorf("get tags error: %v", err)}
-		time.Sleep(UnhandledErrorRetryInterval)
+		r.clock.Sleep(UnhandledErrorRetryInterval)
 	}
 
 	return true
@@ -275,7 +304,7 @@ func (r *NFCReader) handleTagPolling(tags []Tag) {
 			r.dataChan <- NFCData{Card: card, Err: nil}
 		}
 
-		time.Sleep(DefaultPollingInterval)
+		r.clock.Sleep(DefaultPollingInterval)
 	}
 }
 
@@ -283,12 +312,9 @@ func (r *NFCReader) worker() {
 	log.Println("NFCReader worker started.")
 	defer log.Println("NFCReader worker stopped.")
 
-	r.deviceCheckTicker = time.NewTicker(DeviceCheckInterval)
-	r.cardCheckTicker = time.NewTicker(CardCheckTickerInterval)
-	retryCount := 0
+	r.cardCheckTicker = r.clock.NewTicker(CardCheckTickerInterval)
 
 	defer func() {
-		r.deviceCheckTicker.Stop()
 		r.cardCheckTicker.Stop()
 		r.deviceManager.Close()
 		r.broadcastDeviceStatus("Worker stopped, device disconnected.")
@@ -301,14 +327,11 @@ func (r *NFCReader) worker() {
 		case <-r.stopChan:
 			return
 
-		case <-r.deviceCheckTicker.C:
-			r.handleDeviceCheck(&retryCount)
+		case event := <-r.deviceManager.Events():
+			r.handleDeviceEvent(event)
 
-		case <-r.cardCheckTicker.C:
+		case <-r.cardCheckTicker.C():
 			r.handleCardCheck()
-
-		case <-r.deviceManager.CooldownChannel():
-			r.deviceManager.EndCooldown(r.stopChan)
 
 		default:
 			hasDev := r.deviceManager.HasDevice()
@@ -319,22 +342,21 @@ func (r *NFCReader) worker() {
 			r.statusMux.RUnlock()
 
 			if !hasDev || inCool {
-				time.Sleep(DeviceIdleCheckInterval)
+				r.clock.Sleep(DeviceIdleCheckInterval)
 				continue
 			}
 			if isWrite {
-				time.Sleep(WriteCheckInterval)
+				r.clock.Sleep(WriteCheckInterval)
 				continue
 			}
 
 			tags, err := r.GetTags()
 			if err != nil {
-				if !r.handleDeviceErrors(err, &retryCount) {
+				if !r.handleDeviceErrors(err) {
 					return // Stop signal received during error handling
 				}
 				continue
 			}
-			retryCount = 0
 
 			if len(tags) > 0 {
 				r.handleTagPolling(tags)

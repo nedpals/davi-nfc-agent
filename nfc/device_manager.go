@@ -4,10 +4,66 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"strings"
 	"sync"
 	"time"
 )
+
+// DeviceEventType categorizes device lifecycle events
+type DeviceEventType int
+
+const (
+	// DeviceConnected indicates successful device connection
+	DeviceConnected DeviceEventType = iota
+
+	// DeviceDisconnected indicates device was disconnected
+	DeviceDisconnected
+
+	// DeviceReconnecting indicates an automatic reconnection attempt is starting
+	DeviceReconnecting
+
+	// DeviceReconnectFailed indicates a reconnection attempt failed
+	DeviceReconnectFailed
+
+	// CooldownStarted indicates device entered cooldown period
+	CooldownStarted
+
+	// CooldownEnded indicates cooldown period completed
+	CooldownEnded
+
+	// DeviceError indicates a recoverable device error occurred
+	DeviceError
+)
+
+// String returns the event type as a string
+func (et DeviceEventType) String() string {
+	switch et {
+	case DeviceConnected:
+		return "DeviceConnected"
+	case DeviceDisconnected:
+		return "DeviceDisconnected"
+	case DeviceReconnecting:
+		return "DeviceReconnecting"
+	case DeviceReconnectFailed:
+		return "DeviceReconnectFailed"
+	case CooldownStarted:
+		return "CooldownStarted"
+	case CooldownEnded:
+		return "CooldownEnded"
+	case DeviceError:
+		return "DeviceError"
+	default:
+		return fmt.Sprintf("Unknown(%d)", et)
+	}
+}
+
+// DeviceEvent represents a device lifecycle event
+type DeviceEvent struct {
+	Type      DeviceEventType
+	Timestamp time.Time
+	Device    Device // nil if disconnected
+	Message   string // Human-readable description
+	Err       error  // Associated error, if any
+}
 
 // DeviceManager handles device lifecycle, connection management, and reconnection logic.
 // It maintains a connection to a single NFC device and handles recovery from errors.
@@ -18,20 +74,31 @@ type DeviceManager struct {
 	hasDevice  bool
 
 	// Reconnection state
-	retryCount    int
+	retryCount    int           // Tracks retry attempts for timeout/closed errors
 	inCooldown    bool
-	cooldownTimer *time.Timer
+	cooldownTimer Timer         // Timer interface for testability
+	clock         Clock         // Clock abstraction for time operations
+
+	// Event broadcasting
+	events   chan DeviceEvent // Buffered channel for device events
+	eventMux sync.RWMutex     // Protects event channel
 
 	// Status tracking
 	mu sync.RWMutex
 }
 
 // NewDeviceManager creates a new DeviceManager for managing an NFC device connection.
-func NewDeviceManager(manager Manager, devicePath string) *DeviceManager {
-	timer := time.NewTimer(0)
+// If clock is nil, a RealClock is used by default.
+func NewDeviceManager(manager Manager, devicePath string, clock Clock) *DeviceManager {
+	if clock == nil {
+		clock = &RealClock{}
+	}
+
+	timer := clock.NewTimer(0)
+	// Drain the timer to ensure it's stopped
 	if !timer.Stop() {
 		select {
-		case <-timer.C:
+		case <-timer.C():
 		default:
 		}
 	}
@@ -40,7 +107,47 @@ func NewDeviceManager(manager Manager, devicePath string) *DeviceManager {
 		manager:       manager,
 		devicePath:    devicePath,
 		hasDevice:     false,
+		clock:         clock,
 		cooldownTimer: timer,
+		events:        make(chan DeviceEvent, 10), // Buffered to prevent blocking
+	}
+}
+
+// Events returns a read-only channel for device lifecycle events.
+func (dm *DeviceManager) Events() <-chan DeviceEvent {
+	dm.eventMux.RLock()
+	defer dm.eventMux.RUnlock()
+	return dm.events
+}
+
+// emitEvent sends an event to the event channel without blocking.
+// If the channel is full, the event is dropped with a warning log.
+func (dm *DeviceManager) emitEvent(eventType DeviceEventType, message string, err error) {
+	dm.eventMux.RLock()
+	eventChan := dm.events
+	dm.eventMux.RUnlock()
+
+	if eventChan == nil {
+		return
+	}
+
+	dm.mu.RLock()
+	device := dm.device // May be nil
+	dm.mu.RUnlock()
+
+	event := DeviceEvent{
+		Type:      eventType,
+		Timestamp: dm.clock.Now(),
+		Device:    device,
+		Message:   message,
+		Err:       err,
+	}
+
+	select {
+	case eventChan <- event:
+		log.Printf("Device event emitted: %s - %s", eventType, message)
+	default:
+		log.Printf("Warning: Device event channel full, dropping event: %s", eventType)
 	}
 }
 
@@ -127,7 +234,48 @@ func (dm *DeviceManager) TryConnect() error {
 	dm.mu.Unlock()
 
 	log.Printf("Successfully connected to device: %s", newDevice.String())
+	dm.emitEvent(DeviceConnected, fmt.Sprintf("Connected to %s", newDevice.String()), nil)
 	return nil
+}
+
+// EnsureConnected ensures the device is connected and responsive.
+// If not connected, attempts to connect. If in cooldown, returns an error.
+// This method manages internal retry state for the device manager.
+func (dm *DeviceManager) EnsureConnected(stopChan <-chan struct{}) error {
+	dm.mu.RLock()
+	inCool := dm.inCooldown
+	dm.mu.RUnlock()
+
+	if inCool {
+		return fmt.Errorf("device in cooldown period")
+	}
+
+	// Try to connect if not already connected
+	err := dm.TryConnect()
+	if err == nil {
+		// Success - reset retry count
+		dm.mu.Lock()
+		dm.retryCount = 0
+		dm.mu.Unlock()
+		return nil
+	}
+
+	// Connection failed - handle the error using the existing error handling logic
+	needsCooldown := dm.HandleError(err, stopChan)
+	if needsCooldown {
+		return fmt.Errorf("device entered cooldown after error: %w", err)
+	}
+
+	// Check if we successfully reconnected during HandleError
+	dm.mu.RLock()
+	hasDevice := dm.hasDevice
+	dm.mu.RUnlock()
+
+	if hasDevice {
+		return nil
+	}
+
+	return fmt.Errorf("failed to ensure device connection: %w", err)
 }
 
 // Reconnect attempts to reconnect to the device with exponential backoff.
@@ -165,7 +313,7 @@ func (dm *DeviceManager) reconnectDevice(forceMode bool, stopChan <-chan struct{
 	if forceMode {
 		log.Println("Waiting for device to reset after close...")
 		select {
-		case <-time.After(DeviceResetWaitTime):
+		case <-dm.clock.After(DeviceResetWaitTime):
 		case <-stopChan:
 			log.Printf("%s: Stop signal received during wait, aborting.", logPrefix)
 			return fmt.Errorf("reconnection aborted by stop signal")
@@ -195,7 +343,7 @@ func (dm *DeviceManager) reconnectDevice(forceMode bool, stopChan <-chan struct{
 		case <-stopChan:
 			log.Printf("%s: Stop signal received, aborting reconnection.", logPrefix)
 			return fmt.Errorf("reconnection aborted by stop signal")
-		case <-time.After(backoffDelay):
+		case <-dm.clock.After(backoffDelay):
 		}
 	}
 
@@ -207,9 +355,8 @@ func (dm *DeviceManager) reconnectDevice(forceMode bool, stopChan <-chan struct{
 // Close closes the current device connection.
 func (dm *DeviceManager) Close() {
 	dm.mu.Lock()
-	defer dm.mu.Unlock()
-
-	if dm.hasDevice && dm.device != nil {
+	shouldEmit := dm.hasDevice && dm.device != nil
+	if shouldEmit {
 		log.Println("Closing device in DeviceManager.")
 		if err := dm.device.Close(); err != nil {
 			log.Printf("Error closing device: %v", err)
@@ -217,13 +364,17 @@ func (dm *DeviceManager) Close() {
 		dm.device = nil
 		dm.hasDevice = false
 	}
+	dm.mu.Unlock()
+
+	if shouldEmit {
+		dm.emitEvent(DeviceDisconnected, "Device manager closing", nil)
+	}
 }
 
 // HandleError processes device errors and determines the appropriate recovery action.
-// Returns the retry count and whether a cooldown was initiated.
-func (dm *DeviceManager) HandleError(err error, retryCount int, stopChan <-chan struct{}) (newRetryCount int, needsCooldown bool) {
+// Returns whether a cooldown was initiated. Retry state is now managed internally.
+func (dm *DeviceManager) HandleError(err error, stopChan <-chan struct{}) (needsCooldown bool) {
 	log.Printf("Device error: %v", err)
-	originalErrorString := err.Error()
 
 	// Handle IO/Config errors
 	if IsIOError(err) || IsDeviceConfigError(err) {
@@ -236,10 +387,10 @@ func (dm *DeviceManager) HandleError(err error, retryCount int, stopChan <-chan 
 		dm.hasDevice = false
 		dm.mu.Unlock()
 
+		dm.emitEvent(DeviceDisconnected, "Device closed due to IO/Config error", err)
+
 		// Check for ACR122-specific errors that need cooldown
-		if strings.Contains(originalErrorString, "Operation not permitted") ||
-			strings.Contains(originalErrorString, "broken pipe") ||
-			strings.Contains(originalErrorString, "RDR_to_PC_DataBlock") {
+		if IsACR122Error(err) {
 			dm.mu.Lock()
 			if !dm.inCooldown {
 				dm.inCooldown = true
@@ -247,34 +398,49 @@ func (dm *DeviceManager) HandleError(err error, retryCount int, stopChan <-chan 
 				dm.cooldownTimer.Reset(DeviceErrorCooldownPeriod)
 			}
 			dm.mu.Unlock()
-			return retryCount, true
+			dm.emitEvent(CooldownStarted, fmt.Sprintf("Entering cooldown for %v", DeviceErrorCooldownPeriod), err)
+			return true
 		}
 
 		log.Println("Attempting force reconnect after IO/Config error...")
-		time.Sleep(PostErrorPauseTime)
+		dm.clock.Sleep(PostErrorPauseTime)
 		if errReconnect := dm.ForceReconnect(stopChan); errReconnect != nil {
 			log.Printf("Force reconnection failed after IO/Config error: %v", errReconnect)
 		}
-		return retryCount, false
+		return false
 	}
 
-	// Handle Timeout/Closed errors with retry logic
+	// Handle Timeout/Closed errors with retry logic using internal retry count
 	if IsTimeoutError(err) || IsDeviceClosedError(err) {
 		log.Printf("Device error (Timeout/Closed): %v", err)
-		delay := time.Duration(math.Pow(2, float64(retryCount))) * BaseDelay
-		if retryCount < MaxRetries {
-			retryCount++
-			log.Printf("Retrying connection (attempt %d/%d) in %v...", retryCount, MaxRetries, delay)
+
+		dm.mu.Lock()
+		currentRetry := dm.retryCount
+		dm.mu.Unlock()
+
+		delay := time.Duration(math.Pow(2, float64(currentRetry))) * BaseDelay
+		if currentRetry < MaxRetries {
+			dm.mu.Lock()
+			dm.retryCount++
+			newRetry := dm.retryCount
+			dm.mu.Unlock()
+
+			log.Printf("Retrying connection (attempt %d/%d) in %v...", newRetry, MaxRetries, delay)
+			dm.emitEvent(DeviceReconnecting, fmt.Sprintf("Retry attempt %d/%d", newRetry, MaxRetries), nil)
+
 			select {
-			case <-time.After(delay):
+			case <-dm.clock.After(delay):
 			case <-stopChan:
-				return retryCount, false
+				return false
 			}
 			if errReconnect := dm.Reconnect(stopChan); errReconnect != nil {
 				log.Printf("Device reconnection failed: %v", errReconnect)
+				dm.emitEvent(DeviceReconnectFailed, fmt.Sprintf("Reconnection attempt %d failed", newRetry), errReconnect)
 			} else {
 				log.Println("Reconnected successfully.")
-				retryCount = 0
+				dm.mu.Lock()
+				dm.retryCount = 0
+				dm.mu.Unlock()
 			}
 		} else {
 			log.Printf("Max retries reached for Timeout/Closed error: %v. Closing device.", err)
@@ -284,19 +450,21 @@ func (dm *DeviceManager) HandleError(err error, retryCount int, stopChan <-chan 
 			}
 			dm.device = nil
 			dm.hasDevice = false
+			dm.retryCount = 0 // Reset retry count when entering cooldown
 			if !dm.inCooldown {
 				dm.inCooldown = true
 				dm.cooldownTimer.Reset(MaxRetriesCooldownPeriod)
 				log.Println("Entering long cooldown after max retries for Timeout/Closed error.")
 			}
 			dm.mu.Unlock()
-			return retryCount, true
+			dm.emitEvent(CooldownStarted, "Max retries reached, entering cooldown", err)
+			return true
 		}
-		return retryCount, false
+		return false
 	}
 
 	// Unhandled error - caller should handle
-	return retryCount, false
+	return false
 }
 
 // EndCooldown ends the current cooldown period and attempts to reconnect.
@@ -305,6 +473,7 @@ func (dm *DeviceManager) EndCooldown(stopChan <-chan struct{}) {
 	dm.mu.Lock()
 	dm.inCooldown = false
 	dm.mu.Unlock()
+	dm.emitEvent(CooldownEnded, "Cooldown period ended, attempting reconnect", nil)
 	if err := dm.ForceReconnect(stopChan); err != nil {
 		log.Printf("Reconnection after cooldown failed: %v.", err)
 	}
@@ -312,10 +481,5 @@ func (dm *DeviceManager) EndCooldown(stopChan <-chan struct{}) {
 
 // CooldownChannel returns the cooldown timer channel for select statements.
 func (dm *DeviceManager) CooldownChannel() <-chan time.Time {
-	return dm.cooldownTimer.C
-}
-
-// ResetRetryCount resets the retry counter (call after successful operation).
-func (dm *DeviceManager) ResetRetryCount(retryCount *int) {
-	*retryCount = 0
+	return dm.cooldownTimer.C()
 }
