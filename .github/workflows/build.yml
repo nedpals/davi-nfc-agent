@@ -695,6 +695,21 @@ jobs:
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
+          # Create a Windows compatibility header for setenv/unsetenv
+          cat > $BUILD_ROOT/include/setenv_compat.h << 'EOF'
+          #ifndef SETENV_COMPAT_H
+          #define SETENV_COMPAT_H
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+          int setenv(const char *name, const char *value, int overwrite);
+          int unsetenv(const char *name);
+          #ifdef __cplusplus
+          }
+          #endif
+          #endif
+          EOF
+
           # Create a Windows compatibility library for setenv/unsetenv
           cat > $BUILD_ROOT/lib/windows_compat.c << 'EOF'
           #include <stdio.h>
@@ -730,6 +745,15 @@ jobs:
           zig cc -target ${{ matrix.zig_target }} -c $BUILD_ROOT/lib/windows_compat.c -o $BUILD_ROOT/lib/windows_compat.o
           zig ar rcs $BUILD_ROOT/lib/libwindows_compat.a $BUILD_ROOT/lib/windows_compat.o
 
+          # Patch nfc.c and log.c to include the compatibility header
+          for file in libnfc/nfc.c libnfc/log.c; do
+            echo '#ifdef _WIN32' > /tmp/patch_header.txt
+            echo '#include <setenv_compat.h>' >> /tmp/patch_header.txt
+            echo '#endif' >> /tmp/patch_header.txt
+            cat "$file" >> /tmp/patch_header.txt
+            mv /tmp/patch_header.txt "$file"
+          done
+
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
@@ -738,7 +762,7 @@ jobs:
           CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -I$(pwd) -DHAVE_WINSCARD_H -DLIBNFC_STATIC $LIBUSB_CFLAGS" \
           CPPFLAGS="-DLIBNFC_STATIC" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
-          LIBS="-lusb $LIBUSB_LIBS -lws2_32" \
+          LIBS="-lwindows_compat -lusb $LIBUSB_LIBS -lws2_32" \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
           libusb_LIBS="$LIBUSB_LIBS" \
           ./configure \
