@@ -720,7 +720,7 @@ jobs:
           make -C libnfc install
 
           # Install headers and pkg-config file manually since we're not running top-level make install
-          make install-includeHEADERS
+          make -C include/nfc install
           make install-pkgconfigDATA
           cd ..
 
