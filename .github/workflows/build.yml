@@ -225,8 +225,7 @@ jobs:
           fi
 
           # Fix missing stdlib.h include in mifare_desfire_crypto.c
-          sed -i '/#include "mifare_desfire_crypto.h"/a\
-          #include <stdlib.h>' libfreefare/mifare_desfire_crypto.c
+          sed -i 's/#include "mifare_desfire_crypto.h"/#include "mifare_desfire_crypto.h"\n#include <stdlib.h>/' libfreefare/mifare_desfire_crypto.c
 
           # Cross-compile with Zig - pass LDFLAGS so configure can find libcrypto
           CC="zig cc -target ${{ matrix.zig_target }}" \
@@ -480,7 +479,7 @@ jobs:
           EOF
 
           # Patch files to include the compat header (macOS BSD sed syntax)
-          for file in libfreefare/mifare_classic.c libfreefare/mifare_desfire.c libfreefare/mifare_desfire_aid.c; do
+          for file in libfreefare/mifare_classic.c libfreefare/mifare_desfire.c libfreefare/mifare_desfire_aid.c libfreefare/mifare_desfire_crypto.c; do
             sed -i '' '1i\
           #include "freefare_endian.h"' "$file"
           done
@@ -735,6 +734,28 @@ jobs:
             CRYPTO_CFLAGS="-I$BUILD_ROOT/include"
             CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32"
           fi
+
+          # Create endian compatibility header for Windows
+          cat > libfreefare/freefare_endian.h << 'EOF'
+          #ifndef FREEFARE_ENDIAN_H
+          #define FREEFARE_ENDIAN_H
+          #ifdef _WIN32
+          #include <stdint.h>
+          // Windows is always little-endian on x86/x64
+          #define htole16(x) (x)
+          #define htole32(x) (x)
+          #define le16toh(x) (x)
+          #define le32toh(x) (x)
+          #else
+          #include <endian.h>
+          #endif
+          #endif
+          EOF
+
+          # Patch files to include the compat header
+          for file in libfreefare/mifare_classic.c libfreefare/mifare_desfire.c libfreefare/mifare_desfire_aid.c libfreefare/mifare_desfire_crypto.c; do
+            sed -i '1i#ifdef _WIN32\n#include "freefare_endian.h"\n#endif' "$file"
+          done
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
