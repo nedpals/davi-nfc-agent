@@ -13,6 +13,9 @@ env:
   LIBUSB_COMPAT_VERSION: "0.1.8"
   OPENSSL_VERSION: "1.1.1w"
 
+permissions:
+  contents: write
+
 jobs:
   build-linux:
     runs-on: ubuntu-latest
