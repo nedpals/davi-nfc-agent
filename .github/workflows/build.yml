@@ -79,12 +79,20 @@ jobs:
           cd libnfc-${{ env.LIBNFC_VERSION }}
           autoreconf -vis
 
+          # Verify libusb is found
+          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
+          pkg-config --exists libusb-1.0 && echo "libusb-1.0 found" || echo "libusb-1.0 NOT found"
+          pkg-config --cflags libusb-1.0 || true
+          pkg-config --libs libusb-1.0 || true
+
           # Cross-compile with Zig
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0" \
+          LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0" \
           ./configure \
             --host=${{ matrix.zig_target }} \
             --prefix=$BUILD_ROOT \
@@ -209,9 +217,17 @@ jobs:
           SDK_PATH=$(xcrun --show-sdk-path)
           ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
 
+          # Verify libusb is found
+          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
+          pkg-config --exists libusb-1.0 && echo "libusb-1.0 found" || echo "libusb-1.0 NOT found"
+          pkg-config --cflags libusb-1.0 || true
+          pkg-config --libs libusb-1.0 || true
+
           CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
           LDFLAGS="-arch $ARCH_FLAG" \
-          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0" \
+          LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0" \
           ./configure \
             --prefix=$BUILD_ROOT \
             --enable-static \
@@ -304,11 +320,23 @@ jobs:
           wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.7z
           7z x libusb-${{ env.LIBUSB_VERSION }}.7z
 
-          # Copy to build root
+          # List extracted files to verify structure
+          ls -la
+          find . -name "*.h" -o -name "*.a" | head -20
+
+          # Copy to build root - adjust path based on actual structure
           mkdir -p $BUILD_ROOT/include/libusb-1.0
           mkdir -p $BUILD_ROOT/lib
-          cp libusb-${{ env.LIBUSB_VERSION }}/include/libusb-1.0/*.h $BUILD_ROOT/include/libusb-1.0/
-          cp libusb-${{ env.LIBUSB_VERSION }}/MinGW64/static/libusb-1.0.a $BUILD_ROOT/lib/
+
+          # The 7z extracts to a directory without the version number
+          if [ -d "include" ]; then
+            cp include/libusb-1.0/*.h $BUILD_ROOT/include/libusb-1.0/
+          fi
+          if [ -f "MinGW64/static/libusb-1.0.a" ]; then
+            cp MinGW64/static/libusb-1.0.a $BUILD_ROOT/lib/
+          elif [ -f "MS64/static/libusb-1.0.a" ]; then
+            cp MS64/static/libusb-1.0.a $BUILD_ROOT/lib/
+          fi
 
           # Create pkg-config file
           mkdir -p $BUILD_ROOT/lib/pkgconfig
@@ -332,11 +360,19 @@ jobs:
           cd libnfc-${{ env.LIBNFC_VERSION }}
           autoreconf -vis
 
+          # Verify libusb is found
+          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
+          pkg-config --exists libusb-1.0 && echo "libusb-1.0 found" || echo "libusb-1.0 NOT found"
+          pkg-config --cflags libusb-1.0 || true
+          pkg-config --libs libusb-1.0 || true
+
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0" \
+          LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0" \
           ./configure \
             --host=x86_64-w64-mingw32 \
             --prefix=$BUILD_ROOT \
