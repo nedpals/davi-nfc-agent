@@ -79,11 +79,23 @@ jobs:
           cd libnfc-${{ env.LIBNFC_VERSION }}
           autoreconf -vis
 
+          # Debug: Check what's in BUILD_ROOT
+          echo "=== Contents of BUILD_ROOT ==="
+          ls -la $BUILD_ROOT/include/ || true
+          ls -la $BUILD_ROOT/lib/ || true
+
           # Verify libusb is found
           export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
+          echo "=== PKG_CONFIG_PATH: $PKG_CONFIG_PATH ==="
+          ls -la $PKG_CONFIG_PATH/ || true
           pkg-config --exists libusb-1.0 && echo "libusb-1.0 found" || echo "libusb-1.0 NOT found"
           pkg-config --cflags libusb-1.0 || true
           pkg-config --libs libusb-1.0 || true
+
+          # Try to compile a simple test to verify headers work
+          echo '#include <libusb-1.0/libusb.h>' > test.c
+          echo 'int main() { return 0; }' >> test.c
+          zig cc -target ${{ matrix.zig_target }} -I$BUILD_ROOT/include/libusb-1.0 -c test.c && echo "libusb header test: SUCCESS" || echo "libusb header test: FAILED"
 
           # Cross-compile with Zig - set CPPFLAGS and LDFLAGS directly
           CC="zig cc -target ${{ matrix.zig_target }}" \
@@ -99,7 +111,7 @@ jobs:
             --prefix=$BUILD_ROOT \
             --enable-static \
             --disable-shared \
-            --with-drivers=pn53x_usb,acr122_usb
+            --with-drivers=pn53x_usb,acr122_usb || (cat config.log && exit 1)
 
           make -j$(nproc)
           make install
