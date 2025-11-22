@@ -225,7 +225,8 @@ jobs:
           fi
 
           # Fix missing stdlib.h include in mifare_desfire_crypto.c
-          sed -i '/#include "mifare_desfire_crypto.h"/a #include <stdlib.h>' libfreefare/mifare_desfire_crypto.c
+          sed -i '/#include "mifare_desfire_crypto.h"/a\
+          #include <stdlib.h>' libfreefare/mifare_desfire_crypto.c
 
           # Cross-compile with Zig - pass LDFLAGS so configure can find libcrypto
           CC="zig cc -target ${{ matrix.zig_target }}" \
@@ -478,9 +479,10 @@ jobs:
           #endif
           EOF
 
-          # Patch files to include the compat header
+          # Patch files to include the compat header (macOS BSD sed syntax)
           for file in libfreefare/mifare_classic.c libfreefare/mifare_desfire.c libfreefare/mifare_desfire_aid.c; do
-            sed -i '1i#include "freefare_endian.h"' "$file"
+            sed -i '' '1i\
+          #include "freefare_endian.h"' "$file"
           done
 
           CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include" \
@@ -700,6 +702,7 @@ jobs:
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
           CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -I$(pwd) -DHAVE_WINSCARD_H -DLIBNFC_STATIC $LIBUSB_CFLAGS" \
+          CPPFLAGS="-DLIBNFC_STATIC" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
           LIBS="-lusb $LIBUSB_LIBS -lws2_32" \
           libusb_CFLAGS="$LIBUSB_CFLAGS" \
@@ -711,8 +714,9 @@ jobs:
             --disable-shared \
             --with-drivers=pn53x_usb,acr122_usb
 
-          make -j$(nproc)
-          make install
+          # Build only the library, skip examples and utils
+          make -j$(nproc) -C libnfc
+          make -C libnfc install
           cd ..
 
       - name: Build libfreefare for Windows
@@ -737,7 +741,8 @@ jobs:
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include" \
+          CFLAGS="-I$BUILD_ROOT/include -DLIBNFC_STATIC" \
+          CPPFLAGS="-DLIBNFC_STATIC" \
           LDFLAGS="-L$BUILD_ROOT/lib" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
           CRYPTO_LIBS="$CRYPTO_LIBS" \
@@ -747,8 +752,9 @@ jobs:
             --enable-static \
             --disable-shared
 
-          make -j$(nproc)
-          make install
+          # Build only the library
+          make -j$(nproc) -C libfreefare
+          make -C libfreefare install
           cd ..
 
       - name: Build Go binary
@@ -758,7 +764,7 @@ jobs:
           GOARCH: ${{ matrix.go_arch }}
           CC: zig cc -target ${{ matrix.zig_target }}
           CXX: zig c++ -target ${{ matrix.zig_target }}
-          CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
+          CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC
           CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib
         run: |
           go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
