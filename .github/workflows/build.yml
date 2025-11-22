@@ -224,12 +224,14 @@ jobs:
             CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
           fi
 
-          # Cross-compile with Zig
+          # Cross-compile with Zig - pass LDFLAGS so configure can find libcrypto
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          CFLAGS="-I$BUILD_ROOT/include" \
+          LDFLAGS="-L$BUILD_ROOT/lib" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
           CRYPTO_LIBS="$CRYPTO_LIBS" \
           ./configure \
@@ -459,8 +461,8 @@ jobs:
             CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
           fi
 
-          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
-          LDFLAGS="-arch $ARCH_FLAG" \
+          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include" \
+          LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
           CRYPTO_LIBS="$CRYPTO_LIBS" \
@@ -665,8 +667,9 @@ jobs:
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
-          # Patch nfc.c to include windows.h for setenv/unsetenv compatibility
+          # Patch nfc.c and log.c to include windows.h for setenv/unsetenv compatibility
           sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/nfc.c
+          sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/log.c
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
@@ -711,6 +714,8 @@ jobs:
           AR="zig ar" \
           RANLIB="zig ranlib" \
           PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
+          CFLAGS="-I$BUILD_ROOT/include" \
+          LDFLAGS="-L$BUILD_ROOT/lib" \
           CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
           CRYPTO_LIBS="$CRYPTO_LIBS" \
           ./configure \
