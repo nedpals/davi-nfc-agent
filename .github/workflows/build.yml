@@ -695,10 +695,25 @@ jobs:
           # Windows libusb-compat expects lusb0_usb.h, create a symlink
           ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
 
-          # Patch nfc.c, log.c, and utils to include windows.h for setenv/unsetenv compatibility
-          sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/nfc.c
-          sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/log.c
-          find examples utils -name "*.c" -exec sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' {} \;
+          # Patch nfc.c and log.c to include windows.h for setenv/unsetenv compatibility
+          for file in libnfc/nfc.c libnfc/log.c; do
+            echo '#ifdef _WIN32' > /tmp/patch_header.txt
+            echo '#include "contrib/windows.h"' >> /tmp/patch_header.txt
+            echo '#endif' >> /tmp/patch_header.txt
+            cat "$file" >> /tmp/patch_header.txt
+            mv /tmp/patch_header.txt "$file"
+          done
+
+          # Patch examples and utils
+          for file in $(find examples utils -name "*.c" 2>/dev/null || true); do
+            if [ -f "$file" ]; then
+              echo '#ifdef _WIN32' > /tmp/patch_header.txt
+              echo '#include "contrib/windows.h"' >> /tmp/patch_header.txt
+              echo '#endif' >> /tmp/patch_header.txt
+              cat "$file" >> /tmp/patch_header.txt
+              mv /tmp/patch_header.txt "$file"
+            fi
+          done
 
           CC="zig cc -target ${{ matrix.zig_target }}" \
           CXX="zig c++ -target ${{ matrix.zig_target }}" \
@@ -887,7 +902,7 @@ jobs:
           CC: zig cc -target ${{ matrix.zig_target }}
           CXX: zig c++ -target ${{ matrix.zig_target }}
           CGO_CFLAGS: "-I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT="
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -static
+          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -ldnsapi -static
         run: |
           go build -v -o davi-nfc-agent-windows-${{ matrix.arch }}.exe .
 
