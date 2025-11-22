@@ -31,31 +31,24 @@ var (
 	currentDevice         string
 	allowedCardTypes      = make(map[string]bool) // Empty means all types allowed
 	currentServerInstance *server.Server
-	sessionTimeout        = 60 * time.Second
 )
 
 func buildServerConfig(reader *nfc.NFCReader) server.Config {
 	return server.Config{
 		Reader:           reader,
 		Port:             portFlag,
-		SessionManager:   server.NewSessionManager(apiSecretFlag, sessionTimeout),
+		SessionManager:   server.NewSessionManager(apiSecretFlag, 60*time.Second),
 		AllowedCardTypes: allowedCardTypes,
 	}
 }
 
-func startAgent() error {
-	return startAgentWithDevice(currentDevice)
-}
-
 func startAgentWithDevice(devicePath string) error {
-	var err error
-
 	// Use the device path if specified, otherwise use auto-detect
 	if devicePath == "" {
 		devicePath = devicePathFlag
 	}
 
-	nfcReader, err = nfc.NewNFCReader(devicePath, nfcManager, 5*time.Second)
+	nfcReader, err := nfc.NewNFCReader(devicePath, nfcManager, 5*time.Second)
 	if err != nil {
 		log.Printf("Error initializing NFC reader: %v", err)
 		return err
@@ -180,7 +173,7 @@ func onReady() {
 
 	// Auto-start the agent
 	go func() {
-		if err := startAgent(); err == nil {
+		if err := startAgentWithDevice(currentDevice); err == nil {
 			mStatus.SetTitle("Running")
 			mConnection.SetTitle("Connection: Connected")
 			if currentDevice != "" {
@@ -237,7 +230,7 @@ func onReady() {
 		for {
 			select {
 			case <-mStart.ClickedCh:
-				if err := startAgent(); err == nil {
+				if err := startAgentWithDevice(currentDevice); err == nil {
 					mStatus.SetTitle("Running")
 					mConnection.SetTitle("Connection: Connected")
 					if currentDevice != "" {
@@ -407,25 +400,18 @@ func main() {
 
 	// Run in CLI mode only if explicitly requested
 	if systrayFlag {
-		// Regular CLI mode
-		reader, err := nfc.NewNFCReader(devicePathFlag, nfcManager, 5*time.Second)
-		if err != nil {
-			log.Fatalf("Error initializing NFC reader: %v", err)
+		if err := startAgentWithDevice(devicePathFlag); err != nil {
+			log.Fatalf("Failed to start agent: %v", err)
 		}
-		defer reader.Close()
+		defer stopAgent()
 
 		// Set up signal handling for graceful shutdown
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-		// Create and start server in a goroutine
-		srv := server.New(buildServerConfig(reader))
-		go srv.Start()
-
 		// Wait for shutdown signal
 		<-sigChan
 		log.Println("Shutdown signal received, stopping server...")
-		srv.Stop()
 	} else {
 		// Default systray mode
 		sigChan := make(chan os.Signal, 1)
