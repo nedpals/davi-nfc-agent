@@ -161,11 +161,12 @@ build_libnfc() {
     # Create setenv/unsetenv implementation for Windows
     cat > contrib/win32_compat.c << 'EOF'
 #ifdef _WIN32
+// winsock2.h MUST come before windows.h
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <stdlib.h>
 #include <string.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
 
 int setenv(const char *name, const char *value, int overwrite) {
     if (!overwrite) {
@@ -178,17 +179,6 @@ int setenv(const char *name, const char *value, int overwrite) {
 
 void unsetenv(const char *name) {
     _putenv_s(name, "");
-}
-
-// Stub for gai_strerrorW if OpenSSL needs it
-// This is a fallback - we're disabling socket features in OpenSSL
-const wchar_t* gai_strerrorW(int ecode) {
-    static wchar_t buf[256];
-    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                   NULL, ecode,
-                   MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                   buf, 256, NULL);
-    return buf;
 }
 #endif
 EOF
