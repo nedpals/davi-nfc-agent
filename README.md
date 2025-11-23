@@ -470,23 +470,107 @@ This application supports any NFC reader compatible with libnfc, including:
 
 ## Building for Different Platforms
 
-The GitHub Actions workflow builds the application for multiple platforms:
-- Linux (amd64, arm64)
-- macOS (amd64, arm64)
-- Windows (amd64, arm64)
+### Quick Start
 
-To build manually for a specific platform:
+The project includes build scripts that handle all dependencies and cross-compilation:
 
 ```bash
-# For Linux
-GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -o davi-nfc-agent-linux-amd64 .
+# Build for your current platform (auto-detected)
+./scripts/build-unix.sh
 
-# For macOS
-GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -o davi-nfc-agent-darwin-amd64 .
+# Cross-compile for Linux
+./scripts/build-unix.sh linux amd64
+./scripts/build-unix.sh linux arm64
 
-# For Windows
-GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o davi-nfc-agent-windows-amd64.exe .
+# Cross-compile for macOS
+./scripts/build-unix.sh darwin amd64
+./scripts/build-unix.sh darwin arm64
+
+# Cross-compile for Windows (from Linux)
+./scripts/build-windows.sh amd64
 ```
+
+### Prerequisites
+
+For cross-compilation, you'll need:
+- **Go 1.21+**
+- **Zig 0.11.0** (for cross-compilation)
+- **autotools**: autoconf, automake, libtool
+- **pkg-config**
+- **wget**
+
+**Install Zig:**
+```bash
+# macOS
+brew install zig
+
+# Linux
+wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
+tar xf zig-linux-x86_64-0.11.0.tar.xz
+sudo mv zig-linux-x86_64-0.11.0 /usr/local/zig
+export PATH="/usr/local/zig:$PATH"
+```
+
+### What the Scripts Do
+
+The build scripts automatically:
+1. Download and compile all C dependencies (libusb, libnfc, libfreefare, OpenSSL)
+2. Apply platform-specific patches
+3. Configure cross-compilation toolchains
+4. Build the Go binary with proper CGO flags
+5. Install dependencies to `~/cross-build/[os]-[arch]/`
+
+### Platform Support
+
+| Platform | Script | Architectures |
+|----------|--------|---------------|
+| Linux | `build-unix.sh` | amd64, arm64 |
+| macOS | `build-unix.sh` | amd64, arm64 |
+| Windows | `build-windows.sh` | amd64 |
+
+### Examples
+
+**Build for current platform:**
+```bash
+./scripts/build-unix.sh
+# Output: davi-nfc-agent-darwin-arm64 (or linux-amd64, etc.)
+```
+
+**Cross-compile from macOS to Linux ARM64:**
+```bash
+./scripts/build-unix.sh linux arm64
+# Takes ~10-15 minutes (first time, then cached)
+# Output: davi-nfc-agent-linux-arm64
+```
+
+**Build all platforms:**
+```bash
+# macOS/Linux builds
+for os in linux darwin; do
+  for arch in amd64 arm64; do
+    ./scripts/build-unix.sh $os $arch
+  done
+done
+
+# Windows (from Linux)
+./scripts/build-windows.sh amd64
+```
+
+### Build Artifacts
+
+- **Binary**: Created in current directory
+  - `davi-nfc-agent-linux-amd64`
+  - `davi-nfc-agent-darwin-arm64`
+  - `davi-nfc-agent-windows-amd64.exe`
+
+- **Dependencies**: Cached in `~/cross-build/`
+  - `~/cross-build/linux-amd64/lib/` (reusable)
+  - `~/cross-build/darwin-arm64/lib/`
+  - `~/cross-build/windows-amd64/lib/`
+
+### CI/CD
+
+The GitHub Actions workflow (`.github/workflows/build-v2.yml`) uses these scripts to automatically build for all platforms and create releases on pushes to master.
 
 ## Troubleshooting
 
