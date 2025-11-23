@@ -226,8 +226,8 @@
 
             <div class="section">
                 <div class="form-group">
-                    <label>WebSocket URL</label>
-                    <input type="text" id="wsUrl" value="ws://localhost:18080/ws">
+                    <label>Server URL</label>
+                    <input type="text" id="wsUrl" value="http://localhost:18080">
                 </div>
                 <button onclick="connect()">Connect</button>
             </div>
@@ -304,8 +304,9 @@
         </div>
     </div>
 
+    <script src="./nfc-client.js"></script>
     <script>
-        let ws = null;
+        let client = null;
 
         function setState(state) {
             document.getElementById('landingState').classList.toggle('hidden', state !== 'landing');
@@ -313,36 +314,44 @@
             document.getElementById('cardState').classList.toggle('hidden', state !== 'card');
         }
 
-        function connect() {
-            const url = document.getElementById('wsUrl').value;
-            ws = new WebSocket(url);
+        async function connect() {
+            const serverUrl = document.getElementById('wsUrl').value;
 
-            ws.onopen = () => {
-                setState('scan');
-            };
+            try {
+                client = new NFCClient(serverUrl);
 
-            ws.onclose = () => {
-                setState('landing');
-            };
+                // Set up event handlers
+                client.on('connected', () => {
+                    setState('scan');
+                });
 
-            ws.onerror = () => {
-                alert('Connection failed. Please check the URL.');
-            };
+                client.on('disconnected', () => {
+                    setState('landing');
+                });
 
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
+                client.on('error', (error) => {
+                    console.error('Client error:', error);
+                    alert('Connection error. Please check the URL and try again.');
+                });
 
-                if (data.type === 'tagData' && data.payload.uid) {
-                    handleCard(data.payload);
-                } else if (data.type === 'writeResponse') {
-                    handleWriteResponse(data.payload);
-                }
-            };
+                client.on('tagData', (data) => {
+                    if (data.uid) {
+                        handleCard(data);
+                    }
+                });
+
+                // Establish connection
+                await client.connect();
+            } catch (err) {
+                console.error('Connection failed:', err);
+                alert('Connection failed: ' + err.message);
+            }
         }
 
-        function disconnect() {
-            if (ws) {
-                ws.close();
+        async function disconnect() {
+            if (client) {
+                await client.disconnect();
+                client = null;
             }
             setState('landing');
         }
@@ -355,17 +364,20 @@
             document.getElementById('cardUID').textContent = card.uid;
 
             let html = `<div><strong>UID:</strong> ${card.uid}</div>`;
-            html += `<div><strong>Type:</strong> ${card.type}</div>`;
+            html += `<div><strong>Type:</strong> ${card.type || 'Unknown'}</div>`;
             if (card.technology) {
                 html += `<div><strong>Technology:</strong> ${card.technology}</div>`;
+            }
+            if (card.scannedAt) {
+                html += `<div><strong>Scanned:</strong> ${card.scannedAt.toLocaleString()}</div>`;
             }
 
             document.getElementById('cardInfo').innerHTML = html;
 
             // Show records
-            if (card.message && card.message.records && card.message.records.length > 0) {
+            if (card.ndefRecords && card.ndefRecords.length > 0) {
                 let recordsHtml = '';
-                card.message.records.forEach((rec, i) => {
+                card.ndefRecords.forEach((rec, i) => {
                     const type = rec.type === 'T' ? 'TEXT' : rec.type === 'U' ? 'URI' : 'OTHER';
                     const content = rec.text || rec.uri || 'Binary';
                     recordsHtml += `
@@ -384,18 +396,8 @@
             setState('card');
         }
 
-        function handleWriteResponse(resp) {
-            const alertDiv = document.getElementById('writeAlert');
-            if (resp.success) {
-                alertDiv.innerHTML = '<div class="alert alert-success">Write successful</div>';
-            } else {
-                alertDiv.innerHTML = `<div class="alert alert-error">Error: ${resp.error}</div>`;
-            }
-            setTimeout(() => alertDiv.innerHTML = '', 5000);
-        }
-
-        function writeCard() {
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
+        async function writeCard() {
+            if (!client || !client.isConnected()) {
                 alert('Not connected');
                 return;
             }
@@ -406,23 +408,35 @@
                 return;
             }
 
-            const request = {
-                type: 'writeRequest',
-                payload: {
-                    text: text,
-                    recordType: document.getElementById('recordType').value,
-                    language: 'en'
-                }
+            const writeRequest = {
+                text: text,
+                recordType: document.getElementById('recordType').value,
+                language: 'en'
             };
 
             const mode = document.getElementById('writeMode').value;
             if (mode === 'replace') {
-                request.payload.replace = true;
+                writeRequest.replace = true;
             } else {
-                request.payload.append = true;
+                writeRequest.append = true;
             }
 
-            ws.send(JSON.stringify(request));
+            try {
+                const alertDiv = document.getElementById('writeAlert');
+                alertDiv.innerHTML = '<div class="alert alert-success">Writing...</div>';
+
+                await client.write(writeRequest);
+
+                alertDiv.innerHTML = '<div class="alert alert-success">Write successful</div>';
+                setTimeout(() => alertDiv.innerHTML = '', 5000);
+
+                // Clear the text field
+                document.getElementById('writeText').value = '';
+            } catch (err) {
+                const alertDiv = document.getElementById('writeAlert');
+                alertDiv.innerHTML = `<div class="alert alert-error">Error: ${err.message}</div>`;
+                setTimeout(() => alertDiv.innerHTML = '', 5000);
+            }
         }
     </script>
 </body>

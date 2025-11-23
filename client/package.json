@@ -1,0 +1,29 @@
+{
+  "name": "@davi/nfc-client",
+  "version": "1.0.0",
+  "description": "Framework-agnostic JavaScript client for NFC Agent",
+  "main": "nfc-client.js",
+  "types": "nfc-client.d.ts",
+  "files": [
+    "nfc-client.js",
+    "nfc-client.d.ts"
+  ],
+  "keywords": [
+    "nfc",
+    "reader",
+    "websocket",
+    "ndef",
+    "mifare",
+    "card"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nedpals/davi-nfc-agent.git",
+    "directory": "client"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
