@@ -109,11 +109,14 @@ build_openssl() {
     tar xzf "openssl-${OPENSSL_VERSION}.tar.gz"
     cd "openssl-${OPENSSL_VERSION}"
 
+    # Disable async and sock features that require gai_strerrorW
     ./Configure mingw64 \
         --prefix="$BUILD_ROOT" \
         --openssldir="$BUILD_ROOT/ssl" \
         no-shared \
-        no-tests
+        no-tests \
+        no-async \
+        no-sock
 
     # Build only libraries (skip tools that need resource compiler)
     make $MAKE_JOBS build_libs
@@ -161,6 +164,8 @@ build_libnfc() {
 #include <windows.h>
 #include <stdlib.h>
 #include <string.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
 int setenv(const char *name, const char *value, int overwrite) {
     if (!overwrite) {
@@ -173,6 +178,17 @@ int setenv(const char *name, const char *value, int overwrite) {
 
 void unsetenv(const char *name) {
     _putenv_s(name, "");
+}
+
+// Stub for gai_strerrorW if OpenSSL needs it
+// This is a fallback - we're disabling socket features in OpenSSL
+const wchar_t* gai_strerrorW(int ecode) {
+    static wchar_t buf[256];
+    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                   NULL, ecode,
+                   MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   buf, 256, NULL);
+    return buf;
 }
 #endif
 EOF
