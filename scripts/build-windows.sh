@@ -155,9 +155,37 @@ build_libnfc() {
         LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
     fi
 
-    # Patch for Windows compatibility (setenv/unsetenv)
-    sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/nfc.c
-    sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/log.c
+    # Create setenv/unsetenv implementation for Windows
+    cat > contrib/win32_compat.c << 'EOF'
+#ifdef _WIN32
+#include <windows.h>
+#include <stdlib.h>
+#include <string.h>
+
+int setenv(const char *name, const char *value, int overwrite) {
+    if (!overwrite) {
+        size_t envsize = 0;
+        getenv_s(&envsize, NULL, 0, name);
+        if (envsize) return 0;
+    }
+    return _putenv_s(name, value);
+}
+
+void unsetenv(const char *name) {
+    _putenv_s(name, "");
+}
+#endif
+EOF
+
+    # Patch for Windows compatibility - include windows.h and link the compat code
+    sed -i '1i\
+#ifdef _WIN32\
+#include "contrib/windows.h"\
+#endif' libnfc/nfc.c
+    sed -i '1i\
+#ifdef _WIN32\
+#include "contrib/windows.h"\
+#endif' libnfc/log.c
 
     CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -DHAVE_WINSCARD_H -DLIBNFC_STATIC $LIBUSB_CFLAGS" \
     CPPFLAGS="-DLIBNFC_STATIC" \
@@ -171,8 +199,15 @@ build_libnfc() {
         --disable-shared \
         --with-drivers=pn53x_usb,acr122_usb
 
+    # Build the Windows compat object first
+    $CC -c contrib/win32_compat.c -o contrib/win32_compat.o
+
     # Build only the library (skip examples/utils that may have issues)
     make $MAKE_JOBS -C libnfc
+
+    # Add our compat object to the libnfc archive
+    $AR rcs libnfc/.libs/libnfc.a contrib/win32_compat.o
+
     make -C libnfc install
     make -C include/nfc install
     make install-pkgconfigDATA
@@ -313,7 +348,9 @@ build_go_binary() {
     export GOOS=windows
     export GOARCH="$TARGET_ARCH"
     export CGO_CFLAGS="-I$BUILD_ROOT/include -DLIBNFC_STATIC -DNFC_EXPORT="
-    export CGO_LDFLAGS="-L$BUILD_ROOT/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -static"
+    # Add all required Windows libraries in correct order
+    # Note: Order matters for static linking - dependencies must come after dependents
+    export CGO_LDFLAGS="-L$BUILD_ROOT/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lbcrypt -lgdi32 -ladvapi32 -lcrypt32 -luser32 -liphlpapi -static"
 
     BINARY_NAME="davi-nfc-agent-windows-$TARGET_ARCH.exe"
 
