@@ -1,10 +1,13 @@
 name: Build
 
-# on:
-#   push:
-#     branches: [ master ]
-#   pull_request:
-#     branches: [ master ]
+on:
+  workflow_run:
+    workflows: ["Test"]
+    types:
+      - completed
+    branches: [ master ]
+  # Allow manual trigger
+  workflow_dispatch:
 
 env:
   LIBNFC_VERSION: "1.8.0"
@@ -17,274 +20,24 @@ permissions:
   contents: write
 
 jobs:
+  # Check that tests passed before building
+  check-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_run'
+    steps:
+      - name: Check test workflow result
+        if: github.event.workflow_run.conclusion != 'success'
+        run: |
+          echo "Test workflow failed or was cancelled"
+          exit 1
+
   build-linux:
+    needs: check-tests
+    if: always() && (needs.check-tests.result == 'success' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          - os: linux
-            arch: amd64
-            zig_target: x86_64-linux-gnu
-            go_arch: amd64
-          - os: linux
-            arch: arm64
-            zig_target: aarch64-linux-gnu
-            go_arch: arm64
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          version: 0.11.0  # Use 0.11.0 - known working version
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config autoconf automake libtool wget
-
-      - name: Setup build directory
-        run: |
-          mkdir -p $HOME/cross-build/${{ matrix.arch }}
-          echo "BUILD_ROOT=$HOME/cross-build/${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$HOME/cross-build/${{ matrix.arch }}/lib/pkgconfig" >> $GITHUB_ENV
-
-      - name: Build libusb for ${{ matrix.arch }}
-        run: |
-          wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
-          tar xjf libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
-          cd libusb-${{ env.LIBUSB_VERSION }}
-
-          # Cross-compile with Zig - disable udev for cross-compilation
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          ./configure \
-            --host=${{ matrix.zig_target }} \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared \
-            --disable-udev
-
-          make -j$(nproc)
-          make install
-          cd ..
-
-          # Verify installation
-          echo "=== Verifying libusb installation ==="
-          ls -la $BUILD_ROOT/include/ || echo "No include directory"
-          ls -la $BUILD_ROOT/lib/ || echo "No lib directory"
-          find $BUILD_ROOT -name "libusb.h" || echo "libusb.h not found"
-          find $BUILD_ROOT -name "*.pc" || echo "No .pc files found"
-
-      - name: Build libusb-compat for ${{ matrix.arch }}
-        run: |
-          # libusb-compat provides the old libusb-0.1 API (usb.h) on top of libusb-1.0
-          wget https://github.com/libusb/libusb-compat-0.1/releases/download/v${{ env.LIBUSB_COMPAT_VERSION }}/libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
-          tar xjf libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
-          cd libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}
-
-          # Cross-compile with Zig
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          ./configure \
-            --host=${{ matrix.zig_target }} \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared
-
-          make -j$(nproc)
-          make install
-          cd ..
-
-          echo "=== Verifying libusb-compat installation ==="
-          find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
-          find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
-
-      - name: Build OpenSSL for ${{ matrix.arch }}
-        run: |
-          wget https://www.openssl.org/source/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          tar xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          cd openssl-${{ env.OPENSSL_VERSION }}
-
-          # Configure OpenSSL for cross-compilation
-          if [ "${{ matrix.arch }}" = "amd64" ]; then
-            OPENSSL_TARGET="linux-x86_64"
-          else
-            OPENSSL_TARGET="linux-aarch64"
-          fi
-
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          ./Configure $OPENSSL_TARGET \
-            --prefix=$BUILD_ROOT \
-            --openssldir=$BUILD_ROOT/ssl \
-            no-shared \
-            no-tests
-
-          make -j$(nproc)
-          make install_sw
-          cd ..
-
-          # Create pkg-config file for libcrypto
-          cat > $BUILD_ROOT/lib/pkgconfig/libcrypto.pc << EOF
-          prefix=$BUILD_ROOT
-          exec_prefix=\${prefix}
-          libdir=\${exec_prefix}/lib
-          includedir=\${prefix}/include
-
-          Name: OpenSSL-libcrypto
-          Description: OpenSSL cryptography library
-          Version: ${{ env.OPENSSL_VERSION }}
-          Libs: -L\${libdir} -lcrypto
-          Cflags: -I\${includedir}
-          EOF
-
-      - name: Build libnfc for ${{ matrix.arch }}
-        run: |
-          wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
-          tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
-          cd libnfc-${{ env.LIBNFC_VERSION }}
-          autoreconf -vis
-
-          # Debug: Check what's in BUILD_ROOT
-          echo "=== Contents of BUILD_ROOT ==="
-          ls -la $BUILD_ROOT/include/ || true
-          ls -la $BUILD_ROOT/lib/ || true
-
-          # Verify libusb is found and get correct flags
-          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-          echo "=== PKG_CONFIG_PATH: $PKG_CONFIG_PATH ==="
-          ls -la $PKG_CONFIG_PATH/ || true
-
-          if pkg-config --exists libusb-1.0; then
-            echo "libusb-1.0 found via pkg-config"
-            LIBUSB_CFLAGS=$(pkg-config --cflags libusb-1.0)
-            LIBUSB_LIBS=$(pkg-config --libs libusb-1.0)
-            echo "LIBUSB_CFLAGS: $LIBUSB_CFLAGS"
-            echo "LIBUSB_LIBS: $LIBUSB_LIBS"
-          else
-            echo "libusb-1.0 NOT found via pkg-config"
-            LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0"
-            LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
-          fi
-
-          # Try to compile a simple test to verify headers work
-          echo '#include <libusb.h>' > test.c
-          echo 'int main() { return 0; }' >> test.c
-          zig cc -target ${{ matrix.zig_target }} $LIBUSB_CFLAGS -c test.c && echo "libusb header test: SUCCESS" || echo "libusb header test: FAILED"
-
-          # Cross-compile with Zig - use pkg-config values
-          # Now that we have libusb-compat, the USB drivers will work
-          # Add $BUILD_ROOT/include to find usb.h from libusb-compat
-          # Need to link against libusb-compat (-lusb) in addition to libusb-1.0
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include $LIBUSB_CFLAGS" \
-          LDFLAGS="-L$BUILD_ROOT/lib" \
-          LIBS="-lusb $LIBUSB_LIBS" \
-          libusb_CFLAGS="$LIBUSB_CFLAGS" \
-          libusb_LIBS="$LIBUSB_LIBS" \
-          ./configure \
-            --host=${{ matrix.zig_target }} \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared \
-            --with-drivers=pn53x_usb,acr122_usb || (cat config.log && exit 1)
-
-          make -j$(nproc)
-          make install
-          cd ..
-
-      - name: Build libfreefare for ${{ matrix.arch }}
-        run: |
-          wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-${{ env.LIBFREEFARE_VERSION }}/libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
-          tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
-          cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
-          autoreconf -vis
-
-          # Get crypto flags from pkg-config
-          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-          if pkg-config --exists libcrypto; then
-            CRYPTO_CFLAGS=$(pkg-config --cflags libcrypto)
-            CRYPTO_LIBS=$(pkg-config --libs libcrypto)
-          else
-            CRYPTO_CFLAGS="-I$BUILD_ROOT/include"
-            CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
-          fi
-
-          # Cross-compile with Zig - pass LDFLAGS so configure can find libcrypto
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include" \
-          LDFLAGS="-L$BUILD_ROOT/lib" \
-          CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
-          CRYPTO_LIBS="$CRYPTO_LIBS" \
-          ./configure \
-            --host=${{ matrix.zig_target }} \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared
-
-          # Fix missing stdlib.h include in mifare_desfire_crypto.c (after configure)
-          sed -i '1i#include <stdlib.h>' libfreefare/mifare_desfire_crypto.c
-
-          make -j$(nproc)
-          make install
-          cd ..
-
-      - name: Verify libraries
-        run: |
-          ls -la $BUILD_ROOT/lib/
-          pkg-config --modversion libnfc || echo "libnfc not found"
-          pkg-config --modversion libfreefare || echo "libfreefare not found"
-
-      - name: Build Go binary
-        env:
-          CGO_ENABLED: 1
-          GOOS: ${{ matrix.os }}
-          GOARCH: ${{ matrix.go_arch }}
-          CC: zig cc -target ${{ matrix.zig_target }}
-          CXX: zig c++ -target ${{ matrix.zig_target }}
-          CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lcrypto -lusb-1.0 -static
-        run: |
-          go build -v -ldflags="-linkmode external -extldflags '-static'" -o davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }} .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
-          path: davi-nfc-agent-${{ matrix.os }}-${{ matrix.arch }}
-
-  build-macos:
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            zig_target: x86_64-macos
-            go_arch: amd64
-          - arch: arm64
-            zig_target: aarch64-macos
-            go_arch: arm64
+        arch: [amd64, arm64]
 
     steps:
       - uses: actions/checkout@v4
@@ -301,222 +54,40 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config autoconf automake libtool wget
+
+      - name: Build for Linux ${{ matrix.arch }}
+        run: ./scripts/build-unix.sh linux ${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: davi-nfc-agent-linux-${{ matrix.arch }}
+          path: davi-nfc-agent-linux-${{ matrix.arch }}
+
+  build-macos:
+    needs: check-tests
+    if: always() && (needs.check-tests.result == 'success' || github.event_name == 'workflow_dispatch')
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install build dependencies
+        run: |
           brew install autoconf automake libtool wget pkg-config
 
-      - name: Setup build directory
-        run: |
-          mkdir -p $HOME/cross-build/${{ matrix.arch }}
-          echo "BUILD_ROOT=$HOME/cross-build/${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$HOME/cross-build/${{ matrix.arch }}/lib/pkgconfig" >> $GITHUB_ENV
-
-      - name: Build libusb for ${{ matrix.arch }}
-        run: |
-          wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
-          tar xjf libusb-${{ env.LIBUSB_VERSION }}.tar.bz2
-          cd libusb-${{ env.LIBUSB_VERSION }}
-
-          # Get SDK path for frameworks
-          SDK_PATH=$(xcrun --show-sdk-path)
-
-          # Build with native clang (not Zig) to avoid framework issues
-          CFLAGS="-arch ${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }} -isysroot $SDK_PATH" \
-          LDFLAGS="-arch ${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}" \
-          ./configure \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared
-
-          make -j$(sysctl -n hw.ncpu)
-          make install
-          cd ..
-
-          # Verify installation
-          echo "=== Verifying libusb installation ==="
-          ls -la $BUILD_ROOT/include/ || echo "No include directory"
-          ls -la $BUILD_ROOT/lib/ || echo "No lib directory"
-          find $BUILD_ROOT -name "libusb.h" || echo "libusb.h not found"
-          find $BUILD_ROOT -name "*.pc" || echo "No .pc files found"
-
-      - name: Build libusb-compat for ${{ matrix.arch }}
-        run: |
-          # libusb-compat provides the old libusb-0.1 API (usb.h) on top of libusb-1.0
-          wget https://github.com/libusb/libusb-compat-0.1/releases/download/v${{ env.LIBUSB_COMPAT_VERSION }}/libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
-          tar xjf libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
-          cd libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}
-
-          SDK_PATH=$(xcrun --show-sdk-path)
-          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
-
-          # Build with native clang
-          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
-          LDFLAGS="-arch $ARCH_FLAG" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          ./configure \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared
-
-          make -j$(sysctl -n hw.ncpu)
-          make install
-          cd ..
-
-          echo "=== Verifying libusb-compat installation ==="
-          find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
-          find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
-
-      - name: Build OpenSSL for ${{ matrix.arch }}
-        run: |
-          wget https://www.openssl.org/source/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          tar xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          cd openssl-${{ env.OPENSSL_VERSION }}
-
-          SDK_PATH=$(xcrun --show-sdk-path)
-          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
-
-          # Configure OpenSSL for macOS
-          if [ "${{ matrix.arch }}" = "amd64" ]; then
-            OPENSSL_TARGET="darwin64-x86_64-cc"
-          else
-            OPENSSL_TARGET="darwin64-arm64-cc"
-          fi
-
-          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH" \
-          LDFLAGS="-arch $ARCH_FLAG" \
-          ./Configure $OPENSSL_TARGET \
-            --prefix=$BUILD_ROOT \
-            --openssldir=$BUILD_ROOT/ssl \
-            no-shared \
-            no-tests
-
-          make -j$(sysctl -n hw.ncpu)
-          make install_sw
-          cd ..
-
-          # Create pkg-config file for libcrypto
-          cat > $BUILD_ROOT/lib/pkgconfig/libcrypto.pc << EOF
-          prefix=$BUILD_ROOT
-          exec_prefix=\${prefix}
-          libdir=\${exec_prefix}/lib
-          includedir=\${prefix}/include
-
-          Name: OpenSSL-libcrypto
-          Description: OpenSSL cryptography library
-          Version: ${{ env.OPENSSL_VERSION }}
-          Libs: -L\${libdir} -lcrypto
-          Cflags: -I\${includedir}
-          EOF
-
-      - name: Build libnfc for ${{ matrix.arch }}
-        run: |
-          wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
-          tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
-          cd libnfc-${{ env.LIBNFC_VERSION }}
-          autoreconf -vis
-
-          SDK_PATH=$(xcrun --show-sdk-path)
-          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
-
-          # Verify libusb is found and get correct flags
-          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-
-          if pkg-config --exists libusb-1.0; then
-            echo "libusb-1.0 found via pkg-config"
-            LIBUSB_CFLAGS=$(pkg-config --cflags libusb-1.0)
-            LIBUSB_LIBS=$(pkg-config --libs libusb-1.0)
-            echo "LIBUSB_CFLAGS: $LIBUSB_CFLAGS"
-            echo "LIBUSB_LIBS: $LIBUSB_LIBS"
-          else
-            echo "libusb-1.0 NOT found via pkg-config"
-            LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0"
-            LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
-          fi
-
-          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include $LIBUSB_CFLAGS" \
-          LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib -framework CoreFoundation -framework IOKit -framework Security" \
-          LIBS="-lusb $LIBUSB_LIBS" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          libusb_CFLAGS="$LIBUSB_CFLAGS" \
-          libusb_LIBS="$LIBUSB_LIBS" \
-          ./configure \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared \
-            --with-drivers=pn53x_usb,acr122_usb
-
-          make -j$(sysctl -n hw.ncpu)
-          make install
-          cd ..
-
-      - name: Build libfreefare for ${{ matrix.arch }}
-        run: |
-          wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-${{ env.LIBFREEFARE_VERSION }}/libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
-          tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
-          cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
-          autoreconf -vis
-
-          SDK_PATH=$(xcrun --show-sdk-path)
-          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
-
-          # Get crypto flags from pkg-config
-          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-          if pkg-config --exists libcrypto; then
-            CRYPTO_CFLAGS=$(pkg-config --cflags libcrypto)
-            CRYPTO_LIBS=$(pkg-config --libs libcrypto)
-          else
-            CRYPTO_CFLAGS="-I$BUILD_ROOT/include"
-            CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto"
-          fi
-
-          # Create a compat header for macOS endian functions
-          cat > libfreefare/freefare_endian.h << 'EOF'
-          #ifndef FREEFARE_ENDIAN_H
-          #define FREEFARE_ENDIAN_H
-          #ifdef __APPLE__
-          #include <libkern/OSByteOrder.h>
-          #define htole16(x) OSSwapHostToLittleInt16(x)
-          #define htole32(x) OSSwapHostToLittleInt32(x)
-          #define le16toh(x) OSSwapLittleToHostInt16(x)
-          #define le32toh(x) OSSwapLittleToHostInt32(x)
-          #define htobe16(x) OSSwapHostToBigInt16(x)
-          #define be16toh(x) OSSwapBigToHostInt16(x)
-          #endif
-          #endif
-          EOF
-
-          # Patch files to include the compat header (macOS BSD sed syntax)
-          for file in libfreefare/mifare_classic.c libfreefare/mifare_desfire.c libfreefare/mifare_desfire_aid.c libfreefare/mifare_desfire_crypto.c libfreefare/tlv.c; do
-            sed -i '' '1i\
-          #include "freefare_endian.h"' "$file"
-          done
-
-          CFLAGS="-arch $ARCH_FLAG -isysroot $SDK_PATH -I$BUILD_ROOT/include" \
-          LDFLAGS="-arch $ARCH_FLAG -L$BUILD_ROOT/lib" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
-          CRYPTO_LIBS="$CRYPTO_LIBS" \
-          ./configure \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared
-
-          make -j$(sysctl -n hw.ncpu)
-          make install
-          cd ..
-
-      - name: Build Go binary
-        env:
-          CGO_ENABLED: 1
-          GOOS: darwin
-          GOARCH: ${{ matrix.go_arch }}
-          CGO_CFLAGS: -I${{ env.BUILD_ROOT }}/include
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lcrypto -lusb-1.0 -framework IOKit -framework CoreFoundation -framework Security
-        run: |
-          SDK_PATH=$(xcrun --show-sdk-path)
-          ARCH_FLAG=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
-
-          CC="clang -arch $ARCH_FLAG -isysroot $SDK_PATH" \
-          CXX="clang++ -arch $ARCH_FLAG -isysroot $SDK_PATH" \
-          go build -v -o davi-nfc-agent-darwin-${{ matrix.arch }} .
+      - name: Build for macOS ${{ matrix.arch }}
+        run: ./scripts/build-unix.sh darwin ${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -525,13 +96,9 @@ jobs:
           path: davi-nfc-agent-darwin-${{ matrix.arch }}
 
   build-windows:
-    runs-on: ubuntu-latest  # Cross-compile from Linux
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            zig_target: x86_64-windows-gnu
-            go_arch: amd64
+    needs: check-tests
+    if: always() && (needs.check-tests.result == 'success' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -549,380 +116,16 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config autoconf automake libtool wget
+          sudo apt-get install -y pkg-config autoconf automake libtool wget p7zip-full
 
-      - name: Setup build directory
-        run: |
-          mkdir -p $HOME/cross-build/${{ matrix.arch }}
-          echo "BUILD_ROOT=$HOME/cross-build/${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$HOME/cross-build/${{ matrix.arch }}/lib/pkgconfig" >> $GITHUB_ENV
-
-      - name: Download prebuilt libusb for Windows
-        run: |
-          # Use prebuilt Windows binaries to avoid libtool/Zig issues
-          wget https://github.com/libusb/libusb/releases/download/v${{ env.LIBUSB_VERSION }}/libusb-${{ env.LIBUSB_VERSION }}.7z
-          7z x libusb-${{ env.LIBUSB_VERSION }}.7z
-
-          # List extracted files to verify structure
-          ls -la
-          find . -name "*.h" -o -name "*.a" | head -20
-
-          # Copy to build root - the header is at include/libusb.h (not libusb-1.0 subdirectory)
-          mkdir -p $BUILD_ROOT/include/libusb-1.0
-          mkdir -p $BUILD_ROOT/lib
-
-          # Copy header - it's at include/libusb.h
-          if [ -f "include/libusb.h" ]; then
-            cp include/libusb.h $BUILD_ROOT/include/libusb-1.0/
-            echo "Copied libusb.h"
-          else
-            echo "ERROR: include/libusb.h not found!"
-            exit 1
-          fi
-
-          # Copy library
-          if [ -f "MinGW64/static/libusb-1.0.a" ]; then
-            cp MinGW64/static/libusb-1.0.a $BUILD_ROOT/lib/
-            echo "Copied libusb-1.0.a from MinGW64"
-          elif [ -f "MS64/static/libusb-1.0.a" ]; then
-            cp MS64/static/libusb-1.0.a $BUILD_ROOT/lib/
-            echo "Copied libusb-1.0.a from MS64"
-          else
-            echo "ERROR: libusb-1.0.a not found!"
-            exit 1
-          fi
-
-          # Create pkg-config file
-          mkdir -p $BUILD_ROOT/lib/pkgconfig
-          cat > $BUILD_ROOT/lib/pkgconfig/libusb-1.0.pc << EOF
-          prefix=$BUILD_ROOT
-          exec_prefix=\${prefix}
-          libdir=\${exec_prefix}/lib
-          includedir=\${prefix}/include
-
-          Name: libusb-1.0
-          Description: C API for USB device access
-          Version: ${{ env.LIBUSB_VERSION }}
-          Libs: -L\${libdir} -lusb-1.0
-          Cflags: -I\${includedir}/libusb-1.0
-          EOF
-
-      - name: Build libusb-compat for Windows
-        run: |
-          # libusb-compat provides the old libusb-0.1 API (usb.h) on top of libusb-1.0
-          wget https://github.com/libusb/libusb-compat-0.1/releases/download/v${{ env.LIBUSB_COMPAT_VERSION }}/libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
-          tar xjf libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}.tar.bz2
-          cd libusb-compat-${{ env.LIBUSB_COMPAT_VERSION }}
-
-          # Cross-compile with Zig
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          ./configure \
-            --host=x86_64-w64-mingw32 \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared
-
-          make -j$(nproc)
-          make install
-          cd ..
-
-          echo "=== Verifying libusb-compat installation ==="
-          find $BUILD_ROOT -name "usb.h" || echo "usb.h not found"
-          find $BUILD_ROOT -name "libusb.pc" || echo "libusb.pc not found"
-
-      - name: Build OpenSSL for Windows
-        run: |
-          wget https://www.openssl.org/source/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          tar xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          cd openssl-${{ env.OPENSSL_VERSION }}
-
-          # Configure OpenSSL for Windows with Zig - skip resource compilation
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          ./Configure mingw64 \
-            --prefix=$BUILD_ROOT \
-            --openssldir=$BUILD_ROOT/ssl \
-            no-shared \
-            no-tests
-
-          # Make without RC (resource compiler) - we don't need .res files for static libs
-          make -j$(nproc) build_libs
-          make install_dev
-          cd ..
-
-          # Create pkg-config file for libcrypto
-          cat > $BUILD_ROOT/lib/pkgconfig/libcrypto.pc << EOF
-          prefix=$BUILD_ROOT
-          exec_prefix=\${prefix}
-          libdir=\${exec_prefix}/lib
-          includedir=\${prefix}/include
-
-          Name: OpenSSL-libcrypto
-          Description: OpenSSL cryptography library
-          Version: ${{ env.OPENSSL_VERSION }}
-          Libs: -L\${libdir} -lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32
-          Cflags: -I\${includedir}
-          EOF
-
-      - name: Build libnfc for Windows
-        run: |
-          wget https://github.com/nfc-tools/libnfc/releases/download/libnfc-${{ env.LIBNFC_VERSION }}/libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
-          tar xjf libnfc-${{ env.LIBNFC_VERSION }}.tar.bz2
-          cd libnfc-${{ env.LIBNFC_VERSION }}
-          autoreconf -vis
-
-          # Verify libusb is found and get correct flags
-          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-
-          if pkg-config --exists libusb-1.0; then
-            echo "libusb-1.0 found via pkg-config"
-            LIBUSB_CFLAGS=$(pkg-config --cflags libusb-1.0)
-            LIBUSB_LIBS=$(pkg-config --libs libusb-1.0)
-            echo "LIBUSB_CFLAGS: $LIBUSB_CFLAGS"
-            echo "LIBUSB_LIBS: $LIBUSB_LIBS"
-          else
-            echo "libusb-1.0 NOT found via pkg-config"
-            LIBUSB_CFLAGS="-I$BUILD_ROOT/include/libusb-1.0"
-            LIBUSB_LIBS="-L$BUILD_ROOT/lib -lusb-1.0"
-          fi
-
-          # Windows needs the contrib/win32 directory for err.h and also has setenv/unsetenv stubs
-          # Windows libusb-compat expects lusb0_usb.h, create a symlink
-          ln -s $BUILD_ROOT/include/usb.h $BUILD_ROOT/include/lusb0_usb.h || true
-
-          # Patch nfc.c, log.c, and utils to include windows.h for setenv/unsetenv compatibility
-          sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/nfc.c
-          sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' libnfc/log.c
-          find examples utils -name "*.c" -exec sed -i '1i#ifdef _WIN32\n#include "contrib/windows.h"\n#endif' {} \;
-
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include -I$(pwd)/contrib/win32 -I$(pwd) -DHAVE_WINSCARD_H -DLIBNFC_STATIC $LIBUSB_CFLAGS" \
-          CPPFLAGS="-DLIBNFC_STATIC" \
-          LDFLAGS="-L$BUILD_ROOT/lib" \
-          LIBS="-lusb $LIBUSB_LIBS -lws2_32" \
-          libusb_CFLAGS="$LIBUSB_CFLAGS" \
-          libusb_LIBS="$LIBUSB_LIBS" \
-          ./configure \
-            --host=x86_64-w64-mingw32 \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared \
-            --with-drivers=pn53x_usb,acr122_usb
-
-          # Build only the library, skip examples and utils
-          make -j$(nproc) -C libnfc
-          make -C libnfc install
-
-          # Install headers and pkg-config file manually since we're not running top-level make install
-          make -C include/nfc install
-          make install-pkgconfigDATA
-
-          # Patch the installed nfc.h to force static linking
-          # The header likely has nested #ifdef blocks, so we need to remove ALL NFC_EXPORT definitions
-          # Find and remove any line that defines NFC_EXPORT (including nested blocks)
-          sed -i '/^[[:space:]]*#[[:space:]]*define[[:space:]]*NFC_EXPORT/d' $BUILD_ROOT/include/nfc/nfc.h
-
-          # Now add our static definition at the very top, before any includes
-          echo '#ifndef NFC_EXPORT' > /tmp/nfc_patch.h
-          echo '#define NFC_EXPORT' >> /tmp/nfc_patch.h
-          echo '#endif' >> /tmp/nfc_patch.h
-          echo '' >> /tmp/nfc_patch.h
-          cat $BUILD_ROOT/include/nfc/nfc.h >> /tmp/nfc_patch.h
-          mv /tmp/nfc_patch.h $BUILD_ROOT/include/nfc/nfc.h
-
-          # Verify the patch and library installation
-          echo "=== Checking nfc.h patch ==="
-          head -10 $BUILD_ROOT/include/nfc/nfc.h
-          echo "=== Verifying no dllimport in header ==="
-          grep -n "define.*NFC_EXPORT" $BUILD_ROOT/include/nfc/nfc.h | head -5 || echo "No NFC_EXPORT definitions found (good!)"
-          echo "=== Checking installed libraries ==="
-          ls -lh $BUILD_ROOT/lib/libnfc* || true
-          ls -lh $BUILD_ROOT/lib/pkgconfig/libnfc.pc || true
-          cd ..
-
-      - name: Build libfreefare for Windows
-        run: |
-          wget https://github.com/nfc-tools/libfreefare/releases/download/libfreefare-${{ env.LIBFREEFARE_VERSION }}/libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
-          tar xjf libfreefare-${{ env.LIBFREEFARE_VERSION }}.tar.bz2
-          cd libfreefare-${{ env.LIBFREEFARE_VERSION }}
-          autoreconf -vis
-
-          # Get crypto flags from pkg-config
-          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-          if pkg-config --exists libcrypto; then
-            CRYPTO_CFLAGS=$(pkg-config --cflags libcrypto)
-            CRYPTO_LIBS=$(pkg-config --libs libcrypto)
-          else
-            CRYPTO_CFLAGS="-I$BUILD_ROOT/include"
-            CRYPTO_LIBS="-L$BUILD_ROOT/lib -lcrypto -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32"
-          fi
-
-          # Create endian.h compatibility header for Windows in the include directory
-          # This needs to be available during configure so we put it in BUILD_ROOT/include
-          cat > $BUILD_ROOT/include/endian.h << 'EOF'
-          #ifndef _ENDIAN_H_COMPAT
-          #define _ENDIAN_H_COMPAT
-          #include <stdint.h>
-          // Windows x86/x64 is always little-endian
-          // Little-endian conversions are no-ops
-          #define htole16(x) (x)
-          #define htole32(x) (x)
-          #define le16toh(x) (x)
-          #define le32toh(x) (x)
-          // Big-endian conversions need byte swapping
-          static inline uint16_t htobe16(uint16_t x) {
-              return ((x & 0x00FF) << 8) | ((x & 0xFF00) >> 8);
-          }
-          static inline uint16_t be16toh(uint16_t x) {
-              return htobe16(x);
-          }
-          #endif
-          EOF
-
-          # Verify libcrypto and libnfc exist
-          ls -la $BUILD_ROOT/lib/libcrypto.a
-          ls -la $BUILD_ROOT/lib/libnfc.a
-          ls -la $BUILD_ROOT/lib/pkgconfig/libnfc.pc
-
-          # Get libnfc flags from pkg-config
-          export PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig
-          if pkg-config --exists libnfc; then
-            echo "libnfc found via pkg-config"
-            LIBNFC_CFLAGS=$(pkg-config --cflags libnfc)
-            LIBNFC_LIBS=$(pkg-config --libs libnfc)
-            echo "LIBNFC_CFLAGS: $LIBNFC_CFLAGS"
-            echo "LIBNFC_LIBS: $LIBNFC_LIBS"
-          else
-            echo "libnfc NOT found via pkg-config, using fallback"
-            LIBNFC_CFLAGS="-I$BUILD_ROOT/include/nfc"
-            LIBNFC_LIBS="-L$BUILD_ROOT/lib -lnfc"
-          fi
-
-          CC="zig cc -target ${{ matrix.zig_target }}" \
-          CXX="zig c++ -target ${{ matrix.zig_target }}" \
-          AR="zig ar" \
-          RANLIB="zig ranlib" \
-          PKG_CONFIG_PATH=$BUILD_ROOT/lib/pkgconfig \
-          CFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/nfc -DLIBNFC_STATIC" \
-          CPPFLAGS="-DLIBNFC_STATIC" \
-          LDFLAGS="-L$BUILD_ROOT/lib -static" \
-          CRYPTO_CFLAGS="$CRYPTO_CFLAGS" \
-          CRYPTO_LIBS="-L$BUILD_ROOT/lib $BUILD_ROOT/lib/libcrypto.a -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32" \
-          libnfc_CFLAGS="$LIBNFC_CFLAGS" \
-          libnfc_LIBS="$LIBNFC_LIBS" \
-          ac_cv_lib_crypto_DES_ecb_encrypt=yes \
-          ./configure \
-            --host=x86_64-w64-mingw32 \
-            --prefix=$BUILD_ROOT \
-            --enable-static \
-            --disable-shared
-
-          # Verify nfc headers are installed
-          ls -la $BUILD_ROOT/include/nfc/
-
-          # Create a minimal err.h for Windows
-          cat > $BUILD_ROOT/include/err.h << 'EOF'
-          #ifndef _ERR_H_COMPAT
-          #define _ERR_H_COMPAT
-          #include <stdio.h>
-          #include <stdlib.h>
-          #include <stdarg.h>
-          #include <errno.h>
-          #include <string.h>
-
-          static inline void err(int eval, const char *fmt, ...) {
-              va_list ap;
-              va_start(ap, fmt);
-              if (fmt) {
-                  vfprintf(stderr, fmt, ap);
-                  fprintf(stderr, ": %s\n", strerror(errno));
-              }
-              va_end(ap);
-              exit(eval);
-          }
-
-          static inline void errx(int eval, const char *fmt, ...) {
-              va_list ap;
-              va_start(ap, fmt);
-              if (fmt) vfprintf(stderr, fmt, ap);
-              fprintf(stderr, "\n");
-              va_end(ap);
-              exit(eval);
-          }
-
-          static inline void warn(const char *fmt, ...) {
-              va_list ap;
-              va_start(ap, fmt);
-              if (fmt) {
-                  vfprintf(stderr, fmt, ap);
-                  fprintf(stderr, ": %s\n", strerror(errno));
-              }
-              va_end(ap);
-          }
-
-          static inline void warnx(const char *fmt, ...) {
-              va_list ap;
-              va_start(ap, fmt);
-              if (fmt) vfprintf(stderr, fmt, ap);
-              fprintf(stderr, "\n");
-              va_end(ap);
-          }
-          #endif
-          EOF
-
-          # Build only the library - run from top level so CFLAGS propagate correctly
-          make -j$(nproc) -C libfreefare CFLAGS="-I$BUILD_ROOT/include -I$BUILD_ROOT/include/nfc -DLIBNFC_STATIC"
-          make -C libfreefare install
-
-          # Install pkg-config file manually
-          make install-pkgconfigDATA
-          cd ..
-
-      - name: Build Go binary
-        env:
-          CGO_ENABLED: 1
-          GOOS: windows
-          GOARCH: ${{ matrix.go_arch }}
-          CC: zig cc -target ${{ matrix.zig_target }}
-          CXX: zig c++ -target ${{ matrix.zig_target }}
-          CGO_CFLAGS: "-I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT="
-          CGO_LDFLAGS: -L${{ env.BUILD_ROOT }}/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lgdi32 -ladvapi32 -lcrypt32 -luser32 -static
-        run: |
-          echo "=== Verifying build environment ==="
-          echo "CGO_CFLAGS: $CGO_CFLAGS"
-          echo "CGO_LDFLAGS: $CGO_LDFLAGS"
-          ls -lh ${{ env.BUILD_ROOT }}/lib/*.a | grep -E '(nfc|freefare)' || true
-
-          # Test if the header has the correct definition
-          echo "=== Testing NFC_EXPORT macro ==="
-          cat > /tmp/test_nfc_export.c << 'EOF'
-          #include <nfc/nfc.h>
-          #ifndef NFC_EXPORT
-          #error NFC_EXPORT not defined
-          #endif
-          #define STRINGIFY(x) #x
-          #define TOSTRING(x) STRINGIFY(x)
-          const char* nfc_export_value = TOSTRING(NFC_EXPORT);
-          EOF
-          zig cc -target ${{ matrix.zig_target }} -I${{ env.BUILD_ROOT }}/include -DLIBNFC_STATIC -DNFC_EXPORT= -E /tmp/test_nfc_export.c | grep -A2 "nfc_export_value" || echo "Could not find test output"
-
-          echo "=== Building Go binary ==="
-          go build -v -x -o davi-nfc-agent-windows-${{ matrix.arch }}.exe . 2>&1 | head -100
+      - name: Build for Windows amd64
+        run: ./scripts/build-windows.sh amd64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: davi-nfc-agent-windows-${{ matrix.arch }}
-          path: davi-nfc-agent-windows-${{ matrix.arch }}.exe
+          name: davi-nfc-agent-windows-amd64
+          path: davi-nfc-agent-windows-amd64.exe
 
   create-release:
     needs: [build-linux, build-macos, build-windows]
