@@ -588,52 +588,12 @@ The GitHub Actions workflow (`.github/workflows/build-v2.yml`) uses these script
 
 ## Architecture
 
-The agent is built with a modular architecture:
+The agent consists of three main components:
 
-### Core Components
-
-- **`nfc` package**: Modular NFC abstraction layer
-  - `Manager`: Device lifecycle management
-  - `Tag`: Low-level hardware protocol interface
-  - `Card`: High-level `io.Reader`/`io.Writer` interface for NDEF data
-  - Tag implementations: Classic, DESFire, Ultralight, ISO14443-4
-
-- **WebSocket Server**: Broadcasts tag data to connected clients
+- **NFC Layer**: Modular abstraction over libnfc/libfreefare for reading and writing NFC tags
+  - See [nfc/README.md](nfc/README.md) for detailed technical documentation
+- **WebSocket Server**: Real-time broadcasting of tag data to connected clients
 - **System Tray**: Optional GUI for device and mode management
-
-### Tag Abstraction
-
-The `Tag` interface provides a unified API for all card types:
-
-```go
-// Read NDEF data from any supported card
-tags, _ := reader.GetTags()
-card := nfc.NewCard(tags[0])
-data, _ := io.ReadAll(card)
-
-// Write NDEF data
-io.WriteString(card, "Hello NFC!")
-card.Close()
-```
-
-For card-specific operations, use type assertions:
-
-```go
-// MIFARE Classic: Direct sector/block access
-if classic, ok := tag.(*nfc.ClassicTag); ok {
-    data, _ := classic.Read(sector, block, key, keyType)
-}
-
-// DESFire: Application and file operations
-if desfire, ok := tag.(*nfc.DESFireTag); ok {
-    apps, _ := desfire.ApplicationIds()
-}
-
-// Ultralight: Page-based operations
-if ultralight, ok := tag.(*nfc.UltralightTag); ok {
-    data, _ := ultralight.ReadPage(4)
-}
-```
 
 ## Development
 
