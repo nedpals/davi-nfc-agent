@@ -326,12 +326,15 @@ build_go_binary() {
 
 # Main build sequence
 main() {
+    # Save original directory
+    ORIGINAL_DIR=$(pwd)
+
     # Create temp directory for builds
     WORK_DIR=$(mktemp -d)
     echo "Working in: $WORK_DIR"
     cd "$WORK_DIR"
 
-    trap "cd - > /dev/null; rm -rf $WORK_DIR" EXIT
+    trap "cd '$ORIGINAL_DIR'; rm -rf $WORK_DIR" EXIT
 
     build_libusb
     build_libusb_compat
@@ -340,7 +343,7 @@ main() {
     build_libfreefare
 
     # Return to original directory to build Go binary
-    cd - > /dev/null
+    cd "$ORIGINAL_DIR"
     build_go_binary
 
     echo ""
