@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
+	"net"
 	"sync"
 	"time"
 )
@@ -25,6 +26,15 @@ func NewSessionManager(apiSecret string, timeout time.Duration) *SessionManager 
 		apiSecret: apiSecret,
 		timeout:   timeout,
 	}
+}
+
+// extractIP extracts just the IP address from a remoteAddr (strips port)
+func extractIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr // Return as-is if parsing fails
+	}
+	return host
 }
 
 // generateSessionToken generates a cryptographically secure random session token
@@ -52,8 +62,11 @@ func (m *SessionManager) Acquire(secret string, origin string, remoteAddr string
 	// If no active session, create one
 	if m.token == "" {
 		m.token = generateSessionToken()
-		m.origin = origin
-		m.ip = remoteAddr
+		// Don't bind origin if it's "null" (file:// URLs) or empty
+		if origin != "" && origin != "null" {
+			m.origin = origin
+		}
+		m.ip = extractIP(remoteAddr)
 
 		// Reset the session timeout timer
 		if m.timer != nil {
@@ -90,8 +103,9 @@ func (m *SessionManager) Validate(token string, origin string, remoteAddr string
 	}
 
 	// Validate IP binding if it was set during acquisition
-	if m.ip != "" && remoteAddr != m.ip {
-		log.Printf("Session validation failed: IP mismatch (expected: %s, got: %s)", m.ip, remoteAddr)
+	clientIP := extractIP(remoteAddr)
+	if m.ip != "" && clientIP != m.ip {
+		log.Printf("Session validation failed: IP mismatch (expected: %s, got: %s)", m.ip, clientIP)
 		return false
 	}
 
