@@ -1,15 +1,28 @@
 # DAVI NFC Agent
 
-A lightweight NFC card reader agent with WebSocket broadcasting capabilities. This agent reads NDEF formatted text from NFC tags and broadcasts the data to connected WebSocket clients in real-time.
+A lightweight NFC card reader agent with WebSocket broadcasting capabilities. This agent reads NDEF formatted text from NFC tags and broadcasts the data to connected WebSocket clients in real-time. **Now supports smartphones as NFC readers!**
 
 ## Features
 
+- **Multiple Device Support**: Use hardware NFC readers AND smartphones simultaneously
+- **Smartphone NFC Scanning**: iOS and Android devices can act as NFC readers
 - Read NDEF formatted text from NFC tags
 - Write text to NFC tags via WebSocket API
 - Real-time WebSocket broadcasting of tag data
 - Automatic device reconnection and error recovery
 - Cross-platform support (Linux, macOS, Windows)
 - Detailed device status reporting
+
+## Supported Devices
+
+### Hardware NFC Readers
+- PN532-based USB readers
+- ACR122U readers
+- Other libnfc-compatible devices
+
+### Smartphone Devices
+- **iOS**: iPhone 7 and later (iOS 13+) with Core NFC support
+- **Android**: Devices with NFC hardware (Android 4.4+)
 
 ## Supported Card Types
 
@@ -127,7 +140,7 @@ Pre-built binaries for various platforms are available in the [releases](https:/
 - `-device`: Path to NFC device (optional, autodetects if not specified)
 - `-port`: Port to listen on for WebSocket connections (default: 18080)
 - `-cli`: Run in CLI mode instead of system tray mode (default: system tray)
-- `-api-secret`: API secret for session authentication (optional, recommended for untrusted environments)
+- `-api-secret`: API secret for authentication (optional, recommended for untrusted environments)
 
 ### System Tray Mode
 
@@ -142,6 +155,49 @@ To run in CLI mode without system tray:
 ```bash
 ./davi-nfc-agent -cli
 ```
+
+### Using Smartphones as NFC Readers
+
+Smartphones with native NFC support can connect as additional NFC reading devices:
+
+#### Quick Start
+
+1. **Start the agent**:
+   ```bash
+   ./davi-nfc-agent
+   ```
+
+2. **Connect your mobile app** to the WebSocket endpoint:
+   ```
+   ws://localhost:18080/ws?mode=device
+   ```
+
+3. **Register the device** by sending a registration message (see protocol docs)
+
+4. **Scan tags** with your phone and they'll appear in connected clients
+
+**That's it!** No API secrets or complex configuration needed. Just connect and start scanning.
+
+#### Supported Platforms
+
+**iOS (iPhone 7+, iOS 13+)**
+- Uses Core NFC framework
+- Supports NDEF and ISO14443 tag reading
+- Requires app with NFC capability enabled
+
+**Android (4.4+)**
+- Uses Android NFC API
+- Supports various tag technologies
+- Requires NFC permission in manifest
+
+#### Integration
+
+See **[Mobile App Integration Protocol](docs/MOBILE_APP_PROTOCOL.md)** for detailed integration instructions including:
+- WebSocket protocol specification
+- Platform-specific implementation guides (iOS/Android)
+- NDEF message format
+- Example code snippets
+- Troubleshooting guide
 
 ## API Overview
 

@@ -346,7 +346,16 @@ func main() {
 	flag.StringVar(&apiSecretFlag, "api-secret", "", "API secret for session handshake (optional)")
 	flag.Parse()
 
-	agent = NewAgent(nfc.NewManager())
+	// Initialize smartphone manager
+	smartphoneManager := nfc.NewSmartphoneManager(30 * time.Second)
+
+	// Create multi-manager combining hardware and smartphone
+	manager := nfc.NewMultiManager(
+		nfc.ManagerEntry{Name: "hardware", Manager: nfc.NewManager()},
+		nfc.ManagerEntry{Name: "smartphone", Manager: smartphoneManager},
+	)
+
+	agent = NewAgent(manager)
 
 	agent.ServerPort = portFlag
 	agent.APISecret = apiSecretFlag

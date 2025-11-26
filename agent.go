@@ -30,7 +30,7 @@ var (
 
 type Agent struct {
 	Logger           *log.Logger
-	Manager          nfc.Manager
+	Manager          nfc.Manager // NFC device manager (supports hardware and smartphone)
 	Reader           *nfc.NFCReader
 	Server           *server.Server
 	AllowedCardTypes CardTypeFilter
@@ -55,6 +55,7 @@ func (a *Agent) Start(devicePath string) error {
 		return errors.New("agent is already running")
 	}
 
+	// Create NFC reader with manager (supports both hardware and smartphone devices)
 	nfcReader, err := nfc.NewNFCReader(devicePath, a.Manager, 5*time.Second)
 	if err != nil {
 		a.Logger.Printf("Error initializing NFC reader: %v", err)
@@ -63,11 +64,23 @@ func (a *Agent) Start(devicePath string) error {
 
 	a.Reader = nfcReader
 
+	// Extract smartphone handler from manager if present
+	var smartphoneHandler *server.SmartphoneDeviceHandler
+	if multiManager, ok := a.Manager.(*nfc.MultiManager); ok {
+		if mgr, exists := multiManager.GetManager("smartphone"); exists {
+			if smartphoneMgr, ok := mgr.(*nfc.SmartphoneManager); ok {
+				smartphoneHandler = server.NewSmartphoneDeviceHandler(smartphoneMgr)
+			}
+		}
+	}
+
+	// Create server
 	a.Server = server.New(server.Config{
-		Reader:           a.Reader,
-		Port:             a.ServerPort,
-		APISecret:        a.APISecret,
-		AllowedCardTypes: a.allowedCardToMap(),
+		Reader:            a.Reader,
+		Port:              a.ServerPort,
+		APISecret:         a.APISecret,
+		AllowedCardTypes:  a.allowedCardToMap(),
+		SmartphoneHandler: smartphoneHandler,
 	})
 
 	go a.Server.Start()
@@ -85,8 +98,18 @@ func (a *Agent) Stop() {
 	if a.Reader != nil {
 		a.Reader.Stop()
 		a.Reader = nil
-		a.Logger.Println("Agent stopped successfully")
 	}
+
+	// Cleanup smartphone manager if present
+	if multiManager, ok := a.Manager.(*nfc.MultiManager); ok {
+		if mgr, exists := multiManager.GetManager("smartphone"); exists {
+			if smartphoneMgr, ok := mgr.(*nfc.SmartphoneManager); ok {
+				smartphoneMgr.Close()
+			}
+		}
+	}
+
+	a.Logger.Println("Agent stopped successfully")
 }
 
 func (a *Agent) SetAllowCardType(cardType CardTypeFilterName, allow bool) {

@@ -55,10 +55,11 @@ type NDEFRecordPayload struct {
 
 // Config holds the server configuration
 type Config struct {
-	Reader           *nfc.NFCReader
-	Port             int
-	APISecret        string // Optional API secret for WebSocket connection
-	AllowedCardTypes map[string]bool
+	Reader            *nfc.NFCReader
+	Port              int
+	APISecret         string // Optional API secret for WebSocket connection
+	AllowedCardTypes  map[string]bool
+	SmartphoneHandler *SmartphoneDeviceHandler // Smartphone device handler (optional)
 }
 
 // Server manages the HTTP and WebSocket server
@@ -69,6 +70,8 @@ type Server struct {
 	cancel        context.CancelFunc
 	lastCard      *nfc.Card
 	cardMu        sync.RWMutex
+	
+	// Client WebSocket management
 	clients       map[*websocket.Conn]bool
 	clientsMux    sync.RWMutex
 	sessionActive bool       // Whether a WebSocket session is active
@@ -379,6 +382,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Add CORS headers
 	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+	// Determine if this is a device or client connection
+	if s.config.SmartphoneHandler != nil && IsDeviceConnection(r) {
+		s.config.SmartphoneHandler.HandleWebSocket(w, r)
+		return
+	}
 
 	// Check if session is already active (first come, first served)
 	s.sessionMux.Lock()
