@@ -349,7 +349,7 @@ func (dm *DeviceManager) reconnectDevice(forceMode bool, stopChan <-chan struct{
 
 	errMsg := fmt.Sprintf("%s failed after %d attempts: %v", logPrefix, maxAttempts, lastErr)
 	log.Println(errMsg)
-	return fmt.Errorf(errMsg)
+	return fmt.Errorf("%s", errMsg)
 }
 
 // Close closes the current device connection.
