@@ -46,12 +46,11 @@ func NewAgent(nfcManager nfc.Manager) *Agent {
 
 func (a *Agent) Start(devicePath string) error {
 	if a.Reader != nil {
+		if devicePath == a.Reader.DevicePath() {
+			a.Logger.Printf("NFC reader already running on device: %s", devicePath)
+			return nil
+		}
 		return errors.New("agent is already running")
-	}
-
-	if devicePath == a.Reader.DevicePath() {
-		a.Logger.Printf("NFC reader already running on device: %s", devicePath)
-		return nil
 	}
 
 	nfcReader, err := nfc.NewNFCReader(devicePath, a.Manager, 5*time.Second)
