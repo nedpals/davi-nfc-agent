@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"log"
+	"os"
 	"time"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
@@ -39,6 +40,7 @@ type Agent struct {
 
 func NewAgent(nfcManager nfc.Manager) *Agent {
 	return &Agent{
+		Logger:           log.New(os.Stderr, "[agent] ", log.LstdFlags),
 		Manager:          nfcManager,
 		AllowedCardTypes: CardTypeFilter{},
 	}
