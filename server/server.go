@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/grandcat/zeroconf"
 	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
@@ -77,6 +78,9 @@ type Server struct {
 	sessionActive bool       // Whether a WebSocket session is active
 	sessionMux    sync.Mutex // Protects sessionActive
 	upgrader      websocket.Upgrader
+	
+	// mDNS service for auto-discovery
+	mdnsServer *zeroconf.Server
 }
 
 // New creates a new server instance
@@ -311,6 +315,12 @@ func (s *Server) Start() error {
 		}
 	}()
 
+	// Register mDNS service for auto-discovery
+	if err := s.startMDNS(); err != nil {
+		log.Printf("Warning: Failed to start mDNS service: %v", err)
+		log.Printf("Auto-discovery will not be available, but server will continue normally")
+	}
+
 	reader.Start()
 
 	// Start data handling in a goroutine
@@ -365,6 +375,13 @@ func (s *Server) Start() error {
 
 // Stop stops the HTTP server gracefully
 func (s *Server) Stop() {
+	// Shutdown mDNS service
+	if s.mdnsServer != nil {
+		s.mdnsServer.Shutdown()
+		s.mdnsServer = nil
+		log.Printf("mDNS service stopped")
+	}
+
 	if s.httpServer != nil {
 		if err := s.httpServer.Shutdown(context.Background()); err != nil {
 			log.Printf("Server shutdown error: %v", err)
@@ -374,6 +391,35 @@ func (s *Server) Stop() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+}
+
+// startMDNS registers the NFC agent as an mDNS service for auto-discovery
+func (s *Server) startMDNS() error {
+	// Service type: _nfc-agent._tcp
+	// This allows mobile apps to discover NFC agents on the local network
+	serviceName := "DAVI NFC Agent"
+	serviceType := "_nfc-agent._tcp"
+	domain := "local."
+	port := s.config.Port
+
+	// Additional text records for service info
+	txtRecords := []string{
+		"version=1.0",
+		"protocol=websocket",
+		"path=/ws",
+		"device_mode=?mode=device",
+	}
+
+	server, err := zeroconf.Register(serviceName, serviceType, domain, port, txtRecords, nil)
+	if err != nil {
+		return fmt.Errorf("failed to register mDNS service: %w", err)
+	}
+
+	s.mdnsServer = server
+	log.Printf("mDNS service registered: %s on port %d", serviceName, port)
+	log.Printf("Mobile apps can now auto-discover this agent on the local network")
+
+	return nil
 }
 
 // handleWebSocket upgrades HTTP connections to WebSocket connections and manages

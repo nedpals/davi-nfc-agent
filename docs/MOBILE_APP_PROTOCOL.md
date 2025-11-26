@@ -8,7 +8,43 @@ Mobile apps with native NFC support can register as NFC scanner devices and repo
 
 **Plug and Play**: No authentication or API secrets required. Simply connect and start scanning for a seamless integration experience.
 
-## Connection
+## Auto-Discovery
+
+The NFC agent automatically broadcasts its presence on the local network using **mDNS/Bonjour**, allowing mobile apps to discover and connect without manual configuration.
+
+### Service Information
+
+- **Service Type**: `_nfc-agent._tcp`
+- **Service Name**: `DAVI NFC Agent`  
+- **TXT Records**: `version`, `protocol`, `path`, `device_mode`
+
+### iOS Discovery (NWBrowser)
+
+```swift
+import Network
+
+let browser = NWBrowser(for: .bonjour(type: "_nfc-agent._tcp", domain: "local."), using: .tcp)
+browser.browseResultsChangedHandler = { results, changes in
+    for result in results {
+        // Resolve to get host:port, then connect WebSocket
+    }
+}
+browser.start(queue: .main)
+```
+
+### Android Discovery (NSD)
+
+```kotlin
+val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+nsdManager.discoverServices("_nfc-agent._tcp", NsdManager.PROTOCOL_DNS_SD, discoveryListener)
+// Resolve found services to get host:port
+```
+
+See full implementation examples in the detailed documentation below.
+
+## Manual Connection
+
+If auto-discovery is unavailable, connect directly:
 
 ### WebSocket URL
 

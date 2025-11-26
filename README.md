@@ -167,16 +167,14 @@ Smartphones with native NFC support can connect as additional NFC reading device
    ./davi-nfc-agent
    ```
 
-2. **Connect your mobile app** to the WebSocket endpoint:
+2. **Mobile app auto-discovers the agent** via mDNS/Bonjour (service type: `_nfc-agent._tcp`)
+
+3. **Or connect manually** to the WebSocket endpoint:
    ```
    ws://localhost:18080/ws?mode=device
    ```
 
-3. **Register the device** by sending a registration message (see protocol docs)
-
-4. **Scan tags** with your phone and they'll appear in connected clients
-
-**That's it!** No API secrets or complex configuration needed. Just connect and start scanning.
+4. **Register and scan** - that's it!
 
 #### Supported Platforms
 
