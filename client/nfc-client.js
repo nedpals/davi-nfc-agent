@@ -40,6 +40,10 @@ class NFCClient {
     this.reconnectAttempts = 0;
     this.intentionalDisconnect = false;
 
+    // Request tracking for request/response correlation
+    this._pendingRequests = {};
+    this._requestIdCounter = 0;
+
     // Event handlers
     this.eventHandlers = {
       tagData: [],
@@ -91,42 +95,18 @@ class NFCClient {
   }
 
   /**
-   * Performs session handshake with the server
-   * @returns {Promise<string>} Session token
-   * @throws {Error} If handshake fails
-   */
-  async handshake() {
-    const response = await fetch(`${this.serverUrl}/handshake`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        secret: this.apiSecret
-      })
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.error || `Handshake failed: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data.token;
-  }
-
-  /**
    * Establishes WebSocket connection to the server
    * @returns {Promise<void>}
    * @throws {Error} If connection fails
    */
   async connect() {
     try {
-      // Perform handshake to get session token
-      this.sessionToken = await this.handshake();
+      // Build WebSocket URL with optional API secret
+      let wsUrl = this.serverUrl.replace(/^http/, 'ws') + '/ws';
+      if (this.apiSecret) {
+        wsUrl += `?secret=${encodeURIComponent(this.apiSecret)}`;
+      }
 
-      // Establish WebSocket connection
-      const wsUrl = this.serverUrl.replace(/^http/, 'ws') + `/ws?token=${this.sessionToken}`;
       this.ws = new WebSocket(wsUrl);
 
       // Set up WebSocket event handlers
@@ -223,8 +203,22 @@ class NFCClient {
    * @private
    */
   _handleMessage(message) {
-    const { type, payload } = message;
+    const { id, type, payload, success, error } = message;
 
+    // Handle responses to requests (with ID)
+    if (id && this._pendingRequests && this._pendingRequests[id]) {
+      const { resolve, reject } = this._pendingRequests[id];
+      delete this._pendingRequests[id];
+
+      if (success) {
+        resolve(payload);
+      } else {
+        reject(new Error(error || 'Request failed'));
+      }
+      return;
+    }
+
+    // Handle broadcast messages (without ID)
     switch (type) {
       case 'tagData':
         this._emit('tagData', this._parseTagData(payload));
@@ -232,8 +226,8 @@ class NFCClient {
       case 'deviceStatus':
         this._emit('deviceStatus', payload);
         break;
-      case 'releaseResponse':
-        // Session release acknowledgment
+      case 'error':
+        this._emit('error', { error: new Error(error), code: payload?.code });
         break;
       default:
         console.warn('Unknown message type:', type);
@@ -266,15 +260,50 @@ class NFCClient {
   }
 
   /**
-   * Writes text to an NFC card
+   * Generates a unique request ID
+   * @private
+   */
+  _generateRequestId() {
+    return `req_${++this._requestIdCounter}_${Date.now()}`;
+  }
+
+  /**
+   * Writes NDEF data to an NFC card (complete overwrite)
+   * 
+   * Simplified API: Always overwrites the entire NDEF message.
+   * To append records, read the current data first, modify it, and write back.
+   * 
    * @param {Object} writeRequest - Write request parameters
-   * @param {string} writeRequest.text - Text to write
-   * @param {number} [writeRequest.recordIndex] - Index of record to update (0-based)
-   * @param {string} [writeRequest.recordType='text'] - Record type ('text' or 'uri')
-   * @param {string} [writeRequest.language='en'] - Language code for text records
-   * @param {boolean} [writeRequest.append=false] - Append new record instead of replacing
-   * @param {boolean} [writeRequest.replace=false] - Replace entire NDEF message (destructive)
-   * @returns {Promise<void>}
+   * @param {Array<Object>} [writeRequest.records] - Array of NDEF records to write
+   * @param {string} writeRequest.records[].type - Record type ('text' or 'uri')
+   * @param {string} writeRequest.records[].content - Text or URI content
+   * @param {string} [writeRequest.records[].language='en'] - Language code for text records
+   * @param {string} [writeRequest.text] - Deprecated: Simple text write (for backward compatibility)
+   * @returns {Promise<Object>} Response payload
+   * 
+   * @example
+   * // Write single text record
+   * await client.write({ text: 'Hello, NFC!' });
+   * 
+   * @example
+   * // Write multiple records
+   * await client.write({
+   *   records: [
+   *     { type: 'text', content: 'Hello, NFC!' },
+   *     { type: 'uri', content: 'https://example.com' }
+   *   ]
+   * });
+   * 
+   * @example
+   * // Append records (read first, then write)
+   * const lastTag = await client.getLastTag();
+   * const existingRecords = lastTag.card.message.records.map(r => ({
+   *   type: r.type === 'T' ? 'text' : 'uri',
+   *   content: r.text || r.uri
+   * }));
+   * await client.write({
+   *   records: [...existingRecords, { type: 'text', content: 'New record' }]
+   * });
    */
   async write(writeRequest) {
     if (!this.connected) {
@@ -282,51 +311,57 @@ class NFCClient {
     }
 
     return new Promise((resolve, reject) => {
+      const requestId = this._generateRequestId();
+      
+      // Store promise handlers for response correlation
+      this._pendingRequests[requestId] = { resolve, reject };
+
+      // Set timeout for request
+      const timeout = setTimeout(() => {
+        delete this._pendingRequests[requestId];
+        reject(new Error('Write request timeout'));
+      }, 30000); // 30 second timeout
+
+      // Override reject to clear timeout
+      const originalReject = reject;
+      reject = (err) => {
+        clearTimeout(timeout);
+        originalReject(err);
+      };
+
+      // Override resolve to clear timeout
+      const originalResolve = resolve;
+      resolve = (data) => {
+        clearTimeout(timeout);
+        originalResolve(data);
+      };
+
+      // Update stored handlers
+      this._pendingRequests[requestId] = { resolve, reject };
+
+      // Send write request with ID
       const message = {
+        id: requestId,
         type: 'writeRequest',
         payload: writeRequest
       };
 
-      // Set up one-time response handler
-      const responseHandler = (data) => {
-        if (data.error) {
-          reject(new Error(data.error));
-        } else {
-          resolve();
-        }
-      };
-
-      // Send write request
       this.ws.send(JSON.stringify(message));
-
-      // Note: Current server implementation doesn't send write responses
-      // This is a placeholder for future implementation
-      // For now, resolve immediately
-      resolve();
     });
   }
 
   /**
-   * Releases the session and disconnects
+   * Disconnects from the server
    * @returns {Promise<void>}
    */
   async disconnect() {
     this.intentionalDisconnect = true;
 
     if (this.connected && this.ws) {
-      // Send release message
-      this.ws.send(JSON.stringify({
-        type: 'release'
-      }));
-
-      // Wait a bit for the message to be sent
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Close WebSocket connection
+      // Close WebSocket connection (releases session automatically)
       this.ws.close();
     }
 
-    this.sessionToken = null;
     this.connected = false;
     this.ws = null;
   }
@@ -337,6 +372,43 @@ class NFCClient {
    */
   isConnected() {
     return this.connected;
+  }
+
+  // REST API Methods
+
+  /**
+   * Gets the last scanned tag (polling alternative to WebSocket)
+   * @returns {Promise<Object|null>} Last tag data or null
+   */
+  async getLastTag() {
+    const response = await fetch(`${this.serverUrl}/api/v1/tags/last`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to get last tag');
+    }
+    return data.card ? this._parseTagData(data.card) : null;
+  }
+
+  /**
+   * Gets server and device status
+   * @returns {Promise<Object>} Status information
+   */
+  async getStatus() {
+    const response = await fetch(`${this.serverUrl}/api/v1/status`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to get status');
+    }
+    return data;
+  }
+
+  /**
+   * Performs a health check
+   * @returns {Promise<Object>} Health check result
+   */
+  async healthCheck() {
+    const response = await fetch(`${this.serverUrl}/api/v1/health`);
+    return await response.json();
   }
 }
 

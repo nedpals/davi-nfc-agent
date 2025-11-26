@@ -143,158 +143,39 @@ To run in CLI mode without system tray:
 ./davi-nfc-agent -cli
 ```
 
+## API Overview
+
+The NFC Agent provides two simple API interfaces:
+
+1. **WebSocket API** (`/ws`) - Real-time tag scanning and write operations (primary interface)
+2. **REST API** (`/api/v1/*`) - Status queries
+
+**Simple session management:** First WebSocket connection wins (automatic lock). Disconnect to release.
+
+---
+
 ## WebSocket API
 
-### Session Management
+### Connecting
 
-The agent uses a session-based authentication system to prevent unauthorized access and session hijacking.
-
-#### Acquiring a Session
-
-Before connecting to the WebSocket, you must first acquire a session token via the `/handshake` endpoint:
+Simply connect to `/ws` - first connection wins:
 
 ```javascript
-// Acquire session token
-const response = await fetch('http://localhost:18080/handshake', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    secret: 'your-api-secret' // Optional, only required if -api-secret flag is set
-  })
-});
-
-const { token } = await response.json();
+const ws = new WebSocket('ws://localhost:18080/ws');
 ```
 
-**Session Features:**
-- **Cryptographically secure tokens**: Sessions use 256-bit random tokens
-- **Origin binding**: Sessions are bound to the origin that acquired them
-- **IP binding**: Sessions are bound to the client's IP address
-- **Auto-timeout**: Sessions expire after 60 seconds of inactivity
-- **Single session limit**: Only one active session at a time
-
-**Session Lifecycle:**
-1. Client calls `/handshake` to acquire a session token
-2. Token is bound to the client's origin and IP address
-3. Client uses token to connect to WebSocket and make requests
-4. Session automatically refreshes on activity
-5. Session expires after 60 seconds of inactivity or when WebSocket disconnects
-
-#### Using the Session Token
-
-Pass the token when connecting to the WebSocket:
-
+**With optional API secret:**
 ```javascript
-// Connect with session token (via query parameter)
-const socket = new WebSocket(`ws://localhost:18080/ws?token=${token}`);
-
-// Or via header (if your WebSocket client supports it)
-const socket = new WebSocket('ws://localhost:18080/ws', {
-  headers: { 'X-Session-Token': token }
-});
+const ws = new WebSocket('ws://localhost:18080/ws?secret=your-secret');
 ```
 
-#### Releasing a Session
+**Session behavior:**
+- ✅ First connection claims the session (automatic lock)
+- ✅ Session released automatically on disconnect
+- ❌ Subsequent connections rejected with `409 Conflict` until first disconnects
+- 🔐 Optional API secret for untrusted environments (via query param)
 
-Sessions are automatically released when:
-- The WebSocket connection closes
-- The session times out (60 seconds of inactivity)
-- A client explicitly releases via WebSocket message:
-
-```javascript
-socket.send(JSON.stringify({
-  type: 'release'
-}));
-```
-
-#### API Secret Protection
-
-For additional security in untrusted environments, use the `-api-secret` flag:
-
-```bash
-./davi-nfc-agent -api-secret "your-secret-here"
-```
-
-When an API secret is configured:
-- All handshake requests must include the correct secret
-- Prevents unauthorized session acquisition
-
-**Example with API secret:**
-```bash
-# Start agent with API secret
-./davi-nfc-agent -api-secret "mySecretKey123"
-```
-
-```javascript
-// Client must provide the secret
-const response = await fetch('http://localhost:18080/handshake', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ secret: 'mySecretKey123' })
-});
-```
-
-#### Complete Example (JavaScript)
-
-```javascript
-// Full session workflow
-async function connectToNFC() {
-  // 1. Acquire session
-  const handshake = await fetch('http://localhost:18080/handshake', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ secret: 'mySecretKey123' }) // Optional
-  });
-
-  if (!handshake.ok) {
-    throw new Error('Session already claimed or invalid secret');
-  }
-
-  const { token } = await handshake.json();
-
-  // 2. Connect to WebSocket with token
-  const socket = new WebSocket(`ws://localhost:18080/ws?token=${token}`);
-
-  socket.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    console.log('Received:', message);
-  };
-
-  // 3. Session auto-releases on disconnect
-  socket.onclose = () => {
-    console.log('Session released');
-  };
-
-  return socket;
-}
-```
-
-#### CLI Example (curl)
-
-```bash
-# 1. Acquire session token
-TOKEN=$(curl -X POST http://localhost:18080/handshake \
-  -H "Content-Type: application/json" \
-  -d '{"secret":"mySecretKey123"}' \
-  | jq -r '.token')
-
-echo "Session token: $TOKEN"
-
-# 2. Connect to WebSocket with token (using websocat or similar)
-websocat "ws://localhost:18080/ws?token=$TOKEN"
-
-# Or use with any WebSocket client that supports query parameters
-```
-
-### Connecting to the WebSocket
-
-After acquiring a session token via `/handshake`, connect to the WebSocket:
-
-```javascript
-const socket = new WebSocket(`ws://localhost:18080/ws?token=${token}`);
-```
-
-### Messages from server
+### Messages from Server
 
 1. **Device Status**
 ```json
@@ -360,105 +241,293 @@ When a card is detected and read, the server broadcasts structured data:
 - `text`: Quick access to first text record (for convenience)
 - `err`: Error message string if read failed, `null` on success
 
-### Messages to server
+---
 
-1. **Write Request**
+## REST API
 
-The write API is designed to **prevent accidental data loss for cards with existing NDEF data**.
+Simple HTTP endpoints for status checks.
 
-**Simple write** (for blank cards):
+### Base URL
+```
+http://localhost:18080/api/v1
+```
+
+### Endpoints
+
+#### Health Check (GET `/api/v1/health`)
+
+Simple health check for monitoring.
+
+```bash
+curl http://localhost:18080/api/v1/health
+```
+
+---
+
+### Messages to Server
+
+All client messages should include an optional `id` field for request/response correlation.
+
+#### 1. Write Request
+
+**Simplified API:** Always overwrites the entire NDEF message.  
+**To append:** Read current data first, modify it in-memory, then write back the complete message.
+
+This follows the same approach as most NFC tools (NFC Tools, TagWriter, etc.).
+
+**Write single text record:**
 ```json
 {
+  "id": "req_1_1234567890",
   "type": "writeRequest",
   "payload": {
-    "text": "Hello, NFC!"
+    "records": [
+      {
+        "type": "text",
+        "content": "Hello, NFC!",
+        "language": "en"
+      }
+    ]
   }
 }
 ```
 
-**Append new record** (safe - for cards with data):
+**Write multiple records:**
 ```json
 {
+  "id": "req_2_1234567890",
   "type": "writeRequest",
   "payload": {
-    "text": "Additional info",
-    "append": true
+    "records": [
+      {
+        "type": "text",
+        "content": "Hello, NFC!",
+        "language": "en"
+      },
+      {
+        "type": "uri",
+        "content": "https://example.com"
+      }
+    ]
   }
 }
 ```
 
-**Update specific record** (safe - for cards with data):
-```json
-{
-  "type": "writeRequest",
-  "payload": {
-    "text": "Updated text",
-    "recordIndex": 0
-  }
-}
-```
+**Append records (read-modify-write pattern):**
+```javascript
+// 1. Read current tag data
+const currentData = await client.getLastTag();
 
-**Replace entire message** (explicit - for cards with data):
-```json
-{
-  "type": "writeRequest",
-  "payload": {
-    "text": "New message",
-    "replace": true
+// 2. Extract existing records
+const existingRecords = currentData.message.records.map(r => ({
+  type: r.type === 'T' ? 'text' : 'uri',
+  content: r.text || r.uri,
+  language: r.language || 'en'
+}));
+
+// 3. Write back with new record appended
+socket.send(JSON.stringify({
+  id: 'req_3_1234567890',
+  type: 'writeRequest',
+  payload: {
+    records: [
+      ...existingRecords,
+      { type: 'text', content: 'New record' }
+    ]
   }
-}
+}));
 ```
 
 **Payload Fields:**
-- `text` (required): Text or URI content to write
-- `append` (optional): Adds a new record without overwriting existing data
-- `recordIndex` (optional): Index of record to update (0-based)
-- `replace` (optional): Replaces entire NDEF message ⚠️ **DESTRUCTIVE**
-- `recordType` (optional): Record type - `"text"` (default) or `"uri"`
-- `language` (optional): ISO language code for text records (default: `"en"`)
-
-**🛡️ Smart Safety Enforcement:**
-- **Blank cards**: Simple `{"text": "..."}` works fine
-- **Cards with existing NDEF**: Must specify `append`, `recordIndex`, or `replace` to prevent accidental overwrites
-
-**Examples:**
-
-**Write to blank card** (simple):
-```json
-{"type": "writeRequest", "payload": {"text": "Hello!"}}
-```
-
-**Append to card with data** (safe):
-```json
-{"type": "writeRequest", "payload": {"text": "Additional info", "append": true}}
-```
-
-**Update record on card with data** (safe):
-```json
-{"type": "writeRequest", "payload": {"text": "Updated", "recordIndex": 0}}
-```
-
-**Replace card with data** (explicit):
-```json
-{"type": "writeRequest", "payload": {"text": "New content", "replace": true}}
-```
+- `records` (array, required): Array of NDEF records to write
+  - `type` (string, required): Record type - `"text"` or `"uri"`
+  - `content` (string, required): Text or URI content
+  - `language` (string, optional): ISO language code for text records (default: `"en"`)
 
 **Notes:**
-- Blank/factory cards allow simple writes without operation mode
-- Cards with existing NDEF require `append`, `recordIndex`, or `replace`
-- `append` and `recordIndex` preserve existing records
-- Supports all card types (Classic, DESFire, Ultralight)
+- ⚠️ **Always performs complete overwrite** - no append/update modes
+- To preserve existing data, read first then write complete message
+- Cleaner and more predictable than server-side merging
+- Matches behavior of popular NFC tools
 
-2. **Write Response**
+#### 2. Write Response
+
+Server responds with success or error:
+
+**Success:**
 ```json
 {
+  "id": "req_1_1234567890",
   "type": "writeResponse",
+  "success": true,
   "payload": {
-    "success": true,
-    "error": null
+    "message": "Write operation completed successfully"
   }
 }
 ```
+
+**Error:**
+```json
+{
+  "id": "req_1_1234567890",
+  "type": "error",
+  "success": false,
+  "error": "Write failed: card removed",
+  "payload": {
+    "code": "WRITE_FAILED"
+  }
+}
+```
+
+
+---
+
+## JavaScript Client Library
+
+A framework-agnostic JavaScript client is provided for easy integration.
+
+### Installation
+
+```bash
+# Copy the client files to your project
+cp client/nfc-client.js your-project/
+cp client/nfc-client.d.ts your-project/  # For TypeScript
+```
+
+Or include directly in HTML:
+
+```html
+<script src="nfc-client.js"></script>
+```
+
+### Quick Start
+
+```javascript
+// Create client instance
+const client = new NFCClient('http://localhost:18080', {
+  apiSecret: 'your-secret',  // Optional - for API secret protection
+  autoReconnect: true        // Auto-reconnect on disconnect
+});
+
+// Listen for tag scans
+client.on('tagData', (data) => {
+  console.log('Card UID:', data.uid);
+  console.log('Card Type:', data.type);
+  console.log('Text:', data.text);
+  console.log('Records:', data.message?.records);
+});
+
+// Listen for device status
+client.on('deviceStatus', (status) => {
+  console.log('Device connected:', status.connected);
+});
+
+// Connect to server (first connection wins)
+await client.connect();
+
+// Write to a card
+await client.write({
+  records: [
+    { type: 'text', content: 'Hello, NFC!' },
+    { type: 'uri', content: 'https://example.com' }
+  ]
+});
+
+// Use REST API methods (no WebSocket needed)
+const status = await client.getStatus();
+const lastTag = await client.getLastTag();
+
+// Disconnect when done (releases session automatically)
+await client.disconnect();
+```
+
+### API Methods
+
+**WebSocket Methods:**
+- `connect()` - Connect to server (first connection wins)
+- `disconnect()` - Disconnect (releases session automatically)
+- `write(request)` - Write NDEF data to card
+- `isConnected()` - Check connection status
+
+**REST API Methods:**
+- `healthCheck()` - Perform health check
+
+**Events:**
+- `tagData` - Tag scanned
+- `deviceStatus` - Device status changed
+- `connected` - WebSocket connected
+- `disconnected` - WebSocket disconnected
+- `error` - Error occurred
+
+See `client/nfc-client.d.ts` for full TypeScript definitions.
+
+---
+
+## Complete Examples
+
+### Example 1: Simple Tag Reader
+
+```javascript
+const client = new NFCClient('http://localhost:18080');
+
+client.on('tagData', (data) => {
+  document.getElementById('uid').textContent = data.uid;
+  document.getElementById('text').textContent = data.text;
+});
+
+await client.connect();
+```
+
+### Example 2: Write to Card
+
+```javascript
+const client = new NFCClient('http://localhost:18080');
+
+await client.connect();
+
+// Write single text record
+await client.write({
+  records: [{ type: 'text', content: 'Hello, NFC!' }]
+});
+
+// Write multiple records
+await client.write({
+  records: [
+    { type: 'text', content: 'Welcome!' },
+    { type: 'uri', content: 'https://example.com' }
+  ]
+});
+```
+
+### Example 3: Append to Existing Data
+
+```javascript
+const client = new NFCClient('http://localhost:18080');
+
+await client.connect();
+
+// Wait for tag scan
+client.on('tagData', async (data) => {
+  if (!data.message) return;
+
+  // Extract existing records (structure is consistent!)
+  const existingRecords = data.message.records.map(r => ({
+    type: r.type,
+    content: r.content,
+    language: r.language
+  }));
+
+  // Append new record
+  await client.write({
+    records: [
+      ...existingRecords,
+      { type: 'text', content: 'Appended record' }
+    ]
+  });
+});
+```
+
+---
 
 ## Supported NFC Readers
 

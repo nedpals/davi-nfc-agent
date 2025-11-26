@@ -31,33 +31,57 @@ export interface NFCClientOptions {
 }
 
 /**
- * NDEF Record structure
+ * NDEF Record in write request
+ */
+export interface NDEFRecordWrite {
+  /**
+   * Record type ('text' or 'uri')
+   */
+  type: 'text' | 'uri';
+
+  /**
+   * Text or URI content
+   */
+  content: string;
+
+  /**
+   * Language code for text records
+   * @default 'en'
+   */
+  language?: string;
+}
+
+/**
+ * NDEF Record in read data (from broadcast/tag data)
+ * 
+ * Structure is consistent with NDEFRecordWrite for easier client-side handling.
+ * Includes additional technical fields for debugging and advanced use cases.
  */
 export interface NDEFRecord {
   /**
-   * Type Name Format
-   */
-  tnf: number;
-
-  /**
-   * Record type (e.g., 'T' for text, 'U' for URI)
+   * Record type: 'text', 'uri', or other custom type (human-readable)
    */
   type: string;
+
+  /**
+   * Decoded content (text or URI)
+   */
+  content?: string;
+
+  /**
+   * Language code for text records (e.g., 'en')
+   */
+  language?: string;
+
+  /**
+   * Type Name Format (technical detail)
+   */
+  tnf: number;
 
   /**
    * Record ID (optional)
    */
   id?: string;
-
-  /**
-   * Text content (for text records)
-   */
-  text?: string;
-
-  /**
-   * URI content (for URI records)
-   */
-  uri?: string;
 
   /**
    * Raw payload bytes
@@ -104,11 +128,6 @@ export interface TagData {
   } | null;
 
   /**
-   * Array of NDEF records (if available)
-   */
-  ndefRecords: NDEFRecord[];
-
-  /**
    * Error message (if any)
    */
   error: string | null;
@@ -140,6 +159,21 @@ export interface DeviceStatus {
 }
 
 /**
+ * Health check response
+ */
+export interface HealthCheckResponse {
+  /**
+   * Status ('ok' or 'error')
+   */
+  status: string;
+
+  /**
+   * Timestamp of health check
+   */
+  timestamp: string;
+}
+
+/**
  * Error event payload
  */
 export interface ErrorEvent {
@@ -149,51 +183,37 @@ export interface ErrorEvent {
   error: Error;
 
   /**
-   * Phase where error occurred
+   * Error code (if structured error)
    */
-  phase: 'connection' | 'websocket' | 'reconnection';
+  code?: string;
+
+  /**
+   * Phase where error occurred (if connection error)
+   */
+  phase?: 'connection' | 'websocket' | 'reconnection';
 }
 
 /**
- * Write request parameters
+ * Write request parameters (simplified API)
+ * 
+ * This API always overwrites the entire NDEF message.
+ * To append records, read current data first, modify it, and write back.
  */
 export interface WriteRequest {
   /**
-   * Text or URI content to write
+   * Array of NDEF records to write
    */
-  text: string;
+  records: NDEFRecordWrite[];
+}
 
+/**
+ * Write response payload
+ */
+export interface WriteResponse {
   /**
-   * Index of record to update (0-based)
-   * Use this to update a specific existing record
+   * Success message
    */
-  recordIndex?: number;
-
-  /**
-   * Record type
-   * @default 'text'
-   */
-  recordType?: 'text' | 'uri';
-
-  /**
-   * Language code for text records
-   * @default 'en'
-   */
-  language?: string;
-
-  /**
-   * Append new record instead of replacing
-   * Set to true to safely add records without overwriting
-   * @default false
-   */
-  append?: boolean;
-
-  /**
-   * Replace entire NDEF message (destructive)
-   * Must be explicitly set to true to overwrite all existing data
-   * @default false
-   */
-  replace?: boolean;
+  message: string;
 }
 
 /**
@@ -298,11 +318,11 @@ export class NFCClient {
   /**
    * Establishes WebSocket connection to the server
    *
-   * Performs session handshake and establishes WebSocket connection.
-   * Throws an error if connection fails.
+   * Directly connects to WebSocket. First connection wins (session lock).
+   * Throws an error if connection fails or session is already claimed.
    *
    * @returns Promise that resolves when connection is established
-   * @throws {Error} If handshake or connection fails
+   * @throws {Error} If connection fails or session already claimed
    *
    * @example
    * ```typescript
@@ -317,9 +337,9 @@ export class NFCClient {
   connect(): Promise<void>;
 
   /**
-   * Releases the session and disconnects
+   * Disconnects from the server
    *
-   * Sends a release message to the server and closes the WebSocket connection.
+   * Closes the WebSocket connection and releases the session automatically.
    *
    * @returns Promise that resolves when disconnection is complete
    *
@@ -332,41 +352,44 @@ export class NFCClient {
   disconnect(): Promise<void>;
 
   /**
-   * Writes text to an NFC card
+   * Writes NDEF data to an NFC card (complete overwrite)
+   *
+   * Simplified API: Always overwrites the entire NDEF message.
+   * To append records, read the current data first, modify it, and write back.
    *
    * @param writeRequest - Write request parameters
-   * @returns Promise that resolves when write is complete
+   * @returns Promise that resolves with response payload when write is complete
    * @throws {Error} If not connected or write fails
    *
    * @example
    * ```typescript
-   * // Replace entire card contents
+   * // Write single text record
    * await client.write({
-   *   text: 'Hello, World!',
-   *   replace: true
+   *   records: [{ type: 'text', content: 'Hello, NFC!' }]
    * });
    *
-   * // Append a new text record
+   * // Write multiple records
    * await client.write({
-   *   text: 'Additional text',
-   *   append: true
+   *   records: [
+   *     { type: 'text', content: 'Hello, NFC!' },
+   *     { type: 'uri', content: 'https://example.com' }
+   *   ]
    * });
    *
-   * // Update record at index 0
+   * // Append records (read first, then write)
+   * // Note: Record structure is consistent between read and write!
+   * const lastTag = await client.getLastTag();
+   * const existingRecords = lastTag.message.records.map(r => ({
+   *   type: r.type,
+   *   content: r.content,
+   *   language: r.language
+   * }));
    * await client.write({
-   *   text: 'Updated text',
-   *   recordIndex: 0
-   * });
-   *
-   * // Write a URI record
-   * await client.write({
-   *   text: 'https://example.com',
-   *   recordType: 'uri',
-   *   replace: true
+   *   records: [...existingRecords, { type: 'text', content: 'New record' }]
    * });
    * ```
    */
-  write(writeRequest: WriteRequest): Promise<void>;
+  write(writeRequest: WriteRequest): Promise<WriteResponse>;
 
   /**
    * Gets the current connection status
@@ -381,6 +404,19 @@ export class NFCClient {
    * ```
    */
   isConnected(): boolean;
+
+  /**
+   * Performs a health check
+   *
+   * @returns Promise that resolves with health check result
+   *
+   * @example
+   * ```typescript
+   * const health = await client.healthCheck();
+   * console.log('Server status:', health.status);
+   * ```
+   */
+  healthCheck(): Promise<HealthCheckResponse>;
 }
 
 export default NFCClient;

@@ -298,11 +298,12 @@
             </div>
 
             <!-- Records -->
-            <div class="section" v-if="card.ndefRecords && card.ndefRecords.length > 0">
-                <h2>Records</h2>
-                <div v-for="(record, index) in card.ndefRecords" :key="index" class="record">
-                    <div class="record-type">{{ getRecordType(record.type) }} [{{ index }}]</div>
-                    <div>{{ record.text || record.uri || 'Binary' }}</div>
+            <div class="section" v-if="card.records && card.records.length > 0">
+                <h2>NDEF Records</h2>
+                <div v-for="(record, index) in card.records" :key="index" class="record">
+                    <div class="record-type">{{ record.type.toUpperCase() }} (TNF: {{ record.tnf }}) [{{ index }}]</div>
+                    <div>{{ record.content || '(Binary Data)' }}</div>
+                    <div v-if="record.language" style="font-size: 11px; color: #999; margin-top: 5px;">Language: {{ record.language }}</div>
                 </div>
             </div>
 
@@ -321,29 +322,24 @@
                 </div>
 
                 <div class="form-group">
-                    <label>Text</label>
-                    <textarea v-model="writeForm.text" :disabled="writeStatus.writing"></textarea>
+                    <label>Content</label>
+                    <textarea v-model="writeForm.content" :disabled="writeStatus.writing" placeholder="Enter text or URI to write"></textarea>
                 </div>
 
-                <div class="two-col">
-                    <div class="form-group">
-                        <label>Type</label>
-                        <select v-model="writeForm.recordType" :disabled="writeStatus.writing">
-                            <option value="text">Text</option>
-                            <option value="uri">URI</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Mode</label>
-                        <select v-model="writeForm.mode" :disabled="writeStatus.writing">
-                            <option value="replace">Replace All</option>
-                            <option value="append">Append</option>
-                        </select>
-                    </div>
+                <div class="form-group">
+                    <label>Record Type</label>
+                    <select v-model="writeForm.type" :disabled="writeStatus.writing">
+                        <option value="text">Text</option>
+                        <option value="uri">URI</option>
+                    </select>
                 </div>
 
-                <button @click="writeCard" :disabled="writeStatus.writing || !writeForm.text.trim()">
-                    {{ writeStatus.writing ? 'Writing...' : 'Write' }}
+                <div class="alert alert-info">
+                    <strong>Note:</strong> Writing will overwrite all existing records on the card.
+                </div>
+
+                <button @click="writeCard" :disabled="writeStatus.writing || !writeForm.content.trim()">
+                    {{ writeStatus.writing ? 'Writing...' : 'Write to Card' }}
                 </button>
             </div>
 
@@ -373,7 +369,7 @@
                     type: '',
                     technology: '',
                     scannedAt: null,
-                    ndefRecords: []
+                    records: []
                 });
 
                 // Raw payload from server
@@ -381,9 +377,8 @@
 
                 // Write form
                 const writeForm = reactive({
-                    text: '',
-                    recordType: 'text',
-                    mode: 'replace'
+                    content: '',
+                    type: 'text'
                 });
 
                 // Write status
@@ -453,13 +448,18 @@
                     card.type = data.type || '';
                     card.technology = data.technology || '';
                     card.scannedAt = data.scannedAt;
-                    card.ndefRecords = data.ndefRecords || [];
+                    
+                    // Extract records from message structure
+                    card.records = [];
+                    if (data.message && data.message.type === 'ndef' && data.message.records) {
+                        card.records = data.message.records;
+                    }
 
                     // Store raw payload for debugging
                     rawPayload.value = data;
 
                     // Reset write form
-                    writeForm.text = '';
+                    writeForm.content = '';
                     writeStatus.message = '';
                     writeStatus.type = '';
 
@@ -474,38 +474,38 @@
                         return;
                     }
 
-                    const text = writeForm.text.trim();
-                    if (!text) return;
+                    const content = writeForm.content.trim();
+                    if (!content) return;
 
                     writeStatus.writing = true;
                     writeStatus.message = 'Writing...';
                     writeStatus.type = 'alert-info';
 
                     try {
+                        // Use the new simplified write API with records array
                         const request = {
-                            text: text,
-                            recordType: writeForm.recordType,
-                            language: 'en'
+                            records: [
+                                {
+                                    type: writeForm.type,
+                                    content: content,
+                                    language: writeForm.type === 'text' ? 'en' : undefined
+                                }
+                            ]
                         };
-
-                        if (writeForm.mode === 'replace') {
-                            request.replace = true;
-                        } else {
-                            request.append = true;
-                        }
 
                         await client.write(request);
 
-                        writeStatus.message = 'Write successful';
+                        writeStatus.message = 'Write successful! ✓';
                         writeStatus.type = 'alert-success';
-                        writeForm.text = '';
+                        writeForm.content = '';
 
                         setTimeout(() => {
                             writeStatus.message = '';
                             writeStatus.type = '';
                         }, 5000);
                     } catch (err) {
-                        writeStatus.message = `Error: ${err.message}`;
+                        console.error('Write error:', err);
+                        writeStatus.message = `Error: ${err.message || err}`;
                         writeStatus.type = 'alert-error';
 
                         setTimeout(() => {
@@ -528,12 +528,6 @@
                     return date.toLocaleString();
                 }
 
-                // Get record type label
-                function getRecordType(type) {
-                    if (type === 'T') return 'TEXT';
-                    if (type === 'U') return 'URI';
-                    return 'OTHER';
-                }
 
                 return {
                     state,
@@ -549,8 +543,7 @@
                     disconnect,
                     writeCard,
                     backToScan,
-                    formatDate,
-                    getRecordType
+                    formatDate
                 };
             }
         }).mount('#app');

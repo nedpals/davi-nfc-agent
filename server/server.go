@@ -18,31 +18,62 @@ type readerContextKeySymbol struct{}
 
 var readerContextKey = readerContextKeySymbol{}
 
-// WebsocketMessage represents a message sent to WebSocket clients.
+// WebsocketMessage represents a message sent to/from WebSocket clients.
 type WebsocketMessage struct {
+	ID      string `json:"id,omitempty"` // Request ID for correlation
 	Type    string `json:"type"`
 	Payload any    `json:"payload"`
+}
+
+// WebsocketRequest represents an incoming request from WebSocket clients.
+type WebsocketRequest struct {
+	ID      string                 `json:"id,omitempty"` // Client-generated request ID
+	Type    string                 `json:"type"`
+	Payload map[string]interface{} `json:"payload,omitempty"`
+}
+
+// WebsocketResponse represents a response to a WebSocket request.
+type WebsocketResponse struct {
+	ID      string `json:"id,omitempty"` // Same as request ID
+	Type    string `json:"type"`         // Response type (e.g., "writeResponse")
+	Success bool   `json:"success"`      // Whether operation succeeded
+	Payload any    `json:"payload,omitempty"`
+	Error   string `json:"error,omitempty"` // Error message if failed
+}
+
+// NDEFRecordPayload represents an NDEF record in the broadcast payload.
+// This structure is used when reading and broadcasting tag data to WebSocket clients.
+// Field names are consistent with NDEFRecord for easier client-side handling.
+type NDEFRecordPayload struct {
+	Type     string `json:"type"`              // Record type: "text", "uri", etc. (human-readable)
+	Content  string `json:"content,omitempty"` // Decoded content (text or URI)
+	Language string `json:"language,omitempty"`// Language code for text records
+	TNF      uint8  `json:"tnf"`               // Type Name Format (technical detail)
+	ID       string `json:"id,omitempty"`      // Record ID (optional)
+	Payload  []byte `json:"payload"`           // Raw payload data
 }
 
 // Config holds the server configuration
 type Config struct {
 	Reader           *nfc.NFCReader
 	Port             int
-	SessionManager   *SessionManager
+	APISecret        string // Optional API secret for WebSocket connection
 	AllowedCardTypes map[string]bool
 }
 
 // Server manages the HTTP and WebSocket server
 type Server struct {
-	config     Config
-	httpServer *http.Server
-	ctx        context.Context
-	cancel     context.CancelFunc
-	lastCard   *nfc.Card
-	cardMu     sync.RWMutex
-	clients    map[*websocket.Conn]bool
-	clientsMux sync.RWMutex
-	upgrader   websocket.Upgrader
+	config        Config
+	httpServer    *http.Server
+	ctx           context.Context
+	cancel        context.CancelFunc
+	lastCard      *nfc.Card
+	cardMu        sync.RWMutex
+	clients       map[*websocket.Conn]bool
+	clientsMux    sync.RWMutex
+	sessionActive bool       // Whether a WebSocket session is active
+	sessionMux    sync.Mutex // Protects sessionActive
+	upgrader      websocket.Upgrader
 }
 
 // New creates a new server instance
@@ -127,27 +158,31 @@ func (s *Server) BroadcastTagData(data nfc.NFCData) {
 				// NDEF message - extract text and build records array
 				text, _ = ndefMsg.GetText()
 
-				records := make([]map[string]interface{}, 0, len(ndefMsg.Records()))
+				records := make([]NDEFRecordPayload, 0, len(ndefMsg.Records()))
 				for _, record := range ndefMsg.Records() {
-					recordInfo := map[string]interface{}{
-						"tnf":  record.TNF,
-						"type": string(record.Type),
+					recordInfo := NDEFRecordPayload{
+						TNF:     record.TNF,
+						Payload: record.Payload,
 					}
 
 					// Add ID if present
 					if len(record.ID) > 0 {
-						recordInfo["id"] = string(record.ID)
+						recordInfo.ID = string(record.ID)
 					}
 
-					// Extract type-specific data
+					// Extract type-specific data and set Type + Content fields
 					if recordText, ok := record.GetText(); ok {
-						recordInfo["text"] = recordText
+						recordInfo.Type = "text"
+						recordInfo.Content = recordText
+						// TODO: Extract language from record if available
+						recordInfo.Language = "en" // Default for now
 					} else if recordURI, ok := record.GetURI(); ok {
-						recordInfo["uri"] = recordURI
+						recordInfo.Type = "uri"
+						recordInfo.Content = recordURI
+					} else {
+						// Unknown type - use raw type field
+						recordInfo.Type = string(record.Type)
 					}
-
-					// Always include raw payload (as base64 for binary safety)
-					recordInfo["payload"] = record.Payload
 
 					records = append(records, recordInfo)
 				}
@@ -238,39 +273,15 @@ func (s *Server) Start() error {
 	// Set up HTTP routes with context
 	http.DefaultServeMux = http.NewServeMux() // Reset mux for clean restart
 
-	// Session handshake endpoint
-	http.HandleFunc("/handshake", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
+	// API v1 routes
+	apiV1 := "/api/v1"
+
+	http.HandleFunc(apiV1+"/health", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-
-		// Parse API secret from request body if provided
-		var requestBody struct {
-			Secret string `json:"secret,omitempty"`
-		}
-		json.NewDecoder(r.Body).Decode(&requestBody)
-
-		// Get origin and remote address for session binding
-		origin := r.Header.Get("Origin")
-		remoteAddr := r.RemoteAddr
-
-		// Attempt to acquire session with origin and IP binding
-		token := s.config.SessionManager.Acquire(requestBody.Secret, origin, remoteAddr)
-		if token == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Session already claimed or invalid secret",
-			})
-			return
-		}
-
-		// Return token
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"token": token,
-		})
+		s.handleHealthCheck(w, r)
 	}))
 
 	// Configure WebSocket endpoint
@@ -369,27 +380,35 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	// Validate session token
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		token = r.Header.Get("X-Session-Token")
-	}
-
-	// Get origin and remote address for validation
-	origin := r.Header.Get("Origin")
-	remoteAddr := r.RemoteAddr
-
-	if !s.config.SessionManager.Validate(token, origin, remoteAddr) {
-		log.Printf("Invalid or missing session token")
-		http.Error(w, "Unauthorized: Invalid or missing session token", http.StatusUnauthorized)
+	// Check if session is already active (first come, first served)
+	s.sessionMux.Lock()
+	if s.sessionActive {
+		s.sessionMux.Unlock()
+		log.Printf("WebSocket connection rejected: session already claimed")
+		http.Error(w, "Session already claimed by another client", http.StatusConflict)
 		return
 	}
+	s.sessionActive = true
+	s.sessionMux.Unlock()
 
-	// Refresh session timeout on successful connection
-	s.config.SessionManager.RefreshTimeout()
+	// Validate optional API secret if configured
+	if s.config.APISecret != "" {
+		secret := r.URL.Query().Get("secret")
+		if secret != s.config.APISecret {
+			s.sessionMux.Lock()
+			s.sessionActive = false
+			s.sessionMux.Unlock()
+			log.Printf("WebSocket connection rejected: invalid API secret")
+			http.Error(w, "Unauthorized: Invalid API secret", http.StatusUnauthorized)
+			return
+		}
+	}
 
 	reader := getReaderFromContext(r.Context())
 	if reader == nil {
+		s.sessionMux.Lock()
+		s.sessionActive = false
+		s.sessionMux.Unlock()
 		log.Printf("No NFC reader in context")
 		http.Error(w, "Server configuration error", http.StatusInternalServerError)
 		return
@@ -397,13 +416,22 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		s.sessionMux.Lock()
+		s.sessionActive = false
+		s.sessionMux.Unlock()
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
+
+	log.Printf("WebSocket connected from %s", r.RemoteAddr)
+
 	defer func() {
 		conn.Close()
 		// Release session when WebSocket disconnects
-		s.config.SessionManager.Release()
+		s.sessionMux.Lock()
+		s.sessionActive = false
+		s.sessionMux.Unlock()
+		log.Printf("WebSocket disconnected, session released")
 	}()
 
 	s.clientsMux.Lock()
@@ -440,37 +468,80 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// Refresh session timeout on any incoming message
-		s.config.SessionManager.RefreshTimeout()
-
 		if messageType == websocket.TextMessage {
-			var wsMessage map[string]interface{}
-			if err := json.Unmarshal(message, &wsMessage); err != nil {
+			var wsRequest WebsocketRequest
+			if err := json.Unmarshal(message, &wsRequest); err != nil {
 				log.Printf("Failed to parse WebSocket message: %v", err)
+				s.sendErrorResponse(conn, "", "PARSE_ERROR", "Invalid message format")
 				continue
 			}
 
-			msgType, ok := wsMessage["type"].(string)
-			if !ok {
-				continue
-			}
-
-			switch msgType {
+			// Handle request based on type
+			switch wsRequest.Type {
 			case "writeRequest":
-				// Write request handling is done in main.go
-				// Forward the message through a channel or callback
-				// For now, this is handled by the calling code
-			case "release":
-				// Client explicitly releases the session
-				s.config.SessionManager.Release()
-				conn.WriteJSON(map[string]interface{}{
-					"type": "releaseResponse",
-					"payload": map[string]interface{}{
-						"success": true,
-					},
-				})
+				s.handleWriteRequest(conn, reader, wsRequest)
+			default:
+				log.Printf("Unknown message type: %s", wsRequest.Type)
+				s.sendErrorResponse(conn, wsRequest.ID, "UNKNOWN_TYPE", fmt.Sprintf("Unknown message type: %s", wsRequest.Type))
 			}
 		}
+	}
+}
+
+// handleWriteRequest handles write requests from WebSocket clients
+func (s *Server) handleWriteRequest(conn *websocket.Conn, reader *nfc.NFCReader, wsRequest WebsocketRequest) {
+	// Parse write request from payload
+	payloadBytes, err := json.Marshal(wsRequest.Payload)
+	if err != nil {
+		log.Printf("Failed to marshal write request payload: %v", err)
+		s.sendErrorResponse(conn, wsRequest.ID, "INVALID_PAYLOAD", "Invalid write request payload")
+		return
+	}
+
+	var writeReq WriteRequest
+	if err := json.Unmarshal(payloadBytes, &writeReq); err != nil {
+		log.Printf("Failed to parse write request: %v", err)
+		s.sendErrorResponse(conn, wsRequest.ID, "INVALID_WRITE_REQUEST", "Failed to parse write request")
+		return
+	}
+
+	// Perform write operation
+	err = HandleWriteRequest(reader, writeReq)
+	if err != nil {
+		log.Printf("Write operation failed: %v", err)
+		s.sendErrorResponse(conn, wsRequest.ID, "WRITE_FAILED", err.Error())
+		return
+	}
+
+	// Send success response
+	response := WebsocketResponse{
+		ID:      wsRequest.ID,
+		Type:    "writeResponse",
+		Success: true,
+		Payload: map[string]interface{}{
+			"message": "Write operation completed successfully",
+		},
+	}
+
+	if err := conn.WriteJSON(response); err != nil {
+		log.Printf("Failed to send write response: %v", err)
+	}
+}
+
+// sendErrorResponse sends a structured error response to a WebSocket client
+func (s *Server) sendErrorResponse(conn *websocket.Conn, requestID string, errorCode string, message string) {
+	response := WebsocketResponse{
+		ID:      requestID,
+		Type:    "error",
+		Success: false,
+		Error:   message,
+		Payload: map[string]interface{}{
+			"code": errorCode,
+		},
+	}
+
+	if err := conn.WriteJSON(response); err != nil {
+		log.Printf("Failed to send error response: %v", err)
 	}
 }
 
@@ -483,4 +554,13 @@ func getReaderFromContext(ctx context.Context) *nfc.NFCReader {
 // GetReaderFromContext is exported for use by other packages
 func GetReaderFromContext(ctx context.Context) *nfc.NFCReader {
 	return getReaderFromContext(ctx)
+}
+
+// handleHealthCheck provides a health check endpoint (GET /api/v1/health)
+func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "ok",
+		"timestamp": time.Now().Format("2006-01-02T15:04:05Z07:00"),
+	})
 }

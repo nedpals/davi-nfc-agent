@@ -66,7 +66,7 @@ func (a *Agent) Start(devicePath string) error {
 	a.Server = server.New(server.Config{
 		Reader:           a.Reader,
 		Port:             a.ServerPort,
-		SessionManager:   server.NewSessionManager(a.APISecret, 60*time.Second),
+		APISecret:        a.APISecret,
 		AllowedCardTypes: a.allowedCardToMap(),
 	})
 

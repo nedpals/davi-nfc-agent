@@ -6,95 +6,97 @@ import (
 	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
-// TestBuildNDEFMessage tests NDEF message building logic (now in server package)
+// TestBuildNDEFMessage tests NDEF message building logic
 func TestBuildNDEFMessage(t *testing.T) {
 	tests := []struct {
 		name        string
 		request     WriteRequest
 		expectError bool
-		checkOpts   func(*testing.T, nfc.WriteOptions)
+		checkMsg    func(*testing.T, *nfc.NDEFMessage)
 	}{
 		{
-			name: "Simple text record",
+			name: "Single text record",
 			request: WriteRequest{
-				Text: "Hello, World!",
+				Records: []NDEFRecord{
+					{Type: "text", Content: "Hello, NFC!"},
+				},
 			},
 			expectError: false,
-			checkOpts: func(t *testing.T, opts nfc.WriteOptions) {
-				if !opts.Overwrite {
-					t.Error("Expected Overwrite to be true for simple write")
+			checkMsg: func(t *testing.T, msg *nfc.NDEFMessage) {
+				records := msg.Records()
+				if len(records) != 1 {
+					t.Errorf("Expected 1 record, got %d", len(records))
 				}
-				if opts.Index != -1 {
-					t.Error("Expected Index to be -1 for simple write")
+				text, _ := records[0].GetText()
+				if text != "Hello, NFC!" {
+					t.Errorf("Expected 'Hello, NFC!', got '%s'", text)
 				}
 			},
 		},
 		{
-			name: "Append mode",
+			name: "Multiple records",
 			request: WriteRequest{
-				Text:   "Additional text",
-				Append: true,
+				Records: []NDEFRecord{
+					{Type: "text", Content: "First"},
+					{Type: "text", Content: "Second"},
+				},
 			},
 			expectError: false,
-			checkOpts: func(t *testing.T, opts nfc.WriteOptions) {
-				if opts.Overwrite {
-					t.Error("Expected Overwrite to be false for append")
-				}
-				if opts.Index != -1 {
-					t.Error("Expected Index to be -1 for append")
-				}
-			},
-		},
-		{
-			name: "Replace mode",
-			request: WriteRequest{
-				Text:    "New content",
-				Replace: true,
-			},
-			expectError: false,
-			checkOpts: func(t *testing.T, opts nfc.WriteOptions) {
-				if !opts.Overwrite {
-					t.Error("Expected Overwrite to be true for replace")
-				}
-				if opts.Index != -1 {
-					t.Error("Expected Index to be -1 for replace")
-				}
-			},
-		},
-		{
-			name: "Update specific record",
-			request: WriteRequest{
-				Text:        "Updated text",
-				RecordIndex: intPtr(0),
-			},
-			expectError: false,
-			checkOpts: func(t *testing.T, opts nfc.WriteOptions) {
-				if opts.Overwrite {
-					t.Error("Expected Overwrite to be false for record update")
-				}
-				if opts.Index != 0 {
-					t.Errorf("Expected Index to be 0, got %d", opts.Index)
+			checkMsg: func(t *testing.T, msg *nfc.NDEFMessage) {
+				records := msg.Records()
+				if len(records) != 2 {
+					t.Errorf("Expected 2 records, got %d", len(records))
 				}
 			},
 		},
 		{
 			name: "URI record",
 			request: WriteRequest{
-				Text:       "https://example.com",
-				RecordType: "uri",
+				Records: []NDEFRecord{
+					{Type: "uri", Content: "https://example.com"},
+				},
 			},
 			expectError: false,
-			checkOpts: func(t *testing.T, opts nfc.WriteOptions) {
-				if !opts.Overwrite {
-					t.Error("Expected Overwrite to be true for simple URI write")
+			checkMsg: func(t *testing.T, msg *nfc.NDEFMessage) {
+				records := msg.Records()
+				if len(records) != 1 {
+					t.Errorf("Expected 1 record, got %d", len(records))
+				}
+				uri, _ := records[0].GetURI()
+				if uri != "https://example.com" {
+					t.Errorf("Expected 'https://example.com', got '%s'", uri)
+				}
+			},
+		},
+		{
+			name: "Mixed record types",
+			request: WriteRequest{
+				Records: []NDEFRecord{
+					{Type: "text", Content: "Hello"},
+					{Type: "uri", Content: "https://example.com"},
+				},
+			},
+			expectError: false,
+			checkMsg: func(t *testing.T, msg *nfc.NDEFMessage) {
+				records := msg.Records()
+				if len(records) != 2 {
+					t.Errorf("Expected 2 records, got %d", len(records))
 				}
 			},
 		},
 		{
 			name: "Unsupported record type",
 			request: WriteRequest{
-				Text:       "test",
-				RecordType: "unknown",
+				Records: []NDEFRecord{
+					{Type: "unknown", Content: "test"},
+				},
+			},
+			expectError: true,
+		},
+		{
+			name: "Empty records array",
+			request: WriteRequest{
+				Records: []NDEFRecord{},
 			},
 			expectError: true,
 		},
@@ -102,7 +104,7 @@ func TestBuildNDEFMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, opts, err := BuildNDEFMessage(tt.request)
+			msg, err := BuildNDEFMessage(tt.request)
 
 			if tt.expectError {
 				if err == nil {
@@ -119,13 +121,9 @@ func TestBuildNDEFMessage(t *testing.T) {
 				t.Fatal("Expected NDEF message, got nil")
 			}
 
-			if tt.checkOpts != nil {
-				tt.checkOpts(t, opts)
+			if tt.checkMsg != nil {
+				tt.checkMsg(t, msg)
 			}
 		})
 	}
-}
-
-func intPtr(i int) *int {
-	return &i
 }
