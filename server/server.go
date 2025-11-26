@@ -77,14 +77,8 @@ func (s *Server) broadcast(message *WebsocketMessage) {
 	s.clientsMux.Lock()
 	defer s.clientsMux.Unlock()
 
-	jsonMessage, err := json.Marshal(message)
-	if err != nil {
-		log.Printf("Failed to marshal WebSocket message: %v", err)
-		return
-	}
-
 	for client := range s.clients {
-		err := client.WriteJSON(jsonMessage)
+		err := client.WriteJSON(message)
 		if err != nil {
 			log.Printf("WebSocket write error: %v", err)
 			client.Close()
