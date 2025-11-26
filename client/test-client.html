@@ -229,6 +229,10 @@
                     <label>Server URL</label>
                     <input type="text" id="wsUrl" value="http://localhost:18080">
                 </div>
+                <div class="form-group">
+                    <label>API Secret</label>
+                    <input type="password" id="apiSecret" placeholder="Enter API secret">
+                </div>
                 <button onclick="connect()">Connect</button>
             </div>
         </div>
@@ -316,9 +320,10 @@
 
         async function connect() {
             const serverUrl = document.getElementById('wsUrl').value;
+            const apiSecret = document.getElementById('apiSecret').value;
 
             try {
-                client = new NFCClient(serverUrl);
+                client = new NFCClient(serverUrl, { apiSecret });
 
                 // Set up event handlers
                 client.on('connected', () => {
