@@ -252,7 +252,9 @@ class NFCClient {
       scannedAt: payload.scannedAt ? new Date(payload.scannedAt) : null,
       text: payload.text || '',
       message: payload.message || null,
-      error: payload.err || null
+      error: payload.err || null,
+      // Preserve raw payload for debugging
+      _raw: payload
     };
 
     // Parse NDEF message if available

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NFC Agent Test Client</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
         * {
             margin: 0;
@@ -122,6 +123,11 @@
             background: #555;
         }
 
+        button:disabled {
+            background: #999;
+            cursor: not-allowed;
+        }
+
         button.secondary {
             background: transparent;
             color: #333;
@@ -174,6 +180,20 @@
             color: #666;
         }
 
+        .raw-dump {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
         .alert {
             padding: 10px;
             border-radius: 4px;
@@ -191,15 +211,15 @@
             color: #991b1b;
         }
 
+        .alert-info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
         .two-col {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 10px;
-        }
-
-        /* State visibility */
-        .hidden {
-            display: none !important;
         }
 
         @media (max-width: 600px) {
@@ -218,27 +238,31 @@
     </style>
 </head>
 <body>
-    <div class="container">
+    <div id="app" class="container">
         <!-- State 1: Landing / Connection -->
-        <div id="landingState">
+        <template v-if="state === 'landing'">
             <h1>NFC Agent Test Client</h1>
             <p class="subtitle">Connect to your NFC reader</p>
 
             <div class="section">
+                <div v-if="error" class="alert alert-error">{{ error }}</div>
+
                 <div class="form-group">
                     <label>Server URL</label>
-                    <input type="text" id="wsUrl" value="http://localhost:18080">
+                    <input type="text" v-model="serverUrl" :disabled="connecting">
                 </div>
                 <div class="form-group">
                     <label>API Secret</label>
-                    <input type="password" id="apiSecret" placeholder="Enter API secret">
+                    <input type="password" v-model="apiSecret" placeholder="Enter API secret" :disabled="connecting">
                 </div>
-                <button onclick="connect()">Connect</button>
+                <button @click="connect" :disabled="connecting">
+                    {{ connecting ? 'Connecting...' : 'Connect' }}
+                </button>
             </div>
-        </div>
+        </template>
 
         <!-- State 2: Connected / Ready to scan -->
-        <div id="scanState" class="hidden">
+        <template v-else-if="state === 'scan'">
             <h1>NFC Agent Test Client</h1>
             <p class="subtitle">Ready to scan</p>
 
@@ -253,196 +277,283 @@
                     <div>Hold a card near your reader</div>
                 </div>
 
-                <button class="secondary" onclick="disconnect()">Disconnect</button>
+                <button class="secondary" @click="disconnect">Disconnect</button>
             </div>
-        </div>
+        </template>
 
         <!-- State 3: Card detected -->
-        <div id="cardState" class="hidden">
+        <template v-else-if="state === 'card'">
             <h1>NFC Agent Test Client</h1>
-            <p class="subtitle" id="cardUID"></p>
+            <p class="subtitle">{{ card.uid }}</p>
 
             <!-- Card Info -->
             <div class="section">
                 <h2>Card Information</h2>
-                <div id="cardInfo" class="card-data"></div>
+                <div class="card-data">
+                    <div><strong>UID:</strong> {{ card.uid }}</div>
+                    <div><strong>Type:</strong> {{ card.type || 'Unknown' }}</div>
+                    <div v-if="card.technology"><strong>Technology:</strong> {{ card.technology }}</div>
+                    <div v-if="card.scannedAt"><strong>Scanned:</strong> {{ formatDate(card.scannedAt) }}</div>
+                </div>
             </div>
 
             <!-- Records -->
-            <div class="section" id="recordsSection" style="display: none;">
+            <div class="section" v-if="card.ndefRecords && card.ndefRecords.length > 0">
                 <h2>Records</h2>
-                <div id="recordsList"></div>
+                <div v-for="(record, index) in card.ndefRecords" :key="index" class="record">
+                    <div class="record-type">{{ getRecordType(record.type) }} [{{ index }}]</div>
+                    <div>{{ record.text || record.uri || 'Binary' }}</div>
+                </div>
+            </div>
+
+            <!-- Raw Payload -->
+            <div class="section">
+                <h2>Raw Payload</h2>
+                <pre class="raw-dump">{{ JSON.stringify(rawPayload, null, 2) }}</pre>
             </div>
 
             <!-- Write -->
             <div class="section">
                 <h2>Write to Card</h2>
-                <div id="writeAlert"></div>
+
+                <div v-if="writeStatus.message" :class="['alert', writeStatus.type]">
+                    {{ writeStatus.message }}
+                </div>
 
                 <div class="form-group">
                     <label>Text</label>
-                    <textarea id="writeText"></textarea>
+                    <textarea v-model="writeForm.text" :disabled="writeStatus.writing"></textarea>
                 </div>
 
                 <div class="two-col">
                     <div class="form-group">
                         <label>Type</label>
-                        <select id="recordType">
+                        <select v-model="writeForm.recordType" :disabled="writeStatus.writing">
                             <option value="text">Text</option>
                             <option value="uri">URI</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Mode</label>
-                        <select id="writeMode">
+                        <select v-model="writeForm.mode" :disabled="writeStatus.writing">
                             <option value="replace">Replace All</option>
                             <option value="append">Append</option>
                         </select>
                     </div>
                 </div>
 
-                <button onclick="writeCard()">Write</button>
+                <button @click="writeCard" :disabled="writeStatus.writing || !writeForm.text.trim()">
+                    {{ writeStatus.writing ? 'Writing...' : 'Write' }}
+                </button>
             </div>
 
-            <button class="secondary" onclick="backToScan()">Back to Scan</button>
-        </div>
+            <button class="secondary" @click="backToScan">Back to Scan</button>
+        </template>
     </div>
 
     <script src="./nfc-client.js"></script>
     <script>
-        let client = null;
+        const { createApp, ref, reactive } = Vue;
 
-        function setState(state) {
-            document.getElementById('landingState').classList.toggle('hidden', state !== 'landing');
-            document.getElementById('scanState').classList.toggle('hidden', state !== 'scan');
-            document.getElementById('cardState').classList.toggle('hidden', state !== 'card');
-        }
+        createApp({
+            setup() {
+                // Connection state
+                const state = ref('landing');
+                const serverUrl = ref('http://localhost:18080');
+                const apiSecret = ref('');
+                const connecting = ref(false);
+                const error = ref('');
 
-        async function connect() {
-            const serverUrl = document.getElementById('wsUrl').value;
-            const apiSecret = document.getElementById('apiSecret').value;
+                // NFC client instance
+                let client = null;
 
-            try {
-                client = new NFCClient(serverUrl, { apiSecret });
-
-                // Set up event handlers
-                client.on('connected', () => {
-                    setState('scan');
+                // Card data
+                const card = reactive({
+                    uid: '',
+                    type: '',
+                    technology: '',
+                    scannedAt: null,
+                    ndefRecords: []
                 });
 
-                client.on('disconnected', () => {
-                    setState('landing');
+                // Raw payload from server
+                const rawPayload = ref(null);
+
+                // Write form
+                const writeForm = reactive({
+                    text: '',
+                    recordType: 'text',
+                    mode: 'replace'
                 });
 
-                client.on('error', (error) => {
-                    console.error('Client error:', error);
-                    alert('Connection error. Please check the URL and try again.');
+                // Write status
+                const writeStatus = reactive({
+                    writing: false,
+                    message: '',
+                    type: ''
                 });
 
-                client.on('tagData', (data) => {
-                    if (data.uid) {
-                        handleCard(data);
+                // Connect to NFC agent
+                async function connect() {
+                    connecting.value = true;
+                    error.value = '';
+
+                    try {
+                        client = new NFCClient(serverUrl.value, { apiSecret: apiSecret.value });
+
+                        client.on('connected', () => {
+                            state.value = 'scan';
+                            connecting.value = false;
+                        });
+
+                        client.on('disconnected', () => {
+                            state.value = 'landing';
+                            connecting.value = false;
+                        });
+
+                        client.on('error', (err) => {
+                            console.error('Client error:', err);
+                            error.value = err.error?.message || 'Connection error';
+                            connecting.value = false;
+                        });
+
+                        client.on('tagData', (data) => {
+                            if (data.uid) {
+                                handleCard(data);
+                            }
+                        });
+
+                        client.on('deviceStatus', (status) => {
+                            // Go back to scan screen when card is removed
+                            if (!status.CardPresent && state.value === 'card') {
+                                state.value = 'scan';
+                            }
+                        });
+
+                        await client.connect();
+                    } catch (err) {
+                        console.error('Connection failed:', err);
+                        error.value = err.message;
+                        connecting.value = false;
                     }
-                });
+                }
 
-                // Establish connection
-                await client.connect();
-            } catch (err) {
-                console.error('Connection failed:', err);
-                alert('Connection failed: ' + err.message);
+                // Disconnect from NFC agent
+                async function disconnect() {
+                    if (client) {
+                        await client.disconnect();
+                        client = null;
+                    }
+                    state.value = 'landing';
+                }
+
+                // Handle card data
+                function handleCard(data) {
+                    card.uid = data.uid;
+                    card.type = data.type || '';
+                    card.technology = data.technology || '';
+                    card.scannedAt = data.scannedAt;
+                    card.ndefRecords = data.ndefRecords || [];
+
+                    // Store raw payload for debugging
+                    rawPayload.value = data;
+
+                    // Reset write form
+                    writeForm.text = '';
+                    writeStatus.message = '';
+                    writeStatus.type = '';
+
+                    state.value = 'card';
+                }
+
+                // Write to card
+                async function writeCard() {
+                    if (!client || !client.isConnected()) {
+                        writeStatus.message = 'Not connected';
+                        writeStatus.type = 'alert-error';
+                        return;
+                    }
+
+                    const text = writeForm.text.trim();
+                    if (!text) return;
+
+                    writeStatus.writing = true;
+                    writeStatus.message = 'Writing...';
+                    writeStatus.type = 'alert-info';
+
+                    try {
+                        const request = {
+                            text: text,
+                            recordType: writeForm.recordType,
+                            language: 'en'
+                        };
+
+                        if (writeForm.mode === 'replace') {
+                            request.replace = true;
+                        } else {
+                            request.append = true;
+                        }
+
+                        await client.write(request);
+
+                        writeStatus.message = 'Write successful';
+                        writeStatus.type = 'alert-success';
+                        writeForm.text = '';
+
+                        setTimeout(() => {
+                            writeStatus.message = '';
+                            writeStatus.type = '';
+                        }, 5000);
+                    } catch (err) {
+                        writeStatus.message = `Error: ${err.message}`;
+                        writeStatus.type = 'alert-error';
+
+                        setTimeout(() => {
+                            writeStatus.message = '';
+                            writeStatus.type = '';
+                        }, 5000);
+                    } finally {
+                        writeStatus.writing = false;
+                    }
+                }
+
+                // Back to scan state
+                function backToScan() {
+                    state.value = 'scan';
+                }
+
+                // Format date
+                function formatDate(date) {
+                    if (!date) return '';
+                    return date.toLocaleString();
+                }
+
+                // Get record type label
+                function getRecordType(type) {
+                    if (type === 'T') return 'TEXT';
+                    if (type === 'U') return 'URI';
+                    return 'OTHER';
+                }
+
+                return {
+                    state,
+                    serverUrl,
+                    apiSecret,
+                    connecting,
+                    error,
+                    card,
+                    rawPayload,
+                    writeForm,
+                    writeStatus,
+                    connect,
+                    disconnect,
+                    writeCard,
+                    backToScan,
+                    formatDate,
+                    getRecordType
+                };
             }
-        }
-
-        async function disconnect() {
-            if (client) {
-                await client.disconnect();
-                client = null;
-            }
-            setState('landing');
-        }
-
-        function backToScan() {
-            setState('scan');
-        }
-
-        function handleCard(card) {
-            document.getElementById('cardUID').textContent = card.uid;
-
-            let html = `<div><strong>UID:</strong> ${card.uid}</div>`;
-            html += `<div><strong>Type:</strong> ${card.type || 'Unknown'}</div>`;
-            if (card.technology) {
-                html += `<div><strong>Technology:</strong> ${card.technology}</div>`;
-            }
-            if (card.scannedAt) {
-                html += `<div><strong>Scanned:</strong> ${card.scannedAt.toLocaleString()}</div>`;
-            }
-
-            document.getElementById('cardInfo').innerHTML = html;
-
-            // Show records
-            if (card.ndefRecords && card.ndefRecords.length > 0) {
-                let recordsHtml = '';
-                card.ndefRecords.forEach((rec, i) => {
-                    const type = rec.type === 'T' ? 'TEXT' : rec.type === 'U' ? 'URI' : 'OTHER';
-                    const content = rec.text || rec.uri || 'Binary';
-                    recordsHtml += `
-                        <div class="record">
-                            <div class="record-type">${type} [${i}]</div>
-                            <div>${content}</div>
-                        </div>
-                    `;
-                });
-                document.getElementById('recordsList').innerHTML = recordsHtml;
-                document.getElementById('recordsSection').style.display = 'block';
-            } else {
-                document.getElementById('recordsSection').style.display = 'none';
-            }
-
-            setState('card');
-        }
-
-        async function writeCard() {
-            if (!client || !client.isConnected()) {
-                alert('Not connected');
-                return;
-            }
-
-            const text = document.getElementById('writeText').value.trim();
-            if (!text) {
-                alert('Enter text');
-                return;
-            }
-
-            const writeRequest = {
-                text: text,
-                recordType: document.getElementById('recordType').value,
-                language: 'en'
-            };
-
-            const mode = document.getElementById('writeMode').value;
-            if (mode === 'replace') {
-                writeRequest.replace = true;
-            } else {
-                writeRequest.append = true;
-            }
-
-            try {
-                const alertDiv = document.getElementById('writeAlert');
-                alertDiv.innerHTML = '<div class="alert alert-success">Writing...</div>';
-
-                await client.write(writeRequest);
-
-                alertDiv.innerHTML = '<div class="alert alert-success">Write successful</div>';
-                setTimeout(() => alertDiv.innerHTML = '', 5000);
-
-                // Clear the text field
-                document.getElementById('writeText').value = '';
-            } catch (err) {
-                const alertDiv = document.getElementById('writeAlert');
-                alertDiv.innerHTML = `<div class="alert alert-error">Error: ${err.message}</div>`;
-                setTimeout(() => alertDiv.innerHTML = '', 5000);
-            }
-        }
+        }).mount('#app');
     </script>
 </body>
 </html>
