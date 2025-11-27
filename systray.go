@@ -24,7 +24,7 @@ func getLocalIPs() []string {
 	if err != nil {
 		return ips
 	}
-	
+
 	for _, addr := range addrs {
 		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
 			if ipNet.IP.To4() != nil {
@@ -37,18 +37,18 @@ func getLocalIPs() []string {
 
 // SystrayApp manages the system tray interface for the NFC agent
 type SystrayApp struct {
-	agent          *Agent
-	currentDevice  string
-	initialDevice  string
+	agent         *Agent
+	currentDevice string
+	initialDevice string
 
 	// Menu items
-	mStatus     *systray.MenuItem
-	mServerInfo *systray.MenuItem
-	mCardUID    *systray.MenuItem
-	mCardType   *systray.MenuItem
-	mStart      *systray.MenuItem
-	mStop       *systray.MenuItem
-	mDeviceMenu *systray.MenuItem
+	mStatus         *systray.MenuItem
+	mServerInfo     *systray.MenuItem
+	mCardUID        *systray.MenuItem
+	mCardType       *systray.MenuItem
+	mStart          *systray.MenuItem
+	mStop           *systray.MenuItem
+	mDeviceMenu     *systray.MenuItem
 	deviceMenuItems map[string]*systray.MenuItem
 
 	// Mode menu items
@@ -95,7 +95,6 @@ func (s *SystrayApp) onExit() {
 // setupUI initializes all menu items
 func (s *SystrayApp) setupUI() {
 	systray.SetIcon(iconData)
-	systray.SetTitle("NFC Agent")
 	systray.SetTooltip("NFC Card Reader Agent")
 
 	// Status section
@@ -134,7 +133,7 @@ func (s *SystrayApp) setupUI() {
 	// Card type filtering section
 	s.mCardFilterMenu = systray.AddMenuItem("Card Type Filter", "Filter cards by type")
 	s.mFilterAll = s.mCardFilterMenu.AddSubMenuItemCheckbox("All Types", "Allow all card types", true)
-	
+
 	// Create card type filter menu items for each card type
 	for _, cardType := range GetAllCardTypeFilterNames() {
 		displayName := GetCardTypeFilterDisplayName(cardType)
@@ -270,12 +269,12 @@ func (s *SystrayApp) handleModeSwitch(mode nfc.ReaderMode, modeName string) {
 
 	s.agent.Reader.SetMode(mode)
 	s.mModeMenu.SetTitle("Mode: " + modeName)
-	
+
 	// Update checkboxes
 	s.mReadWriteMode.Uncheck()
 	s.mReadMode.Uncheck()
 	s.mWriteMode.Uncheck()
-	
+
 	switch mode {
 	case nfc.ModeReadWrite:
 		s.mReadWriteMode.Check()
@@ -284,19 +283,19 @@ func (s *SystrayApp) handleModeSwitch(mode nfc.ReaderMode, modeName string) {
 	case nfc.ModeWriteOnly:
 		s.mWriteMode.Check()
 	}
-	
+
 	log.Printf("Switched to %s mode", modeName)
 }
 
 // handleFilterAll enables all card type filters
 func (s *SystrayApp) handleFilterAll() {
 	s.mFilterAll.Check()
-	
+
 	// Uncheck all individual filters
 	for _, filter := range s.cardTypeFilters {
 		filter.menuItem.Uncheck()
 	}
-	
+
 	s.agent.AllowAllCardTypes()
 }
 
@@ -315,17 +314,17 @@ func (s *SystrayApp) handleCardFilterSelection() {
 // handleCardTypeToggle toggles a card type filter
 func (s *SystrayApp) handleCardTypeToggle(filter *cardTypeFilterItem) {
 	s.mFilterAll.Uncheck()
-	
+
 	// Toggle the card type
 	s.agent.SetAllowCardType(filter.cardType, !filter.menuItem.Checked())
-	
+
 	// Update menu item
 	if filter.menuItem.Checked() {
 		filter.menuItem.Uncheck()
 	} else {
 		filter.menuItem.Check()
 	}
-	
+
 	// If no filters active, revert to All
 	if s.agent.AllowedCardTypesLength() == 0 {
 		s.mFilterAll.Check()
@@ -352,7 +351,7 @@ func (s *SystrayApp) switchDevice(deviceName string, menuItem *systray.MenuItem)
 	for _, item := range s.deviceMenuItems {
 		item.Uncheck()
 	}
-	
+
 	// Check selected device
 	menuItem.Check()
 	s.currentDevice = deviceName
@@ -402,9 +401,22 @@ func (s *SystrayApp) updateDeviceList() {
 	}
 }
 
-// updateStatus updates the status menu item
+// updateStatus updates the status menu item and icon
 func (s *SystrayApp) updateStatus(status string) {
 	s.mStatus.SetTitle(status)
+	
+	// Update icon based on status
+	switch status {
+	case "Running":
+		systray.SetIcon(iconDataConnected)
+	case "Failed to Start":
+		systray.SetIcon(iconDataError)
+	case "Stopped":
+		systray.SetIcon(iconDataStopped)
+	default:
+		// Starting or other states
+		systray.SetIcon(iconData)
+	}
 }
 
 // getCardInfo extracts UID and type from a card
@@ -440,18 +452,18 @@ func (s *SystrayApp) updateServerInfo() {
 		s.mServerInfo.SetTitle("Server: Not running")
 		return
 	}
-	
+
 	port := s.agent.ServerPort
 	if port == 0 {
 		port = DEFAULT_PORT
 	}
-	
+
 	ips := getLocalIPs()
 	if len(ips) == 0 {
 		s.mServerInfo.SetTitle(fmt.Sprintf("Server: localhost:%d", port))
 		return
 	}
-	
+
 	// Show the first IP address with port
 	s.mServerInfo.SetTitle(fmt.Sprintf("Server: %s:%d", ips[0], port))
 }
