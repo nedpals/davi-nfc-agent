@@ -64,9 +64,9 @@ func (a *Agent) Start(devicePath string) error {
 	a.Reader = nfcReader
 
 	// Create smartphone handler if smartphone manager was injected
-	var smartphoneHandler *server.SmartphoneDeviceHandler
+	var smartphoneHandler *server.SmartphoneHandler
 	if a.SmartphoneManager != nil {
-		smartphoneHandler = server.NewSmartphoneDeviceHandler(a.SmartphoneManager)
+		smartphoneHandler = server.NewSmartphoneHandler(a.SmartphoneManager)
 	}
 
 	// Create server

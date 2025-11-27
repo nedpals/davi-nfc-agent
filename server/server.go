@@ -49,7 +49,7 @@ type Config struct {
 	Port              int
 	APISecret         string // Optional API secret for WebSocket connection
 	AllowedCardTypes  map[string]bool
-	SmartphoneHandler *SmartphoneDeviceHandler // Smartphone device handler (optional)
+	SmartphoneHandler *SmartphoneHandler // Smartphone device handler (optional)
 }
 
 // Server manages the HTTP and WebSocket server
@@ -68,13 +68,16 @@ type Server struct {
 	sessionMux    sync.Mutex // Protects sessionActive
 	upgrader      websocket.Upgrader
 	
+	// Handler registry (unified for both client and device connections)
+	handlerRegistry *HandlerRegistry
+	
 	// mDNS service for auto-discovery
 	mdnsServer *zeroconf.Server
 }
 
 // New creates a new server instance
 func New(config Config) *Server {
-	return &Server{
+	s := &Server{
 		config:  config,
 		clients: make(map[*websocket.Conn]bool),
 		upgrader: websocket.Upgrader{
@@ -82,7 +85,31 @@ func New(config Config) *Server {
 				return true // Allow all origins
 			},
 		},
+		handlerRegistry: NewHandlerRegistry(),
 	}
+
+	// Register NFC reader handlers
+	if config.Reader != nil {
+		nfcHandler := NewNFCHandler(config.Reader, config.AllowedCardTypes)
+		nfcHandler.Register(s)
+	}
+	
+	// Register smartphone handler if present
+	if config.SmartphoneHandler != nil {
+		config.SmartphoneHandler.Register(s)
+	}
+
+	return s
+}
+
+// Handle implements HandlerServer interface.
+func (s *Server) Handle(messageType string, handler HandlerFunc) error {
+	return s.handlerRegistry.Handle(messageType, handler)
+}
+
+// StartLifecycle implements HandlerServer interface.
+func (s *Server) StartLifecycle(start func(ctx context.Context)) {
+	s.handlerRegistry.RegisterLifecycle(start)
 }
 
 // GetLastCard returns the last broadcast card
@@ -279,48 +306,8 @@ func (s *Server) Start() error {
 
 	reader.Start()
 
-	// Start data handling in a goroutine
-	go func() {
-		for {
-			select {
-			case <-s.ctx.Done():
-				return
-			case data := <-reader.Data():
-				if data.Err != nil {
-					log.Printf("Error: %v", data.Err)
-				} else if data.Card != nil {
-					// Check card type filter
-					if len(s.config.AllowedCardTypes) > 0 && !s.config.AllowedCardTypes[data.Card.Type] {
-						log.Printf("Card type '%s' not in allowed list, ignoring", data.Card.Type)
-						// Send error message to clients
-						s.BroadcastTagData(nfc.NFCData{
-							Card: nil,
-							Err:  fmt.Errorf("card type '%s' not allowed by filter", data.Card.Type),
-						})
-						continue
-					}
-
-					// Read message from card
-					var text string
-					if msg, err := data.Card.ReadMessage(); err == nil {
-						if ndefMsg, ok := msg.(*nfc.NDEFMessage); ok {
-							text, _ = ndefMsg.GetText()
-							if text == "" {
-								// Try URI if no text
-								text, _ = ndefMsg.GetURI()
-							}
-						} else if textMsg, ok := msg.(*nfc.TextMessage); ok {
-							text = textMsg.Text
-						}
-					}
-					fmt.Printf("UID: %s\nDecoded text: %s\n", data.Card.UID, text)
-				}
-				s.BroadcastTagData(data)
-			case statusUpdate := <-reader.StatusUpdates():
-				s.BroadcastDeviceStatus(statusUpdate)
-			}
-		}
-	}()
+	// Start lifecycle handlers (NFCHandler will start its data processing loop)
+	s.handlerRegistry.StartLifecycleHandlers(s.ctx)
 
 	// Block until shutdown is requested
 	<-s.ctx.Done()
@@ -487,55 +474,20 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Handle request based on type
-			switch wsRequest.Type {
-			case WSMessageTypeWriteRequest:
-				s.handleWriteRequest(conn, reader, wsRequest)
-			default:
+			// Get handler from registry
+			handler, ok := s.handlerRegistry.Get(wsRequest.Type)
+			if !ok {
 				log.Printf("Unknown message type: %s", wsRequest.Type)
 				s.sendErrorResponse(conn, wsRequest.ID, "UNKNOWN_TYPE", fmt.Sprintf("Unknown message type: %s", wsRequest.Type))
+				continue
+			}
+
+			// Call handler
+			if err := handler(r.Context(), conn, wsRequest); err != nil {
+				log.Printf("Handler error for message type '%s': %v", wsRequest.Type, err)
+				// Error already sent by handler, just log it
 			}
 		}
-	}
-}
-
-// handleWriteRequest handles write requests from WebSocket clients
-func (s *Server) handleWriteRequest(conn *websocket.Conn, reader *nfc.NFCReader, wsRequest WebsocketRequest) {
-	// Parse write request from payload
-	payloadBytes, err := json.Marshal(wsRequest.Payload)
-	if err != nil {
-		log.Printf("Failed to marshal write request payload: %v", err)
-		s.sendErrorResponse(conn, wsRequest.ID, "INVALID_PAYLOAD", "Invalid write request payload")
-		return
-	}
-
-	var writeReq WriteRequest
-	if err := json.Unmarshal(payloadBytes, &writeReq); err != nil {
-		log.Printf("Failed to parse write request: %v", err)
-		s.sendErrorResponse(conn, wsRequest.ID, "INVALID_WRITE_REQUEST", "Failed to parse write request")
-		return
-	}
-
-	// Perform write operation
-	err = HandleWriteRequest(reader, writeReq)
-	if err != nil {
-		log.Printf("Write operation failed: %v", err)
-		s.sendErrorResponse(conn, wsRequest.ID, "WRITE_FAILED", err.Error())
-		return
-	}
-
-	// Send success response
-	response := WebsocketResponse{
-		ID:      wsRequest.ID,
-		Type:    WSMessageTypeWriteResponse,
-		Success: true,
-		Payload: map[string]interface{}{
-			"message": "Write operation completed successfully",
-		},
-	}
-
-	if err := conn.WriteJSON(response); err != nil {
-		log.Printf("Failed to send write response: %v", err)
 	}
 }
 

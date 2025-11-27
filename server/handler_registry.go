@@ -1,0 +1,121 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/gorilla/websocket"
+	"github.com/nedpals/davi-nfc-agent/nfc"
+)
+
+// HandlerFunc is a function type for handling websocket messages.
+// It processes a websocket request and returns an error if processing fails.
+type HandlerFunc func(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error
+
+// HandlerServer provides methods for handlers to register routes and start lifecycle processes.
+// It also provides broadcast methods for sending data to connected clients.
+type HandlerServer interface {
+	// Handle registers a handler function for a specific message type
+	Handle(messageType string, handler HandlerFunc) error
+	
+	// StartLifecycle registers a function to be called when the server starts
+	StartLifecycle(start func(ctx context.Context))
+	
+	// Broadcast methods for NFC data
+	BroadcastTagData(data nfc.NFCData)
+	BroadcastDeviceStatus(status nfc.DeviceStatus)
+}
+
+// ServerHandler is the interface that handlers must implement.
+// Handlers call Register() to set up their routes and lifecycle in one place.
+type ServerHandler interface {
+	Register(server HandlerServer)
+}
+
+// HandlerRegistry manages websocket message handlers using a router-style approach.
+// It provides thread-safe registration and retrieval of handler functions by message type.
+type HandlerRegistry struct {
+	handlers         map[string]HandlerFunc
+	lifecycleStarters []func(ctx context.Context)
+	mu               sync.RWMutex
+}
+
+// NewHandlerRegistry creates a new handler registry.
+func NewHandlerRegistry() *HandlerRegistry {
+	return &HandlerRegistry{
+		handlers: make(map[string]HandlerFunc),
+	}
+}
+
+// Handle registers a handler function for a specific message type.
+// This is the router-style registration method.
+// Returns an error if a handler for the same message type is already registered.
+func (r *HandlerRegistry) Handle(messageType string, handler HandlerFunc) error {
+	if handler == nil {
+		return fmt.Errorf("handler cannot be nil")
+	}
+
+	if messageType == "" {
+		return fmt.Errorf("message type cannot be empty")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.handlers[messageType]; exists {
+		return fmt.Errorf("handler for message type '%s' already registered", messageType)
+	}
+
+	r.handlers[messageType] = handler
+	return nil
+}
+
+// RegisterLifecycle registers a lifecycle function to be called when the server starts.
+func (r *HandlerRegistry) RegisterLifecycle(start func(ctx context.Context)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	
+	r.lifecycleStarters = append(r.lifecycleStarters, start)
+}
+
+// Get retrieves a handler function by message type.
+// Returns the handler and true if found, nil and false otherwise.
+func (r *HandlerRegistry) Get(messageType string) (HandlerFunc, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	handler, ok := r.handlers[messageType]
+	return handler, ok
+}
+
+// Has checks if a handler exists for the given message type.
+func (r *HandlerRegistry) Has(messageType string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, ok := r.handlers[messageType]
+	return ok
+}
+
+// MessageTypes returns all registered message types.
+func (r *HandlerRegistry) MessageTypes() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	types := make([]string, 0, len(r.handlers))
+	for t := range r.handlers {
+		types = append(types, t)
+	}
+	return types
+}
+
+// StartLifecycleHandlers starts all registered lifecycle functions.
+func (r *HandlerRegistry) StartLifecycleHandlers(ctx context.Context) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, starter := range r.lifecycleStarters {
+		starter(ctx)
+	}
+}
