@@ -19,6 +19,7 @@ type Manager struct {
 	cleanupTicker     *time.Ticker       // Periodic cleanup of inactive devices
 	stopCleanup       chan struct{}      // Stop cleanup goroutine
 	inactivityTimeout time.Duration      // Device timeout duration
+	closed            bool               // Whether Close() has been called
 }
 
 // NewManager creates a new smartphone manager.
@@ -180,6 +181,14 @@ func (m *Manager) UpdateHeartbeat(deviceID string) error {
 
 // Close cleanup and stop background tasks.
 func (m *Manager) Close() {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.closed = true
+	m.mu.Unlock()
+
 	// Stop cleanup routine
 	if m.cleanupTicker != nil {
 		m.cleanupTicker.Stop()
