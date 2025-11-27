@@ -1,6 +1,9 @@
 package nfc
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // Clock provides an abstraction over time operations to enable testing
 // without real time delays.
@@ -111,6 +114,7 @@ func (rt *realTimer) Reset(d time.Duration) bool {
 
 // FakeClock implements Clock for testing with controllable time
 type FakeClock struct {
+	mu      sync.RWMutex
 	now     time.Time
 	tickers []*fakeTicker
 	timers  []*fakeTimer
@@ -126,6 +130,8 @@ func NewFakeClock(startTime time.Time) *FakeClock {
 }
 
 func (fc *FakeClock) Now() time.Time {
+	fc.mu.RLock()
+	defer fc.mu.RUnlock()
 	return fc.now
 }
 
@@ -135,6 +141,8 @@ func (fc *FakeClock) Sleep(d time.Duration) {
 }
 
 func (fc *FakeClock) NewTicker(d time.Duration) Ticker {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
 	ft := &fakeTicker{
 		interval: d,
 		c:        make(chan time.Time, 1),
@@ -145,6 +153,8 @@ func (fc *FakeClock) NewTicker(d time.Duration) Ticker {
 }
 
 func (fc *FakeClock) NewTimer(d time.Duration) Timer {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
 	ft := &fakeTimer{
 		deadline: fc.now.Add(d),
 		c:        make(chan time.Time, 1),
@@ -155,6 +165,8 @@ func (fc *FakeClock) NewTimer(d time.Duration) Timer {
 }
 
 func (fc *FakeClock) After(d time.Duration) <-chan time.Time {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
 	ch := make(chan time.Time, 1)
 	ft := &fakeTimer{
 		deadline: fc.now.Add(d),
@@ -168,6 +180,8 @@ func (fc *FakeClock) After(d time.Duration) <-chan time.Time {
 // Advance moves the fake clock forward by the given duration
 // and fires any tickers/timers that should fire
 func (fc *FakeClock) Advance(d time.Duration) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
 	fc.now = fc.now.Add(d)
 
 	// Fire tickers
