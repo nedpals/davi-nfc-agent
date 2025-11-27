@@ -96,8 +96,8 @@ func (a *Agent) Stop() {
 		a.Reader = nil
 	}
 
-	// Cleanup Manager if it has a Close method
-	if closer, ok := a.Manager.(interface{ Close() }); ok {
+	// Cleanup Manager if it implements ServerHandlerCloser
+	if closer, ok := a.Manager.(server.ServerHandlerCloser); ok {
 		closer.Close()
 	}
 

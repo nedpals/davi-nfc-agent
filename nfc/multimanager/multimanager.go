@@ -246,3 +246,17 @@ func (mm *MultiManager) GetManagerNames() []string {
 	copy(names, mm.managerOrder)
 	return names
 }
+
+// Close implements server.ServerHandlerCloser interface.
+// It propagates Close() to all registered managers that support it.
+func (mm *MultiManager) Close() {
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+
+	for name, manager := range mm.managers {
+		if closer, ok := manager.(server.ServerHandlerCloser); ok {
+			log.Printf("[multi] Closing manager: %s", name)
+			closer.Close()
+		}
+	}
+}
