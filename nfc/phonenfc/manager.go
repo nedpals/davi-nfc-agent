@@ -1,4 +1,4 @@
-package nfc
+package phonenfc
 
 import (
 	"fmt"
@@ -8,47 +8,48 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
-// SmartphoneManager implements the Manager interface for managing smartphone connections.
-type SmartphoneManager struct {
-	devices           map[string]*SmartphoneDevice // deviceID -> device
-	mu                sync.RWMutex                 // Protects devices map
-	cleanupTicker     *time.Ticker                 // Periodic cleanup of inactive devices
-	stopCleanup       chan struct{}                // Stop cleanup goroutine
-	inactivityTimeout time.Duration                // Device timeout duration
+// Manager implements the nfc.Manager interface for managing smartphone connections.
+type Manager struct {
+	devices           map[string]*Device // deviceID -> device
+	mu                sync.RWMutex       // Protects devices map
+	cleanupTicker     *time.Ticker       // Periodic cleanup of inactive devices
+	stopCleanup       chan struct{}      // Stop cleanup goroutine
+	inactivityTimeout time.Duration      // Device timeout duration
 }
 
-// NewSmartphoneManager creates a new smartphone manager.
-func NewSmartphoneManager(inactivityTimeout time.Duration) *SmartphoneManager {
+// NewManager creates a new smartphone manager.
+func NewManager(inactivityTimeout time.Duration) *Manager {
 	if inactivityTimeout == 0 {
-		inactivityTimeout = SmartphoneDeviceTimeout
+		inactivityTimeout = DeviceTimeout
 	}
 
-	sm := &SmartphoneManager{
-		devices:           make(map[string]*SmartphoneDevice),
+	m := &Manager{
+		devices:           make(map[string]*Device),
 		inactivityTimeout: inactivityTimeout,
 		stopCleanup:       make(chan struct{}),
 	}
 
 	// Start cleanup routine
-	sm.startCleanupRoutine()
+	m.startCleanupRoutine()
 
-	return sm
+	return m
 }
 
 // OpenDevice opens connection to a registered smartphone device by ID.
 // Format: "smartphone:{deviceID}" or just "{deviceID}"
-func (sm *SmartphoneManager) OpenDevice(deviceStr string) (Device, error) {
+func (m *Manager) OpenDevice(deviceStr string) (nfc.Device, error) {
 	// Parse device string
 	deviceID := deviceStr
 	if strings.HasPrefix(deviceStr, "smartphone:") {
 		deviceID = strings.TrimPrefix(deviceStr, "smartphone:")
 	}
 
-	sm.mu.RLock()
-	device, exists := sm.devices[deviceID]
-	sm.mu.RUnlock()
+	m.mu.RLock()
+	device, exists := m.devices[deviceID]
+	m.mu.RUnlock()
 
 	if !exists {
 		return nil, fmt.Errorf("smartphone device not found: %s", deviceID)
@@ -62,12 +63,12 @@ func (sm *SmartphoneManager) OpenDevice(deviceStr string) (Device, error) {
 }
 
 // ListDevices returns list of connected smartphone device connection strings.
-func (sm *SmartphoneManager) ListDevices() ([]string, error) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+func (m *Manager) ListDevices() ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	devices := make([]string, 0, len(sm.devices))
-	for deviceID, device := range sm.devices {
+	devices := make([]string, 0, len(m.devices))
+	for deviceID, device := range m.devices {
 		if device.IsActive() {
 			devices = append(devices, fmt.Sprintf("smartphone:%s", deviceID))
 		}
@@ -77,7 +78,7 @@ func (sm *SmartphoneManager) ListDevices() ([]string, error) {
 }
 
 // RegisterDevice creates and registers a new smartphone device.
-func (sm *SmartphoneManager) RegisterDevice(req DeviceRegistrationRequest) (*SmartphoneDevice, error) {
+func (m *Manager) RegisterDevice(req DeviceRegistrationRequest) (*Device, error) {
 	// Validate request
 	if req.DeviceName == "" {
 		return nil, fmt.Errorf("device name is required")
@@ -90,12 +91,12 @@ func (sm *SmartphoneManager) RegisterDevice(req DeviceRegistrationRequest) (*Sma
 	deviceID := uuid.New().String()
 
 	// Create device
-	device := NewSmartphoneDevice(deviceID, req)
+	device := NewDevice(deviceID, req)
 
 	// Register device
-	sm.mu.Lock()
-	sm.devices[deviceID] = device
-	sm.mu.Unlock()
+	m.mu.Lock()
+	m.devices[deviceID] = device
+	m.mu.Unlock()
 
 	log.Printf("[smartphone] Device registered: %s (%s, %s)", device.String(), req.Platform, req.AppVersion)
 
@@ -103,13 +104,13 @@ func (sm *SmartphoneManager) RegisterDevice(req DeviceRegistrationRequest) (*Sma
 }
 
 // UnregisterDevice removes a smartphone device.
-func (sm *SmartphoneManager) UnregisterDevice(deviceID string) error {
-	sm.mu.Lock()
-	device, exists := sm.devices[deviceID]
+func (m *Manager) UnregisterDevice(deviceID string) error {
+	m.mu.Lock()
+	device, exists := m.devices[deviceID]
 	if exists {
-		delete(sm.devices, deviceID)
+		delete(m.devices, deviceID)
 	}
-	sm.mu.Unlock()
+	m.mu.Unlock()
 
 	if !exists {
 		return fmt.Errorf("device not found: %s", deviceID)
@@ -126,32 +127,32 @@ func (sm *SmartphoneManager) UnregisterDevice(deviceID string) error {
 }
 
 // GetDevice retrieves a device by ID.
-func (sm *SmartphoneManager) GetDevice(deviceID string) (*SmartphoneDevice, bool) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+func (m *Manager) GetDevice(deviceID string) (*Device, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	device, exists := sm.devices[deviceID]
+	device, exists := m.devices[deviceID]
 	return device, exists
 }
 
 // SendTagData sends scanned tags to a device's channel.
-func (sm *SmartphoneManager) SendTagData(deviceID string, tagData SmartphoneTagData) error {
-	sm.mu.RLock()
-	device, exists := sm.devices[deviceID]
-	sm.mu.RUnlock()
+func (m *Manager) SendTagData(deviceID string, tagData TagData) error {
+	m.mu.RLock()
+	device, exists := m.devices[deviceID]
+	m.mu.RUnlock()
 
 	if !exists {
 		return fmt.Errorf("device not found: %s", deviceID)
 	}
 
 	// Convert tag data to internal format
-	tag, err := ConvertSmartphoneTagData(tagData)
+	tag, err := ConvertTagData(tagData)
 	if err != nil {
 		return fmt.Errorf("failed to convert tag data: %w", err)
 	}
 
 	// Send to device's tag channel
-	tags := []Tag{tag}
+	tags := []nfc.Tag{tag}
 	if err := device.SendTags(tags); err != nil {
 		return fmt.Errorf("failed to send tags to device: %w", err)
 	}
@@ -163,10 +164,10 @@ func (sm *SmartphoneManager) SendTagData(deviceID string, tagData SmartphoneTagD
 }
 
 // UpdateHeartbeat updates device last-seen timestamp.
-func (sm *SmartphoneManager) UpdateHeartbeat(deviceID string) error {
-	sm.mu.RLock()
-	device, exists := sm.devices[deviceID]
-	sm.mu.RUnlock()
+func (m *Manager) UpdateHeartbeat(deviceID string) error {
+	m.mu.RLock()
+	device, exists := m.devices[deviceID]
+	m.mu.RUnlock()
 
 	if !exists {
 		return fmt.Errorf("device not found: %s", deviceID)
@@ -177,36 +178,36 @@ func (sm *SmartphoneManager) UpdateHeartbeat(deviceID string) error {
 }
 
 // Close cleanup and stop background tasks.
-func (sm *SmartphoneManager) Close() {
+func (m *Manager) Close() {
 	// Stop cleanup routine
-	if sm.cleanupTicker != nil {
-		sm.cleanupTicker.Stop()
+	if m.cleanupTicker != nil {
+		m.cleanupTicker.Stop()
 	}
-	close(sm.stopCleanup)
+	close(m.stopCleanup)
 
 	// Close all devices
-	sm.mu.Lock()
-	for deviceID, device := range sm.devices {
+	m.mu.Lock()
+	for deviceID, device := range m.devices {
 		if err := device.Close(); err != nil {
 			log.Printf("[smartphone] Error closing device %s: %v", deviceID, err)
 		}
 	}
-	sm.devices = make(map[string]*SmartphoneDevice)
-	sm.mu.Unlock()
+	m.devices = make(map[string]*Device)
+	m.mu.Unlock()
 
-	log.Printf("[smartphone] SmartphoneManager closed")
+	log.Printf("[smartphone] Manager closed")
 }
 
 // startCleanupRoutine starts a background goroutine to cleanup inactive devices.
-func (sm *SmartphoneManager) startCleanupRoutine() {
-	sm.cleanupTicker = time.NewTicker(SmartphoneCleanupInterval)
+func (m *Manager) startCleanupRoutine() {
+	m.cleanupTicker = time.NewTicker(CleanupInterval)
 
 	go func() {
 		for {
 			select {
-			case <-sm.cleanupTicker.C:
-				sm.cleanupInactiveDevices()
-			case <-sm.stopCleanup:
+			case <-m.cleanupTicker.C:
+				m.cleanupInactiveDevices()
+			case <-m.stopCleanup:
 				return
 			}
 		}
@@ -214,39 +215,39 @@ func (sm *SmartphoneManager) startCleanupRoutine() {
 }
 
 // cleanupInactiveDevices removes devices that exceeded inactivity timeout.
-func (sm *SmartphoneManager) cleanupInactiveDevices() {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+func (m *Manager) cleanupInactiveDevices() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	now := time.Now()
-	for deviceID, device := range sm.devices {
+	for deviceID, device := range m.devices {
 		timeSinceLastSeen := now.Sub(device.LastSeen())
-		if timeSinceLastSeen > sm.inactivityTimeout {
+		if timeSinceLastSeen > m.inactivityTimeout {
 			log.Printf("[smartphone] Cleaning up inactive device: %s (last seen %v ago)", device.String(), timeSinceLastSeen)
-			
+
 			// Close and remove device
 			if err := device.Close(); err != nil {
 				log.Printf("[smartphone] Error closing device %s: %v", deviceID, err)
 			}
-			delete(sm.devices, deviceID)
+			delete(m.devices, deviceID)
 		}
 	}
 }
 
 // GetDeviceCount returns the number of registered devices.
-func (sm *SmartphoneManager) GetDeviceCount() int {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return len(sm.devices)
+func (m *Manager) GetDeviceCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.devices)
 }
 
 // GetActiveDeviceCount returns the number of active devices.
-func (sm *SmartphoneManager) GetActiveDeviceCount() int {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+func (m *Manager) GetActiveDeviceCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	count := 0
-	for _, device := range sm.devices {
+	for _, device := range m.devices {
 		if device.IsActive() {
 			count++
 		}

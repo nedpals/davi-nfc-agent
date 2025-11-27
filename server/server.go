@@ -45,11 +45,10 @@ type WebsocketResponse struct {
 
 // Config holds the server configuration
 type Config struct {
-	Reader            *nfc.NFCReader
-	Port              int
-	APISecret         string // Optional API secret for WebSocket connection
-	AllowedCardTypes  map[string]bool
-	SmartphoneHandler *SmartphoneHandler // Smartphone device handler (optional)
+	Reader           *nfc.NFCReader
+	Port             int
+	APISecret        string // Optional API secret for WebSocket connection
+	AllowedCardTypes map[string]bool
 }
 
 // Server manages the HTTP and WebSocket server
@@ -93,11 +92,6 @@ func New(config Config) *Server {
 		nfcHandler := NewNFCHandler(config.Reader, config.AllowedCardTypes)
 		nfcHandler.Register(s)
 	}
-	
-	// Register smartphone handler if present
-	if config.SmartphoneHandler != nil {
-		config.SmartphoneHandler.Register(s)
-	}
 
 	return s
 }
@@ -110,6 +104,11 @@ func (s *Server) Handle(messageType string, handler HandlerFunc) error {
 // StartLifecycle implements HandlerServer interface.
 func (s *Server) StartLifecycle(start func(ctx context.Context)) {
 	s.handlerRegistry.RegisterLifecycle(start)
+}
+
+// HandleWebSocket implements HandlerServer interface.
+func (s *Server) HandleWebSocket(matcher func(r *http.Request) bool, handler WebSocketHandlerFunc) {
+	s.handlerRegistry.HandleWebSocket(matcher, handler)
 }
 
 // GetLastCard returns the last broadcast card
@@ -372,9 +371,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	// Determine if this is a device or client connection
-	if s.config.SmartphoneHandler != nil && IsDeviceConnection(r) {
-		s.config.SmartphoneHandler.HandleWebSocket(w, r)
+	// Try custom WebSocket handlers first (e.g., smartphone device connections)
+	if s.handlerRegistry.TryCustomWebSocketHandler(w, r) {
 		return
 	}
 

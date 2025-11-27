@@ -1,11 +1,13 @@
-package nfc
+package phonenfc
 
 import (
 	"testing"
 	"time"
+
+	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
-func TestSmartphoneDeviceCreation(t *testing.T) {
+func TestDeviceCreation(t *testing.T) {
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test iPhone",
 		Platform:   "ios",
@@ -20,7 +22,7 @@ func TestSmartphoneDeviceCreation(t *testing.T) {
 		},
 	}
 
-	device := NewSmartphoneDevice("test-device-id", req)
+	device := NewDevice("test-device-id", req)
 
 	if device.DeviceID() != "test-device-id" {
 		t.Errorf("DeviceID() = %v, want %v", device.DeviceID(), "test-device-id")
@@ -48,14 +50,19 @@ func TestSmartphoneDeviceCreation(t *testing.T) {
 	}
 }
 
-func TestSmartphoneDeviceGetTags(t *testing.T) {
+func TestDeviceImplementsNFCDevice(t *testing.T) {
+	// Verify Device implements nfc.Device interface
+	var _ nfc.Device = (*Device)(nil)
+}
+
+func TestDeviceGetTags(t *testing.T) {
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
 		Platform:   "android",
 		AppVersion: "1.0.0",
 	}
 
-	device := NewSmartphoneDevice("test-id", req)
+	device := NewDevice("test-id", req)
 	defer device.Close()
 
 	// Test timeout (no tags sent)
@@ -68,13 +75,13 @@ func TestSmartphoneDeviceGetTags(t *testing.T) {
 	}
 
 	// Test sending tags
-	mockTag := &SmartphoneTag{
+	mockTag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
 	}
 
-	err = device.SendTags([]Tag{mockTag})
+	err = device.SendTags([]nfc.Tag{mockTag})
 	if err != nil {
 		t.Errorf("SendTags() failed: %v", err)
 	}
@@ -89,14 +96,14 @@ func TestSmartphoneDeviceGetTags(t *testing.T) {
 	}
 }
 
-func TestSmartphoneDeviceClose(t *testing.T) {
+func TestDeviceClose(t *testing.T) {
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
 		Platform:   "ios",
 		AppVersion: "1.0.0",
 	}
 
-	device := NewSmartphoneDevice("test-id", req)
+	device := NewDevice("test-id", req)
 
 	if !device.IsActive() {
 		t.Error("Device should be active before Close()")
@@ -118,14 +125,14 @@ func TestSmartphoneDeviceClose(t *testing.T) {
 	}
 }
 
-func TestSmartphoneDeviceInitiatorInit(t *testing.T) {
+func TestDeviceInitiatorInit(t *testing.T) {
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
 		Platform:   "android",
 		AppVersion: "1.0.0",
 	}
 
-	device := NewSmartphoneDevice("test-id", req)
+	device := NewDevice("test-id", req)
 	defer device.Close()
 
 	// Should succeed when active and recent
@@ -136,7 +143,7 @@ func TestSmartphoneDeviceInitiatorInit(t *testing.T) {
 
 	// Test timeout by setting old lastSeen
 	device.mu.Lock()
-	device.lastSeen = time.Now().Add(-SmartphoneDeviceTimeout - time.Second)
+	device.lastSeen = time.Now().Add(-DeviceTimeout - time.Second)
 	device.mu.Unlock()
 
 	err = device.InitiatorInit()
@@ -145,14 +152,14 @@ func TestSmartphoneDeviceInitiatorInit(t *testing.T) {
 	}
 }
 
-func TestSmartphoneDeviceUpdateLastSeen(t *testing.T) {
+func TestDeviceUpdateLastSeen(t *testing.T) {
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
 		Platform:   "ios",
 		AppVersion: "1.0.0",
 	}
 
-	device := NewSmartphoneDevice("test-id", req)
+	device := NewDevice("test-id", req)
 	defer device.Close()
 
 	firstSeen := device.LastSeen()
@@ -166,14 +173,14 @@ func TestSmartphoneDeviceUpdateLastSeen(t *testing.T) {
 	}
 }
 
-func TestSmartphoneDeviceTransceive(t *testing.T) {
+func TestDeviceTransceive(t *testing.T) {
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
 		Platform:   "android",
 		AppVersion: "1.0.0",
 	}
 
-	device := NewSmartphoneDevice("test-id", req)
+	device := NewDevice("test-id", req)
 	defer device.Close()
 
 	// Transceive should not be supported
@@ -183,14 +190,14 @@ func TestSmartphoneDeviceTransceive(t *testing.T) {
 	}
 }
 
-func TestSmartphoneDeviceString(t *testing.T) {
+func TestDeviceString(t *testing.T) {
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test iPhone 12",
 		Platform:   "ios",
 		AppVersion: "1.0.0",
 	}
 
-	device := NewSmartphoneDevice("test-id-123", req)
+	device := NewDevice("test-id-123", req)
 	defer device.Close()
 
 	str := device.String()

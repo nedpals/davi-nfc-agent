@@ -1,4 +1,4 @@
-package server
+package phonenfc
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/server"
 )
 
 // deviceIDContextKey is the context key for storing device ID.
@@ -26,69 +26,41 @@ func WithDeviceID(ctx context.Context, deviceID string) context.Context {
 	return context.WithValue(ctx, deviceIDContextKey{}, deviceID)
 }
 
-// SmartphoneHandler handles all smartphone device WebSocket connections and management.
-type SmartphoneHandler struct {
-	manager           *nfc.SmartphoneManager
+// Handler handles all smartphone device WebSocket connections and management.
+type Handler struct {
+	manager           *Manager
 	deviceSessions    map[string]*websocket.Conn // deviceID -> websocket conn
 	deviceSessionsMux sync.RWMutex
 	connToDeviceID    map[*websocket.Conn]string // reverse lookup: conn -> deviceID
 	upgrader          websocket.Upgrader
-	handlerRegistry   *HandlerRegistry // Registry for device message handlers
 }
 
-// Handle implements HandlerServer interface.
-func (h *SmartphoneHandler) Handle(messageType string, handler HandlerFunc) error {
-	return h.handlerRegistry.Handle(messageType, handler)
-}
-
-// StartLifecycle implements HandlerServer interface.
-func (h *SmartphoneHandler) StartLifecycle(start func(ctx context.Context)) {
-	h.handlerRegistry.RegisterLifecycle(start)
-}
-
-// BroadcastTagData implements HandlerServer interface (no-op for device handler).
-func (h *SmartphoneHandler) BroadcastTagData(data nfc.NFCData) {
-	// Device handler doesn't broadcast to clients, it receives from devices
-}
-
-// BroadcastDeviceStatus implements HandlerServer interface (no-op for device handler).
-func (h *SmartphoneHandler) BroadcastDeviceStatus(status nfc.DeviceStatus) {
-	// Device handler doesn't broadcast to clients, it receives from devices
-}
-
-// NewSmartphoneHandler creates a new smartphone handler.
-func NewSmartphoneHandler(manager *nfc.SmartphoneManager) *SmartphoneHandler {
-	h := &SmartphoneHandler{
-		manager:         manager,
-		deviceSessions:  make(map[string]*websocket.Conn),
-		connToDeviceID:  make(map[*websocket.Conn]string),
-		handlerRegistry: NewHandlerRegistry(),
+// NewHandler creates a new smartphone handler.
+func NewHandler(manager *Manager) *Handler {
+	return &Handler{
+		manager:        manager,
+		deviceSessions: make(map[string]*websocket.Conn),
+		connToDeviceID: make(map[*websocket.Conn]string),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins
 			},
 		},
 	}
-
-	// Self-register handlers
-	h.Register(h)
-
-	return h
 }
 
-// Register implements ServerHandler interface.
-func (h *SmartphoneHandler) Register(server HandlerServer) {
-	server.Handle(WSMessageTypeRegisterDevice, h.handleRegisterDevice)
-	server.Handle(WSMessageTypeTagScanned, h.handleTagScanned)
-	server.Handle(WSMessageTypeDeviceHeartbeat, h.handleDeviceHeartbeat)
-	
-	// No lifecycle needed for this handler
+// Register implements server.ServerHandler interface.
+// Registers a custom WebSocket handler for device connections.
+func (h *Handler) Register(s server.HandlerServer) {
+	s.HandleWebSocket(IsDeviceConnection, func(w http.ResponseWriter, r *http.Request) bool {
+		h.HandleWebSocket(w, r)
+		return true
+	})
 }
 
 // HandleWebSocket handles WebSocket connections from mobile devices.
 // No authentication required - plug and play for seamless mobile integration.
-func (h *SmartphoneHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-
+func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Upgrade connection to WebSocket
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -121,28 +93,21 @@ func (h *SmartphoneHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var wsRequest WebsocketRequest
+	var wsRequest server.WebsocketRequest
 	if err := json.Unmarshal(message, &wsRequest); err != nil {
 		log.Printf("[smartphone] Failed to parse registration message: %v", err)
 		h.sendError(conn, "", "PARSE_ERROR", "Invalid message format")
 		return
 	}
 
-	if wsRequest.Type != WSMessageTypeRegisterDevice {
-		log.Printf("[smartphone] Expected '%s', got '%s'", WSMessageTypeRegisterDevice, wsRequest.Type)
-		h.sendError(conn, wsRequest.ID, "INVALID_MESSAGE_TYPE", fmt.Sprintf("Expected '%s' message", WSMessageTypeRegisterDevice))
+	if wsRequest.Type != MessageTypeRegisterDevice {
+		log.Printf("[smartphone] Expected '%s', got '%s'", MessageTypeRegisterDevice, wsRequest.Type)
+		h.sendError(conn, wsRequest.ID, "INVALID_MESSAGE_TYPE", fmt.Sprintf("Expected '%s' message", MessageTypeRegisterDevice))
 		return
 	}
 
-	// Handle device registration using handler
-	registerHandler, ok := h.handlerRegistry.Get(WSMessageTypeRegisterDevice)
-	if !ok {
-		log.Printf("[smartphone] Registration handler not found")
-		h.sendError(conn, wsRequest.ID, "HANDLER_NOT_FOUND", "Registration handler not available")
-		return
-	}
-
-	if err = registerHandler(r.Context(), conn, wsRequest); err != nil {
+	// Handle device registration
+	if err = h.handleRegisterDevice(r.Context(), conn, wsRequest); err != nil {
 		log.Printf("[smartphone] Registration failed: %v", err)
 		return
 	}
@@ -163,39 +128,40 @@ func (h *SmartphoneHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reque
 		}
 
 		if messageType == websocket.TextMessage {
-			var wsRequest WebsocketRequest
+			var wsRequest server.WebsocketRequest
 			if err := json.Unmarshal(message, &wsRequest); err != nil {
 				log.Printf("[smartphone] Failed to parse message: %v", err)
 				h.sendError(conn, "", "PARSE_ERROR", "Invalid message format")
 				continue
 			}
 
-			// Special handling for write response (future feature)
-			if wsRequest.Type == WSMessageTypeWriteResponse {
+			// Route message to appropriate handler
+			ctx := WithDeviceID(r.Context(), deviceID)
+			var handlerErr error
+
+			switch wsRequest.Type {
+			case MessageTypeTagScanned:
+				handlerErr = h.handleTagScanned(ctx, conn, wsRequest)
+			case MessageTypeDeviceHeartbeat:
+				handlerErr = h.handleDeviceHeartbeat(ctx, conn, wsRequest)
+			case MessageTypeWriteResponse:
 				log.Printf("[smartphone] Write response received (not yet implemented)")
 				continue
-			}
-
-			// Get handler from registry
-			handler, ok := h.handlerRegistry.Get(wsRequest.Type)
-			if !ok {
+			default:
 				log.Printf("[smartphone] Unknown message type: %s", wsRequest.Type)
 				h.sendError(conn, wsRequest.ID, "UNKNOWN_TYPE", fmt.Sprintf("Unknown message type: %s", wsRequest.Type))
 				continue
 			}
 
-			// Call handler with device context
-			ctx := WithDeviceID(r.Context(), deviceID)
-			if err := handler(ctx, conn, wsRequest); err != nil {
-				log.Printf("[smartphone] Handler error for message type '%s': %v", wsRequest.Type, err)
-				// Error already sent by handler, just log it
+			if handlerErr != nil {
+				log.Printf("[smartphone] Handler error for message type '%s': %v", wsRequest.Type, handlerErr)
 			}
 		}
 	}
 }
 
 // handleRegisterDevice processes a device registration request.
-func (h *SmartphoneHandler) handleRegisterDevice(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error {
+func (h *Handler) handleRegisterDevice(ctx context.Context, conn *websocket.Conn, req server.WebsocketRequest) error {
 	// Parse DeviceRegistrationRequest from payload
 	payloadBytes, err := json.Marshal(req.Payload)
 	if err != nil {
@@ -203,7 +169,7 @@ func (h *SmartphoneHandler) handleRegisterDevice(ctx context.Context, conn *webs
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	var regReq nfc.DeviceRegistrationRequest
+	var regReq DeviceRegistrationRequest
 	if err := json.Unmarshal(payloadBytes, &regReq); err != nil {
 		h.sendError(conn, req.ID, "INVALID_PAYLOAD", "Invalid registration request format")
 		return fmt.Errorf("failed to parse registration request: %w", err)
@@ -232,14 +198,14 @@ func (h *SmartphoneHandler) handleRegisterDevice(ctx context.Context, conn *webs
 	h.addDeviceSession(deviceID, conn)
 
 	// Send registration response
-	response := WebsocketResponse{
+	response := server.WebsocketResponse{
 		ID:      req.ID,
-		Type:    WSMessageTypeRegisterDeviceResponse,
+		Type:    MessageTypeRegisterDeviceResponse,
 		Success: true,
-		Payload: nfc.DeviceRegistrationResponse{
+		Payload: DeviceRegistrationResponse{
 			DeviceID:     deviceID,
 			SessionToken: "",
-			ServerInfo: nfc.ServerInfo{
+			ServerInfo: ServerInfo{
 				Version:      "1.0.0",
 				SupportedNFC: []string{"mifare", "desfire", "type4", "ultralight"},
 			},
@@ -258,7 +224,7 @@ func (h *SmartphoneHandler) handleRegisterDevice(ctx context.Context, conn *webs
 }
 
 // handleTagScanned processes a tag scan event from a mobile device.
-func (h *SmartphoneHandler) handleTagScanned(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error {
+func (h *Handler) handleTagScanned(ctx context.Context, conn *websocket.Conn, req server.WebsocketRequest) error {
 	payloadBytes, err := json.Marshal(req.Payload)
 	if err != nil {
 		log.Printf("[smartphone] Failed to marshal tag data: %v", err)
@@ -266,7 +232,7 @@ func (h *SmartphoneHandler) handleTagScanned(ctx context.Context, conn *websocke
 		return err
 	}
 
-	var tagData nfc.SmartphoneTagData
+	var tagData TagData
 	if err := json.Unmarshal(payloadBytes, &tagData); err != nil {
 		log.Printf("[smartphone] Failed to parse tag data: %v", err)
 		h.sendError(conn, req.ID, "INVALID_PAYLOAD", "Invalid tag data format")
@@ -292,13 +258,13 @@ func (h *SmartphoneHandler) handleTagScanned(ctx context.Context, conn *websocke
 }
 
 // handleDeviceHeartbeat processes a heartbeat from a mobile device.
-func (h *SmartphoneHandler) handleDeviceHeartbeat(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error {
+func (h *Handler) handleDeviceHeartbeat(ctx context.Context, conn *websocket.Conn, req server.WebsocketRequest) error {
 	payloadBytes, err := json.Marshal(req.Payload)
 	if err != nil {
 		return err
 	}
 
-	var heartbeat nfc.DeviceHeartbeat
+	var heartbeat DeviceHeartbeat
 	if err := json.Unmarshal(payloadBytes, &heartbeat); err != nil {
 		return err
 	}
@@ -312,7 +278,7 @@ func (h *SmartphoneHandler) handleDeviceHeartbeat(ctx context.Context, conn *web
 }
 
 // handleDeviceDisconnect cleans up when device WebSocket closes.
-func (h *SmartphoneHandler) handleDeviceDisconnect(deviceID string) {
+func (h *Handler) handleDeviceDisconnect(deviceID string) {
 	h.removeDeviceSession(deviceID)
 
 	if h.manager != nil {
@@ -323,7 +289,7 @@ func (h *SmartphoneHandler) handleDeviceDisconnect(deviceID string) {
 }
 
 // validateDevice checks if a device is registered.
-func (h *SmartphoneHandler) validateDevice(deviceID string) error {
+func (h *Handler) validateDevice(deviceID string) error {
 	if deviceID == "" {
 		return fmt.Errorf("deviceID is required")
 	}
@@ -341,7 +307,7 @@ func (h *SmartphoneHandler) validateDevice(deviceID string) error {
 }
 
 // addDeviceSession stores a WebSocket connection for a device.
-func (h *SmartphoneHandler) addDeviceSession(deviceID string, conn *websocket.Conn) {
+func (h *Handler) addDeviceSession(deviceID string, conn *websocket.Conn) {
 	h.deviceSessionsMux.Lock()
 	defer h.deviceSessionsMux.Unlock()
 
@@ -350,7 +316,7 @@ func (h *SmartphoneHandler) addDeviceSession(deviceID string, conn *websocket.Co
 }
 
 // getDeviceIDFromConn retrieves the device ID for a connection.
-func (h *SmartphoneHandler) getDeviceIDFromConn(conn *websocket.Conn) string {
+func (h *Handler) getDeviceIDFromConn(conn *websocket.Conn) string {
 	h.deviceSessionsMux.RLock()
 	defer h.deviceSessionsMux.RUnlock()
 
@@ -358,7 +324,7 @@ func (h *SmartphoneHandler) getDeviceIDFromConn(conn *websocket.Conn) string {
 }
 
 // removeDeviceSession removes a WebSocket connection for a device.
-func (h *SmartphoneHandler) removeDeviceSession(deviceID string) {
+func (h *Handler) removeDeviceSession(deviceID string) {
 	h.deviceSessionsMux.Lock()
 	defer h.deviceSessionsMux.Unlock()
 
@@ -369,7 +335,7 @@ func (h *SmartphoneHandler) removeDeviceSession(deviceID string) {
 }
 
 // SendToDevice sends a message to a specific device.
-func (h *SmartphoneHandler) SendToDevice(deviceID string, message interface{}) error {
+func (h *Handler) SendToDevice(deviceID string, message interface{}) error {
 	h.deviceSessionsMux.RLock()
 	conn, ok := h.deviceSessions[deviceID]
 	h.deviceSessionsMux.RUnlock()
@@ -382,10 +348,10 @@ func (h *SmartphoneHandler) SendToDevice(deviceID string, message interface{}) e
 }
 
 // sendError sends an error response to a device.
-func (h *SmartphoneHandler) sendError(conn *websocket.Conn, requestID string, errorCode string, message string) {
-	response := WebsocketResponse{
+func (h *Handler) sendError(conn *websocket.Conn, requestID string, errorCode string, message string) {
+	response := server.WebsocketResponse{
 		ID:      requestID,
-		Type:    WSMessageTypeError,
+		Type:    MessageTypeError,
 		Success: false,
 		Error:   message,
 		Payload: map[string]interface{}{

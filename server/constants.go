@@ -16,14 +16,6 @@ const (
 	WSMessageTypeError         = "error"
 )
 
-// WebSocket message types for smartphone device communication
-const (
-	WSMessageTypeRegisterDevice         = "registerDevice"
-	WSMessageTypeRegisterDeviceResponse = "registerDeviceResponse"
-	WSMessageTypeTagScanned             = "tagScanned"
-	WSMessageTypeDeviceHeartbeat        = "deviceHeartbeat"
-)
-
 // CORS configuration
 const (
 	CORSAllowOrigin  = "*"

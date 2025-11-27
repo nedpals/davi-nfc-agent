@@ -1,17 +1,19 @@
-package nfc
+package phonenfc
 
 import (
 	"testing"
 	"time"
+
+	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
-func TestSmartphoneTagImplementsTag(t *testing.T) {
-	// Verify SmartphoneTag implements Tag interface
-	var _ Tag = (*SmartphoneTag)(nil)
+func TestTagImplementsNFCTag(t *testing.T) {
+	// Verify Tag implements nfc.Tag interface
+	var _ nfc.Tag = (*Tag)(nil)
 }
 
-func TestSmartphoneTagUID(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagUID(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -22,8 +24,8 @@ func TestSmartphoneTagUID(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagType(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagType(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "MIFARE Classic 1K",
 		technology: "ISO14443A",
@@ -34,22 +36,22 @@ func TestSmartphoneTagType(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagNumericType(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagNumericType(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
 	}
 
-	// SmartphoneTag should return 0 for numeric type
+	// Tag should return 0 for numeric type
 	if tag.NumericType() != 0 {
 		t.Errorf("NumericType() = %v, want 0", tag.NumericType())
 	}
 }
 
-func TestSmartphoneTagReadDataWithNDEF(t *testing.T) {
+func TestTagReadDataWithNDEF(t *testing.T) {
 	ndefData := []byte{0x01, 0x02, 0x03, 0x04}
-	tag := &SmartphoneTag{
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -74,9 +76,9 @@ func TestSmartphoneTagReadDataWithNDEF(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagReadDataWithoutNDEF(t *testing.T) {
+func TestTagReadDataWithoutNDEF(t *testing.T) {
 	rawData := []byte("raw data")
-	tag := &SmartphoneTag{
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -93,8 +95,8 @@ func TestSmartphoneTagReadDataWithoutNDEF(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagWriteData(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagWriteData(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -107,8 +109,8 @@ func TestSmartphoneTagWriteData(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagTransceive(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagTransceive(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -121,8 +123,8 @@ func TestSmartphoneTagTransceive(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagConnect(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagConnect(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -135,8 +137,8 @@ func TestSmartphoneTagConnect(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagDisconnect(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagDisconnect(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -149,8 +151,8 @@ func TestSmartphoneTagDisconnect(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagIsWritable(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagIsWritable(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -166,8 +168,8 @@ func TestSmartphoneTagIsWritable(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagCanMakeReadOnly(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagCanMakeReadOnly(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -183,8 +185,8 @@ func TestSmartphoneTagCanMakeReadOnly(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagMakeReadOnly(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagMakeReadOnly(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -197,11 +199,11 @@ func TestSmartphoneTagMakeReadOnly(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagGetNDEFMessage(t *testing.T) {
-	ndefMsg := NewNDEFMessage()
+func TestTagGetNDEFMessage(t *testing.T) {
+	ndefMsg := nfc.NewNDEFMessage()
 	ndefMsg.AddText("Test", "en")
 
-	tag := &SmartphoneTag{
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -218,7 +220,7 @@ func TestSmartphoneTagGetNDEFMessage(t *testing.T) {
 	}
 
 	// Test with no NDEF message
-	tag2 := &SmartphoneTag{
+	tag2 := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -230,9 +232,9 @@ func TestSmartphoneTagGetNDEFMessage(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagScannedAt(t *testing.T) {
+func TestTagScannedAt(t *testing.T) {
 	now := time.Now()
-	tag := &SmartphoneTag{
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",
@@ -245,8 +247,8 @@ func TestSmartphoneTagScannedAt(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagSourceDevice(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagSourceDevice(t *testing.T) {
+	tag := &Tag{
 		uid:          "04:AB:CD:EF",
 		tagType:      "Type4",
 		technology:   "ISO14443A",
@@ -259,8 +261,8 @@ func TestSmartphoneTagSourceDevice(t *testing.T) {
 	}
 }
 
-func TestSmartphoneTagThreadSafety(t *testing.T) {
-	tag := &SmartphoneTag{
+func TestTagThreadSafety(t *testing.T) {
+	tag := &Tag{
 		uid:        "04:AB:CD:EF",
 		tagType:    "Type4",
 		technology: "ISO14443A",

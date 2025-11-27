@@ -1,26 +1,33 @@
-package nfc
+package phonenfc
 
 import (
 	"testing"
 	"time"
+
+	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
-func TestNewSmartphoneManager(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestNewManager(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
-	if sm == nil {
-		t.Fatal("NewSmartphoneManager() returned nil")
+	if m == nil {
+		t.Fatal("NewManager() returned nil")
 	}
 
-	if sm.GetDeviceCount() != 0 {
-		t.Errorf("New manager should have 0 devices, got %d", sm.GetDeviceCount())
+	if m.GetDeviceCount() != 0 {
+		t.Errorf("New manager should have 0 devices, got %d", m.GetDeviceCount())
 	}
 }
 
-func TestSmartphoneManagerRegisterDevice(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestManagerImplementsNFCManager(t *testing.T) {
+	// Verify Manager implements nfc.Manager interface
+	var _ nfc.Manager = (*Manager)(nil)
+}
+
+func TestManagerRegisterDevice(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test iPhone",
@@ -33,7 +40,7 @@ func TestSmartphoneManagerRegisterDevice(t *testing.T) {
 		},
 	}
 
-	device, err := sm.RegisterDevice(req)
+	device, err := m.RegisterDevice(req)
 	if err != nil {
 		t.Fatalf("RegisterDevice() failed: %v", err)
 	}
@@ -46,14 +53,14 @@ func TestSmartphoneManagerRegisterDevice(t *testing.T) {
 		t.Error("Device should have non-empty ID")
 	}
 
-	if sm.GetDeviceCount() != 1 {
-		t.Errorf("Manager should have 1 device, got %d", sm.GetDeviceCount())
+	if m.GetDeviceCount() != 1 {
+		t.Errorf("Manager should have 1 device, got %d", m.GetDeviceCount())
 	}
 }
 
-func TestSmartphoneManagerRegisterDeviceValidation(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestManagerRegisterDeviceValidation(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
 	tests := []struct {
 		name    string
@@ -99,7 +106,7 @@ func TestSmartphoneManagerRegisterDeviceValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := sm.RegisterDevice(tt.req)
+			_, err := m.RegisterDevice(tt.req)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("RegisterDevice() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -107,9 +114,9 @@ func TestSmartphoneManagerRegisterDeviceValidation(t *testing.T) {
 	}
 }
 
-func TestSmartphoneManagerUnregisterDevice(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestManagerUnregisterDevice(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
@@ -117,7 +124,7 @@ func TestSmartphoneManagerUnregisterDevice(t *testing.T) {
 		AppVersion: "1.0.0",
 	}
 
-	device, err := sm.RegisterDevice(req)
+	device, err := m.RegisterDevice(req)
 	if err != nil {
 		t.Fatalf("RegisterDevice() failed: %v", err)
 	}
@@ -125,25 +132,25 @@ func TestSmartphoneManagerUnregisterDevice(t *testing.T) {
 	deviceID := device.DeviceID()
 
 	// Unregister device
-	err = sm.UnregisterDevice(deviceID)
+	err = m.UnregisterDevice(deviceID)
 	if err != nil {
 		t.Errorf("UnregisterDevice() failed: %v", err)
 	}
 
-	if sm.GetDeviceCount() != 0 {
-		t.Errorf("Manager should have 0 devices after unregister, got %d", sm.GetDeviceCount())
+	if m.GetDeviceCount() != 0 {
+		t.Errorf("Manager should have 0 devices after unregister, got %d", m.GetDeviceCount())
 	}
 
 	// Try to unregister again (should fail)
-	err = sm.UnregisterDevice(deviceID)
+	err = m.UnregisterDevice(deviceID)
 	if err == nil {
 		t.Error("UnregisterDevice() should fail for non-existent device")
 	}
 }
 
-func TestSmartphoneManagerOpenDevice(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestManagerOpenDevice(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
@@ -151,7 +158,7 @@ func TestSmartphoneManagerOpenDevice(t *testing.T) {
 		AppVersion: "1.0.0",
 	}
 
-	registeredDevice, err := sm.RegisterDevice(req)
+	registeredDevice, err := m.RegisterDevice(req)
 	if err != nil {
 		t.Fatalf("RegisterDevice() failed: %v", err)
 	}
@@ -159,7 +166,7 @@ func TestSmartphoneManagerOpenDevice(t *testing.T) {
 	deviceID := registeredDevice.DeviceID()
 
 	// Test opening with full connection string
-	device, err := sm.OpenDevice("smartphone:" + deviceID)
+	device, err := m.OpenDevice("smartphone:" + deviceID)
 	if err != nil {
 		t.Errorf("OpenDevice() with prefix failed: %v", err)
 	}
@@ -168,7 +175,7 @@ func TestSmartphoneManagerOpenDevice(t *testing.T) {
 	}
 
 	// Test opening with just device ID
-	device, err = sm.OpenDevice(deviceID)
+	device, err = m.OpenDevice(deviceID)
 	if err != nil {
 		t.Errorf("OpenDevice() without prefix failed: %v", err)
 	}
@@ -177,18 +184,18 @@ func TestSmartphoneManagerOpenDevice(t *testing.T) {
 	}
 
 	// Test opening non-existent device
-	_, err = sm.OpenDevice("non-existent-id")
+	_, err = m.OpenDevice("non-existent-id")
 	if err == nil {
 		t.Error("OpenDevice() should fail for non-existent device")
 	}
 }
 
-func TestSmartphoneManagerListDevices(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestManagerListDevices(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
 	// Initially empty
-	devices, err := sm.ListDevices()
+	devices, err := m.ListDevices()
 	if err != nil {
 		t.Errorf("ListDevices() failed: %v", err)
 	}
@@ -203,13 +210,13 @@ func TestSmartphoneManagerListDevices(t *testing.T) {
 			Platform:   "ios",
 			AppVersion: "1.0.0",
 		}
-		_, err := sm.RegisterDevice(req)
+		_, err := m.RegisterDevice(req)
 		if err != nil {
 			t.Fatalf("RegisterDevice() failed: %v", err)
 		}
 	}
 
-	devices, err = sm.ListDevices()
+	devices, err = m.ListDevices()
 	if err != nil {
 		t.Errorf("ListDevices() failed: %v", err)
 	}
@@ -225,9 +232,9 @@ func TestSmartphoneManagerListDevices(t *testing.T) {
 	}
 }
 
-func TestSmartphoneManagerSendTagData(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestManagerSendTagData(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
@@ -235,12 +242,12 @@ func TestSmartphoneManagerSendTagData(t *testing.T) {
 		AppVersion: "1.0.0",
 	}
 
-	device, err := sm.RegisterDevice(req)
+	device, err := m.RegisterDevice(req)
 	if err != nil {
 		t.Fatalf("RegisterDevice() failed: %v", err)
 	}
 
-	tagData := SmartphoneTagData{
+	tagData := TagData{
 		DeviceID:   device.DeviceID(),
 		UID:        "04:AB:CD:EF",
 		Technology: "ISO14443A",
@@ -249,22 +256,22 @@ func TestSmartphoneManagerSendTagData(t *testing.T) {
 	}
 
 	// Send tag data
-	err = sm.SendTagData(device.DeviceID(), tagData)
+	err = m.SendTagData(device.DeviceID(), tagData)
 	if err != nil {
 		t.Errorf("SendTagData() failed: %v", err)
 	}
 
 	// Try sending to non-existent device
 	tagData.DeviceID = "non-existent"
-	err = sm.SendTagData("non-existent", tagData)
+	err = m.SendTagData("non-existent", tagData)
 	if err == nil {
 		t.Error("SendTagData() should fail for non-existent device")
 	}
 }
 
-func TestSmartphoneManagerUpdateHeartbeat(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestManagerUpdateHeartbeat(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
@@ -272,7 +279,7 @@ func TestSmartphoneManagerUpdateHeartbeat(t *testing.T) {
 		AppVersion: "1.0.0",
 	}
 
-	device, err := sm.RegisterDevice(req)
+	device, err := m.RegisterDevice(req)
 	if err != nil {
 		t.Fatalf("RegisterDevice() failed: %v", err)
 	}
@@ -282,13 +289,13 @@ func TestSmartphoneManagerUpdateHeartbeat(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	err = sm.UpdateHeartbeat(deviceID)
+	err = m.UpdateHeartbeat(deviceID)
 	if err != nil {
 		t.Errorf("UpdateHeartbeat() failed: %v", err)
 	}
 
 	// Get device and check last seen
-	updatedDevice, exists := sm.GetDevice(deviceID)
+	updatedDevice, exists := m.GetDevice(deviceID)
 	if !exists {
 		t.Fatal("Device should exist after heartbeat")
 	}
@@ -298,16 +305,16 @@ func TestSmartphoneManagerUpdateHeartbeat(t *testing.T) {
 	}
 
 	// Try updating non-existent device
-	err = sm.UpdateHeartbeat("non-existent")
+	err = m.UpdateHeartbeat("non-existent")
 	if err == nil {
 		t.Error("UpdateHeartbeat() should fail for non-existent device")
 	}
 }
 
-func TestSmartphoneManagerCleanupInactiveDevices(t *testing.T) {
+func TestManagerCleanupInactiveDevices(t *testing.T) {
 	// Use short timeout for testing
-	sm := NewSmartphoneManager(100 * time.Millisecond)
-	defer sm.Close()
+	m := NewManager(100 * time.Millisecond)
+	defer m.Close()
 
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
@@ -315,7 +322,7 @@ func TestSmartphoneManagerCleanupInactiveDevices(t *testing.T) {
 		AppVersion: "1.0.0",
 	}
 
-	device, err := sm.RegisterDevice(req)
+	device, err := m.RegisterDevice(req)
 	if err != nil {
 		t.Fatalf("RegisterDevice() failed: %v", err)
 	}
@@ -323,7 +330,7 @@ func TestSmartphoneManagerCleanupInactiveDevices(t *testing.T) {
 	deviceID := device.DeviceID()
 
 	// Device should exist initially
-	if sm.GetDeviceCount() != 1 {
+	if m.GetDeviceCount() != 1 {
 		t.Error("Device should exist initially")
 	}
 
@@ -331,18 +338,18 @@ func TestSmartphoneManagerCleanupInactiveDevices(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Manually trigger cleanup
-	sm.cleanupInactiveDevices()
+	m.cleanupInactiveDevices()
 
 	// Device should be removed
-	_, exists := sm.GetDevice(deviceID)
+	_, exists := m.GetDevice(deviceID)
 	if exists {
 		t.Error("Device should be removed after timeout")
 	}
 }
 
-func TestSmartphoneManagerGetDevice(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
-	defer sm.Close()
+func TestManagerGetDevice(t *testing.T) {
+	m := NewManager(30 * time.Second)
+	defer m.Close()
 
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
@@ -350,7 +357,7 @@ func TestSmartphoneManagerGetDevice(t *testing.T) {
 		AppVersion: "1.0.0",
 	}
 
-	registeredDevice, err := sm.RegisterDevice(req)
+	registeredDevice, err := m.RegisterDevice(req)
 	if err != nil {
 		t.Fatalf("RegisterDevice() failed: %v", err)
 	}
@@ -358,7 +365,7 @@ func TestSmartphoneManagerGetDevice(t *testing.T) {
 	deviceID := registeredDevice.DeviceID()
 
 	// Get existing device
-	device, exists := sm.GetDevice(deviceID)
+	device, exists := m.GetDevice(deviceID)
 	if !exists {
 		t.Error("GetDevice() should return true for existing device")
 	}
@@ -367,14 +374,14 @@ func TestSmartphoneManagerGetDevice(t *testing.T) {
 	}
 
 	// Get non-existent device
-	_, exists = sm.GetDevice("non-existent")
+	_, exists = m.GetDevice("non-existent")
 	if exists {
 		t.Error("GetDevice() should return false for non-existent device")
 	}
 }
 
-func TestSmartphoneManagerClose(t *testing.T) {
-	sm := NewSmartphoneManager(30 * time.Second)
+func TestManagerClose(t *testing.T) {
+	m := NewManager(30 * time.Second)
 
 	// Register some devices
 	for i := 0; i < 3; i++ {
@@ -383,21 +390,21 @@ func TestSmartphoneManagerClose(t *testing.T) {
 			Platform:   "ios",
 			AppVersion: "1.0.0",
 		}
-		_, err := sm.RegisterDevice(req)
+		_, err := m.RegisterDevice(req)
 		if err != nil {
 			t.Fatalf("RegisterDevice() failed: %v", err)
 		}
 	}
 
-	if sm.GetDeviceCount() != 3 {
-		t.Errorf("Should have 3 devices before close, got %d", sm.GetDeviceCount())
+	if m.GetDeviceCount() != 3 {
+		t.Errorf("Should have 3 devices before close, got %d", m.GetDeviceCount())
 	}
 
 	// Close manager
-	sm.Close()
+	m.Close()
 
 	// All devices should be removed
-	if sm.GetDeviceCount() != 0 {
-		t.Errorf("Should have 0 devices after close, got %d", sm.GetDeviceCount())
+	if m.GetDeviceCount() != 0 {
+		t.Errorf("Should have 0 devices after close, got %d", m.GetDeviceCount())
 	}
 }

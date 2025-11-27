@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/nfc/phonenfc"
 	"github.com/nedpals/davi-nfc-agent/server"
 )
 
@@ -28,7 +29,7 @@ func GetCardTypeFilterTooltip(cardType string) string {
 type Agent struct {
 	Logger            *log.Logger
 	Manager           nfc.Manager              // NFC device manager (supports hardware and smartphone)
-	SmartphoneManager *nfc.SmartphoneManager   // Smartphone manager for explicit dependency injection (optional)
+	SmartphoneManager *phonenfc.Manager        // Smartphone manager for explicit dependency injection (optional)
 	Reader            *nfc.NFCReader
 	Server            *server.Server
 	AllowedCardTypes  map[string]bool          // Card type filter using map
@@ -36,7 +37,7 @@ type Agent struct {
 	ServerPort        int
 }
 
-func NewAgent(nfcManager nfc.Manager, smartphoneMgr *nfc.SmartphoneManager) *Agent {
+func NewAgent(nfcManager nfc.Manager, smartphoneMgr *phonenfc.Manager) *Agent {
 	return &Agent{
 		Logger:            log.New(os.Stderr, "[agent] ", log.LstdFlags),
 		Manager:           nfcManager,
@@ -63,20 +64,19 @@ func (a *Agent) Start(devicePath string) error {
 
 	a.Reader = nfcReader
 
-	// Create smartphone handler if smartphone manager was injected
-	var smartphoneHandler *server.SmartphoneHandler
-	if a.SmartphoneManager != nil {
-		smartphoneHandler = server.NewSmartphoneHandler(a.SmartphoneManager)
-	}
-
 	// Create server
 	a.Server = server.New(server.Config{
-		Reader:            a.Reader,
-		Port:              a.ServerPort,
-		APISecret:         a.APISecret,
-		AllowedCardTypes:  a.AllowedCardTypes,
-		SmartphoneHandler: smartphoneHandler,
+		Reader:           a.Reader,
+		Port:             a.ServerPort,
+		APISecret:        a.APISecret,
+		AllowedCardTypes: a.AllowedCardTypes,
 	})
+
+	// Register smartphone handler if smartphone manager was injected
+	if a.SmartphoneManager != nil {
+		smartphoneHandler := phonenfc.NewHandler(a.SmartphoneManager)
+		smartphoneHandler.Register(a.Server)
+	}
 
 	go a.Server.Start()
 	return nil

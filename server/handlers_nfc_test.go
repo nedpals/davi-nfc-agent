@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -15,8 +16,14 @@ type mockHandlerServer struct {
 	tagDataCalls      []nfc.NFCData
 	deviceStatusCalls []nfc.DeviceStatus
 	handlers          map[string]HandlerFunc
+	wsHandlers        []mockWSHandlerEntry
 	lifecycleStarters []func(ctx context.Context)
 	mu                sync.Mutex
+}
+
+type mockWSHandlerEntry struct {
+	matcher func(r *http.Request) bool
+	handler WebSocketHandlerFunc
 }
 
 func newMockHandlerServer() *mockHandlerServer {
@@ -30,6 +37,15 @@ func (m *mockHandlerServer) Handle(messageType string, handler HandlerFunc) erro
 	defer m.mu.Unlock()
 	m.handlers[messageType] = handler
 	return nil
+}
+
+func (m *mockHandlerServer) HandleWebSocket(matcher func(r *http.Request) bool, handler WebSocketHandlerFunc) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.wsHandlers = append(m.wsHandlers, mockWSHandlerEntry{
+		matcher: matcher,
+		handler: handler,
+	})
 }
 
 func (m *mockHandlerServer) StartLifecycle(start func(ctx context.Context)) {

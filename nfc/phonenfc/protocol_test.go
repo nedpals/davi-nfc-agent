@@ -1,11 +1,13 @@
-package nfc
+package phonenfc
 
 import (
 	"testing"
 	"time"
+
+	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
-func TestParseSmartphoneUID(t *testing.T) {
+func TestParseUID(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
@@ -76,13 +78,13 @@ func TestParseSmartphoneUID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseSmartphoneUID(tt.input)
+			got, err := parseUID(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseSmartphoneUID() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("parseUID() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.want {
-				t.Errorf("parseSmartphoneUID() = %v, want %v", got, tt.want)
+				t.Errorf("parseUID() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -154,7 +156,7 @@ func TestConvertNDEFMessageData(t *testing.T) {
 					{
 						TNF:        0x01,
 						Type:       []byte("T"),
-						Payload:    MakeTextRecordPayload("Hello", "en"),
+						Payload:    nfc.MakeTextRecordPayload("Hello", "en"),
 						RecordType: "text",
 						Content:    "Hello",
 						Language:   "en",
@@ -170,13 +172,13 @@ func TestConvertNDEFMessageData(t *testing.T) {
 					{
 						TNF:        0x01,
 						Type:       []byte("T"),
-						Payload:    MakeTextRecordPayload("Hello", "en"),
+						Payload:    nfc.MakeTextRecordPayload("Hello", "en"),
 						RecordType: "text",
 					},
 					{
 						TNF:        0x01,
 						Type:       []byte("U"),
-						Payload:    MakeURIRecordPayload("https://example.com"),
+						Payload:    nfc.MakeURIRecordPayload("https://example.com"),
 						RecordType: "uri",
 					},
 				},
@@ -211,15 +213,15 @@ func TestConvertNDEFMessageData(t *testing.T) {
 	}
 }
 
-func TestConvertSmartphoneTagData(t *testing.T) {
+func TestConvertTagData(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   SmartphoneTagData
+		input   TagData
 		wantErr bool
 	}{
 		{
 			name: "valid tag with NDEF",
-			input: SmartphoneTagData{
+			input: TagData{
 				DeviceID:   "device-123",
 				UID:        "04:AB:CD:EF",
 				Technology: "ISO14443A",
@@ -230,7 +232,7 @@ func TestConvertSmartphoneTagData(t *testing.T) {
 						{
 							TNF:        0x01,
 							Type:       []byte("T"),
-							Payload:    MakeTextRecordPayload("Test", "en"),
+							Payload:    nfc.MakeTextRecordPayload("Test", "en"),
 							RecordType: "text",
 							Content:    "Test",
 						},
@@ -241,7 +243,7 @@ func TestConvertSmartphoneTagData(t *testing.T) {
 		},
 		{
 			name: "valid tag without NDEF",
-			input: SmartphoneTagData{
+			input: TagData{
 				DeviceID:   "device-123",
 				UID:        "04ABCDEF",
 				Technology: "ISO14443A",
@@ -253,7 +255,7 @@ func TestConvertSmartphoneTagData(t *testing.T) {
 		},
 		{
 			name: "missing UID",
-			input: SmartphoneTagData{
+			input: TagData{
 				DeviceID:   "device-123",
 				Technology: "ISO14443A",
 				Type:       "MIFARE Classic 1K",
@@ -262,7 +264,7 @@ func TestConvertSmartphoneTagData(t *testing.T) {
 		},
 		{
 			name: "missing technology",
-			input: SmartphoneTagData{
+			input: TagData{
 				DeviceID: "device-123",
 				UID:      "04:AB:CD:EF",
 				Type:     "MIFARE Classic 1K",
@@ -271,7 +273,7 @@ func TestConvertSmartphoneTagData(t *testing.T) {
 		},
 		{
 			name: "invalid UID format",
-			input: SmartphoneTagData{
+			input: TagData{
 				DeviceID:   "device-123",
 				UID:        "invalid",
 				Technology: "ISO14443A",
@@ -283,19 +285,19 @@ func TestConvertSmartphoneTagData(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tag, err := ConvertSmartphoneTagData(tt.input)
+			tag, err := ConvertTagData(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ConvertSmartphoneTagData() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ConvertTagData() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr {
 				if tag == nil {
-					t.Error("ConvertSmartphoneTagData() returned nil tag")
+					t.Error("ConvertTagData() returned nil tag")
 				} else {
 					// Verify tag fields
 					if tag.UID() != tt.input.UID {
 						// UID might be normalized
-						normalizedUID, _ := parseSmartphoneUID(tt.input.UID)
+						normalizedUID, _ := parseUID(tt.input.UID)
 						if tag.UID() != normalizedUID {
 							t.Errorf("Tag UID = %v, want %v", tag.UID(), normalizedUID)
 						}

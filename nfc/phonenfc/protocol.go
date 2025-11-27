@@ -1,10 +1,12 @@
-package nfc
+package phonenfc
 
 import (
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
 // DeviceCapabilities defines the capabilities of a smartphone NFC device.
@@ -16,11 +18,11 @@ type DeviceCapabilities struct {
 
 // DeviceRegistrationRequest is sent by mobile app to register as an NFC device.
 type DeviceRegistrationRequest struct {
-	DeviceName   string                 `json:"deviceName"`   // e.g., "John's iPhone 12"
-	Platform     string                 `json:"platform"`     // "ios" or "android"
-	AppVersion   string                 `json:"appVersion"`   // e.g., "1.0.0"
-	Capabilities DeviceCapabilities     `json:"capabilities"` // Device capabilities
-	Metadata     map[string]string      `json:"metadata"`     // Optional metadata
+	DeviceName   string             `json:"deviceName"`   // e.g., "John's iPhone 12"
+	Platform     string             `json:"platform"`     // "ios" or "android"
+	AppVersion   string             `json:"appVersion"`   // e.g., "1.0.0"
+	Capabilities DeviceCapabilities `json:"capabilities"` // Device capabilities
+	Metadata     map[string]string  `json:"metadata"`     // Optional metadata
 }
 
 // DeviceRegistrationResponse is sent by server after successful registration.
@@ -36,8 +38,8 @@ type ServerInfo struct {
 	SupportedNFC []string `json:"supportedNFC"` // ["mifare", "desfire", etc.]
 }
 
-// SmartphoneTagData is sent by mobile app when a tag is scanned.
-type SmartphoneTagData struct {
+// TagData is sent by mobile app when a tag is scanned.
+type TagData struct {
 	DeviceID    string           `json:"deviceID"`    // Device that scanned the tag
 	UID         string           `json:"uid"`         // Tag UID (hex format)
 	Technology  string           `json:"technology"`  // "ISO14443A", "ISO14443B", etc.
@@ -75,7 +77,7 @@ type DeviceWriteRequest struct {
 	RequestID   string           `json:"requestID"`   // Unique request ID for correlation
 	DeviceID    string           `json:"deviceID"`    // Target device
 	NDEFMessage *NDEFMessageData `json:"ndefMessage"` // Data to write
-	Options     WriteOptions     `json:"options"`     // Write options
+	Options     nfc.WriteOptions `json:"options"`     // Write options
 }
 
 // DeviceWriteResponse is sent by mobile app to server (future feature).
@@ -85,8 +87,8 @@ type DeviceWriteResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// ConvertSmartphoneTagData converts mobile app tag data to internal Tag.
-func ConvertSmartphoneTagData(data SmartphoneTagData) (Tag, error) {
+// ConvertTagData converts mobile app tag data to internal nfc.Tag.
+func ConvertTagData(data TagData) (nfc.Tag, error) {
 	// Validate required fields
 	if data.UID == "" {
 		return nil, fmt.Errorf("tag UID is required")
@@ -96,13 +98,13 @@ func ConvertSmartphoneTagData(data SmartphoneTagData) (Tag, error) {
 	}
 
 	// Normalize UID format
-	uid, err := parseSmartphoneUID(data.UID)
+	uid, err := parseUID(data.UID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid UID format: %w", err)
 	}
 
 	// Parse NDEF message if present
-	var ndefMsg *NDEFMessage
+	var ndefMsg *nfc.NDEFMessage
 	var ndefData []byte
 	if data.NDEFMessage != nil {
 		ndefMsg, err = ConvertNDEFMessageData(data.NDEFMessage)
@@ -116,8 +118,8 @@ func ConvertSmartphoneTagData(data SmartphoneTagData) (Tag, error) {
 		}
 	}
 
-	// Create SmartphoneTag instance
-	tag := &SmartphoneTag{
+	// Create Tag instance
+	tag := &Tag{
 		uid:          uid,
 		tagType:      data.Type,
 		technology:   data.Technology,
@@ -131,13 +133,13 @@ func ConvertSmartphoneTagData(data SmartphoneTagData) (Tag, error) {
 	return tag, nil
 }
 
-// ConvertNDEFMessageData converts mobile app NDEF format to internal NDEFMessage.
-func ConvertNDEFMessageData(data *NDEFMessageData) (*NDEFMessage, error) {
+// ConvertNDEFMessageData converts mobile app NDEF format to internal nfc.NDEFMessage.
+func ConvertNDEFMessageData(data *NDEFMessageData) (*nfc.NDEFMessage, error) {
 	if data == nil || len(data.Records) == 0 {
 		return nil, fmt.Errorf("empty NDEF message")
 	}
 
-	msg := NewNDEFMessage()
+	msg := nfc.NewNDEFMessage()
 	for i, recordData := range data.Records {
 		record, err := ConvertNDEFRecordData(recordData)
 		if err != nil {
@@ -150,13 +152,13 @@ func ConvertNDEFMessageData(data *NDEFMessageData) (*NDEFMessage, error) {
 }
 
 // ConvertNDEFRecordData converts single NDEF record from mobile app format.
-func ConvertNDEFRecordData(data NDEFRecordData) (*NDEFRecord, error) {
+func ConvertNDEFRecordData(data NDEFRecordData) (*nfc.NDEFRecord, error) {
 	// Validate TNF
 	if data.TNF > 0x07 {
 		return nil, fmt.Errorf("invalid TNF value: 0x%02X", data.TNF)
 	}
 
-	record := &NDEFRecord{
+	record := &nfc.NDEFRecord{
 		TNF:     data.TNF,
 		Type:    data.Type,
 		ID:      data.ID,
@@ -166,10 +168,10 @@ func ConvertNDEFRecordData(data NDEFRecordData) (*NDEFRecord, error) {
 	return record, nil
 }
 
-// parseSmartphoneUID parses and normalizes UID from various formats.
+// parseUID parses and normalizes UID from various formats.
 // Supports: "04:AB:CD:EF", "04ABCDEF", "04 AB CD EF"
 // Returns: normalized colon-separated uppercase hex (e.g., "04:AB:CD:EF")
-func parseSmartphoneUID(uid string) (string, error) {
+func parseUID(uid string) (string, error) {
 	if uid == "" {
 		return "", fmt.Errorf("empty UID")
 	}

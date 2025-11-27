@@ -13,6 +13,7 @@ import (
 	"fyne.io/systray"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/nfc/phonenfc"
 )
 
 const DEFAULT_PORT = 18080
@@ -32,7 +33,7 @@ func main() {
 	flag.Parse()
 
 	// Initialize smartphone manager
-	smartphoneManager := nfc.NewSmartphoneManager(30 * time.Second)
+	smartphoneManager := phonenfc.NewManager(30 * time.Second)
 
 	// Create multi-manager combining hardware and smartphone
 	manager := nfc.NewMultiManager(

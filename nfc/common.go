@@ -28,13 +28,6 @@ const (
 	ReconnectDelay      = time.Second * 2
 	DeviceCheckInterval = time.Second * 2 // Interval to check for new devices
 	DeviceEnumRetries   = 3               // Number of retries for device enumeration
-
-	// Smartphone device constants
-	SmartphoneDeviceTimeout     = 30 * time.Second        // Device inactivity timeout
-	SmartphoneHeartbeatInterval = 10 * time.Second        // Expected heartbeat frequency
-	SmartphoneTagChannelBuffer  = 10                      // Tag channel buffer size
-	SmartphoneGetTagsTimeout    = 500 * time.Millisecond // GetTags blocking timeout
-	SmartphoneCleanupInterval   = 15 * time.Second        // Cleanup check interval
 )
 
 // TagType represents the type of NFC tag as a string.

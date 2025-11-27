@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -13,15 +14,25 @@ import (
 // It processes a websocket request and returns an error if processing fails.
 type HandlerFunc func(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error
 
+// WebSocketHandlerFunc is a function type for custom WebSocket connection handling.
+// It takes over the entire WebSocket connection lifecycle when matched.
+// Returns true if the connection was handled, false to continue with default handling.
+type WebSocketHandlerFunc func(w http.ResponseWriter, r *http.Request) bool
+
 // HandlerServer provides methods for handlers to register routes and start lifecycle processes.
 // It also provides broadcast methods for sending data to connected clients.
 type HandlerServer interface {
 	// Handle registers a handler function for a specific message type
 	Handle(messageType string, handler HandlerFunc) error
-	
+
+	// HandleWebSocket registers a custom WebSocket handler that intercepts connections
+	// before normal message routing. The matcher function determines if this handler
+	// should process the connection.
+	HandleWebSocket(matcher func(r *http.Request) bool, handler WebSocketHandlerFunc)
+
 	// StartLifecycle registers a function to be called when the server starts
 	StartLifecycle(start func(ctx context.Context))
-	
+
 	// Broadcast methods for NFC data
 	BroadcastTagData(data nfc.NFCData)
 	BroadcastDeviceStatus(status nfc.DeviceStatus)
@@ -33,12 +44,19 @@ type ServerHandler interface {
 	Register(server HandlerServer)
 }
 
+// wsHandlerEntry represents a custom WebSocket handler with its matcher.
+type wsHandlerEntry struct {
+	matcher func(r *http.Request) bool
+	handler WebSocketHandlerFunc
+}
+
 // HandlerRegistry manages websocket message handlers using a router-style approach.
 // It provides thread-safe registration and retrieval of handler functions by message type.
 type HandlerRegistry struct {
-	handlers         map[string]HandlerFunc
+	handlers          map[string]HandlerFunc
+	wsHandlers        []wsHandlerEntry
 	lifecycleStarters []func(ctx context.Context)
-	mu               sync.RWMutex
+	mu                sync.RWMutex
 }
 
 // NewHandlerRegistry creates a new handler registry.
@@ -75,8 +93,33 @@ func (r *HandlerRegistry) Handle(messageType string, handler HandlerFunc) error 
 func (r *HandlerRegistry) RegisterLifecycle(start func(ctx context.Context)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	r.lifecycleStarters = append(r.lifecycleStarters, start)
+}
+
+// HandleWebSocket registers a custom WebSocket handler with a matcher function.
+func (r *HandlerRegistry) HandleWebSocket(matcher func(r *http.Request) bool, handler WebSocketHandlerFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.wsHandlers = append(r.wsHandlers, wsHandlerEntry{
+		matcher: matcher,
+		handler: handler,
+	})
+}
+
+// TryCustomWebSocketHandler attempts to handle the request with registered custom handlers.
+// Returns true if a handler processed the connection, false otherwise.
+func (r *HandlerRegistry) TryCustomWebSocketHandler(w http.ResponseWriter, req *http.Request) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, entry := range r.wsHandlers {
+		if entry.matcher(req) {
+			return entry.handler(w, req)
+		}
+	}
+	return false
 }
 
 // Get retrieves a handler function by message type.
