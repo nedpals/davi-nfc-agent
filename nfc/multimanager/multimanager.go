@@ -2,7 +2,6 @@
 package multimanager
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -194,6 +193,7 @@ func (mm *MultiManager) OpenDevice(deviceStr string) (nfc.Device, error) {
 
 // ListDevices aggregates device lists from all managers.
 // Each device is prefixed with its manager name for disambiguation.
+// Errors from individual managers are logged but do not fail the overall operation.
 func (mm *MultiManager) ListDevices() ([]string, error) {
 	mm.mu.RLock()
 	managers := make(map[string]nfc.Manager)
@@ -203,15 +203,12 @@ func (mm *MultiManager) ListDevices() ([]string, error) {
 	mm.mu.RUnlock()
 
 	var allDevices []string
-	var errs []error
 
 	for name, manager := range managers {
 		devices, err := manager.ListDevices()
 		if err != nil {
 			// Log warning but continue with other managers
-			errMsg := fmt.Sprintf("manager '%s' failed to list devices: %v", name, err)
-			log.Printf("[multi] %s", errMsg)
-			errs = append(errs, fmt.Errorf("%s", errMsg))
+			log.Printf("[multi] manager '%s' failed to list devices: %v", name, err)
 			continue
 		}
 
@@ -227,12 +224,6 @@ func (mm *MultiManager) ListDevices() ([]string, error) {
 		}
 	}
 
-	if len(errs) != 0 {
-		log.Printf("[multi] Completed ListDevices with %d errors", len(errs))
-		return allDevices, errors.Join(errs...)
-	}
-
-	// Return combined list (even if some managers had errors)
 	return allDevices, nil
 }
 
