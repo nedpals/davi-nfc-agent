@@ -2,6 +2,7 @@
 package multimanager
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -202,7 +203,7 @@ func (mm *MultiManager) ListDevices() ([]string, error) {
 	mm.mu.RUnlock()
 
 	var allDevices []string
-	var errors []string
+	var errs []error
 
 	for name, manager := range managers {
 		devices, err := manager.ListDevices()
@@ -210,7 +211,7 @@ func (mm *MultiManager) ListDevices() ([]string, error) {
 			// Log warning but continue with other managers
 			errMsg := fmt.Sprintf("manager '%s' failed to list devices: %v", name, err)
 			log.Printf("[multi] %s", errMsg)
-			errors = append(errors, errMsg)
+			errs = append(errs, fmt.Errorf("%s", errMsg))
 			continue
 		}
 
@@ -224,6 +225,11 @@ func (mm *MultiManager) ListDevices() ([]string, error) {
 				allDevices = append(allDevices, device)
 			}
 		}
+	}
+
+	if len(errs) != 0 {
+		log.Printf("[multi] Completed ListDevices with %d errors", len(errs))
+		return allDevices, errors.Join(errs...)
 	}
 
 	// Return combined list (even if some managers had errors)
