@@ -1,6 +1,7 @@
 package phonenfc
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -20,6 +21,7 @@ type Manager struct {
 	stopCleanup       chan struct{}      // Stop cleanup goroutine
 	inactivityTimeout time.Duration      // Device timeout duration
 	closed            bool               // Whether Close() has been called
+	dataChan          chan nfc.NFCData   // Channel for broadcasting tag data to server
 }
 
 // NewManager creates a new smartphone manager.
@@ -32,6 +34,7 @@ func NewManager(inactivityTimeout time.Duration) *Manager {
 		devices:           make(map[string]*Device),
 		inactivityTimeout: inactivityTimeout,
 		stopCleanup:       make(chan struct{}),
+		dataChan:          make(chan nfc.NFCData, 10), // Buffered to prevent blocking
 	}
 
 	// Start cleanup routine
@@ -137,7 +140,7 @@ func (m *Manager) GetDevice(deviceID string) (*Device, bool) {
 	return device, exists
 }
 
-// SendTagData sends scanned tags to a device's channel.
+// SendTagData converts tag data and broadcasts it via the data channel.
 func (m *Manager) SendTagData(deviceID string, tagData TagData) error {
 	m.mu.RLock()
 	device, exists := m.devices[deviceID]
@@ -153,16 +156,23 @@ func (m *Manager) SendTagData(deviceID string, tagData TagData) error {
 		return fmt.Errorf("failed to convert tag data: %w", err)
 	}
 
-	// Send to device's tag channel
-	tags := []nfc.Tag{tag}
-	if err := device.SendTags(tags); err != nil {
-		return fmt.Errorf("failed to send tags to device: %w", err)
+	// Create Card and broadcast via data channel
+	card := nfc.NewCard(tag)
+	select {
+	case m.dataChan <- nfc.NFCData{Card: card, Err: nil}:
+	default:
+		log.Printf("[smartphone] Data channel full, dropping tag data for device %s", deviceID)
 	}
 
 	// Update heartbeat
 	device.UpdateLastSeen()
 
 	return nil
+}
+
+// Data returns a channel that provides NFCData as tags are scanned.
+func (m *Manager) Data() <-chan nfc.NFCData {
+	return m.dataChan
 }
 
 // UpdateHeartbeat updates device last-seen timestamp.
@@ -266,8 +276,22 @@ func (m *Manager) GetActiveDeviceCount() int {
 }
 
 // Register implements server.ServerHandler interface.
-// Delegates to internal Handler for WebSocket registration.
+// Registers WebSocket handler and lifecycle for broadcasting tag data.
 func (m *Manager) Register(s server.HandlerServer) {
 	handler := NewHandler(m)
 	handler.Register(s)
+
+	// Register lifecycle to broadcast smartphone tag data
+	s.StartLifecycle(func(ctx context.Context) {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case data := <-m.dataChan:
+					s.BroadcastTagData(data)
+				}
+			}
+		}()
+	})
 }
