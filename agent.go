@@ -88,6 +88,11 @@ func (a *Agent) Start(devicePath string) error {
 }
 
 func (a *Agent) Stop() {
+	if a.Reader == nil && a.Server == nil {
+		a.Logger.Println("Agent is not running")
+		return
+	}
+
 	a.Logger.Println("Stopping agent...")
 
 	if a.Server != nil {
