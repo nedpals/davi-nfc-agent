@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/server"
 )
 
 // Manager implements the nfc.Manager interface for managing smartphone connections.
@@ -253,4 +254,11 @@ func (m *Manager) GetActiveDeviceCount() int {
 		}
 	}
 	return count
+}
+
+// Register implements server.ServerHandler interface.
+// Delegates to internal Handler for WebSocket registration.
+func (m *Manager) Register(s server.HandlerServer) {
+	handler := NewHandler(m)
+	handler.Register(s)
 }

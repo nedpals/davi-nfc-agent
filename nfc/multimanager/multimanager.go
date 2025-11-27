@@ -1,23 +1,27 @@
-package nfc
+// Package multimanager provides a multi-manager that aggregates multiple NFC Manager implementations.
+package multimanager
 
 import (
 	"fmt"
 	"log"
 	"strings"
 	"sync"
+
+	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/server"
 )
 
 // MultiManager aggregates multiple Manager implementations.
 type MultiManager struct {
-	managers     map[string]Manager // managerName -> Manager instance
-	managerOrder []string           // Ordered list of manager names (for fallback)
-	mu           sync.RWMutex       // Protects managers map
+	managers     map[string]nfc.Manager // managerName -> Manager instance
+	managerOrder []string               // Ordered list of manager names (for fallback)
+	mu           sync.RWMutex           // Protects managers map
 }
 
 // ManagerEntry represents a named manager for MultiManager initialization.
 type ManagerEntry struct {
 	Name    string
-	Manager Manager
+	Manager nfc.Manager
 }
 
 // NewMultiManager creates a new MultiManager with the given managers.
@@ -25,13 +29,13 @@ type ManagerEntry struct {
 //
 // Example:
 //
-//	mm := nfc.NewMultiManager(
-//	    nfc.ManagerEntry{Name: "hardware", Manager: hardwareManager},
-//	    nfc.ManagerEntry{Name: "smartphone", Manager: smartphoneManager},
+//	mm := multimanager.NewMultiManager(
+//	    multimanager.ManagerEntry{Name: "hardware", Manager: hardwareManager},
+//	    multimanager.ManagerEntry{Name: "smartphone", Manager: smartphoneManager},
 //	)
 func NewMultiManager(entries ...ManagerEntry) *MultiManager {
 	mm := &MultiManager{
-		managers:     make(map[string]Manager),
+		managers:     make(map[string]nfc.Manager),
 		managerOrder: []string{},
 	}
 
@@ -54,9 +58,25 @@ func NewMultiManager(entries ...ManagerEntry) *MultiManager {
 	return mm
 }
 
+// Register implements server.ServerHandler interface.
+// It iterates through all registered managers and calls Register() on any
+// that also implement server.ServerHandler.
+func (mm *MultiManager) Register(s server.HandlerServer) {
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+
+	for name, manager := range mm.managers {
+		// Check if this manager also implements ServerHandler
+		if handler, ok := manager.(server.ServerHandler); ok {
+			log.Printf("[multi] Registering server handler for manager: %s", name)
+			handler.Register(s)
+		}
+	}
+}
+
 // AddManager adds a manager with the given name (for dynamic registration).
 // Managers are tried in the order they are added.
-func (mm *MultiManager) AddManager(name string, manager Manager) error {
+func (mm *MultiManager) AddManager(name string, manager nfc.Manager) error {
 	if name == "" {
 		return fmt.Errorf("manager name cannot be empty")
 	}
@@ -105,7 +125,7 @@ func (mm *MultiManager) RemoveManager(name string) error {
 }
 
 // GetManager retrieves a specific manager by name.
-func (mm *MultiManager) GetManager(name string) (Manager, bool) {
+func (mm *MultiManager) GetManager(name string) (nfc.Manager, bool) {
 	mm.mu.RLock()
 	defer mm.mu.RUnlock()
 
@@ -117,9 +137,9 @@ func (mm *MultiManager) GetManager(name string) (Manager, bool) {
 // Device string format:
 //   - "manager:deviceID" - explicit manager (e.g., "smartphone:abc123", "hardware:pn532")
 //   - "deviceID" or "" - try all managers in order
-func (mm *MultiManager) OpenDevice(deviceStr string) (Device, error) {
+func (mm *MultiManager) OpenDevice(deviceStr string) (nfc.Device, error) {
 	mm.mu.RLock()
-	managers := make(map[string]Manager)
+	managers := make(map[string]nfc.Manager)
 	for k, v := range mm.managers {
 		managers[k] = v
 	}
@@ -175,7 +195,7 @@ func (mm *MultiManager) OpenDevice(deviceStr string) (Device, error) {
 // Each device is prefixed with its manager name for disambiguation.
 func (mm *MultiManager) ListDevices() ([]string, error) {
 	mm.mu.RLock()
-	managers := make(map[string]Manager)
+	managers := make(map[string]nfc.Manager)
 	for k, v := range mm.managers {
 		managers[k] = v
 	}

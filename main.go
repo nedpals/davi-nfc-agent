@@ -13,6 +13,7 @@ import (
 	"fyne.io/systray"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/nfc/multimanager"
 	"github.com/nedpals/davi-nfc-agent/nfc/phonenfc"
 )
 
@@ -36,13 +37,13 @@ func main() {
 	smartphoneManager := phonenfc.NewManager(30 * time.Second)
 
 	// Create multi-manager combining hardware and smartphone
-	manager := nfc.NewMultiManager(
-		nfc.ManagerEntry{Name: nfc.ManagerTypeHardware, Manager: nfc.NewManager()},
-		nfc.ManagerEntry{Name: nfc.ManagerTypeSmartphone, Manager: smartphoneManager},
+	manager := multimanager.NewMultiManager(
+		multimanager.ManagerEntry{Name: nfc.ManagerTypeHardware, Manager: nfc.NewManager()},
+		multimanager.ManagerEntry{Name: nfc.ManagerTypeSmartphone, Manager: smartphoneManager},
 	)
 
-	// Create agent with explicit smartphone manager for dependency injection
-	agent := NewAgent(manager, smartphoneManager)
+	// Create agent
+	agent := NewAgent(manager)
 	agent.ServerPort = portFlag
 	agent.APISecret = apiSecretFlag
 

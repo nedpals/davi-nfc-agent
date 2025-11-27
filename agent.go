@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/nfc/phonenfc"
 	"github.com/nedpals/davi-nfc-agent/server"
 )
 
@@ -27,22 +26,20 @@ func GetCardTypeFilterTooltip(cardType string) string {
 }
 
 type Agent struct {
-	Logger            *log.Logger
-	Manager           nfc.Manager              // NFC device manager (supports hardware and smartphone)
-	SmartphoneManager *phonenfc.Manager        // Smartphone manager for explicit dependency injection (optional)
-	Reader            *nfc.NFCReader
-	Server            *server.Server
-	AllowedCardTypes  map[string]bool          // Card type filter using map
-	APISecret         string
-	ServerPort        int
+	Logger           *log.Logger
+	Manager          nfc.Manager     // NFC device manager (supports hardware and smartphone)
+	Reader           *nfc.NFCReader
+	Server           *server.Server
+	AllowedCardTypes map[string]bool // Card type filter using map
+	APISecret        string
+	ServerPort       int
 }
 
-func NewAgent(nfcManager nfc.Manager, smartphoneMgr *phonenfc.Manager) *Agent {
+func NewAgent(nfcManager nfc.Manager) *Agent {
 	return &Agent{
-		Logger:            log.New(os.Stderr, "[agent] ", log.LstdFlags),
-		Manager:           nfcManager,
-		SmartphoneManager: smartphoneMgr,
-		AllowedCardTypes:  make(map[string]bool),
+		Logger:           log.New(os.Stderr, "[agent] ", log.LstdFlags),
+		Manager:          nfcManager,
+		AllowedCardTypes: make(map[string]bool),
 	}
 }
 
@@ -72,10 +69,9 @@ func (a *Agent) Start(devicePath string) error {
 		AllowedCardTypes: a.AllowedCardTypes,
 	})
 
-	// Register smartphone handler if smartphone manager was injected
-	if a.SmartphoneManager != nil {
-		smartphoneHandler := phonenfc.NewHandler(a.SmartphoneManager)
-		smartphoneHandler.Register(a.Server)
+	// Register handlers if Manager implements ServerHandler
+	if handler, ok := a.Manager.(server.ServerHandler); ok {
+		handler.Register(a.Server)
 	}
 
 	go a.Server.Start()
@@ -100,9 +96,9 @@ func (a *Agent) Stop() {
 		a.Reader = nil
 	}
 
-	// Cleanup smartphone manager if present
-	if a.SmartphoneManager != nil {
-		a.SmartphoneManager.Close()
+	// Cleanup Manager if it has a Close method
+	if closer, ok := a.Manager.(interface{ Close() }); ok {
+		closer.Close()
 	}
 
 	a.Logger.Println("Agent stopped successfully")
