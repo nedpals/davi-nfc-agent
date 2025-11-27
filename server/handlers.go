@@ -7,8 +7,8 @@ import (
 	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
-// NDEFRecord represents a single NDEF record in the write request
-type NDEFRecord struct {
+// WriteRecord represents a single NDEF record in the write request
+type WriteRecord struct {
 	// Type specifies the record type: "text" or "uri"
 	Type string `json:"type"`
 
@@ -25,7 +25,7 @@ type NDEFRecord struct {
 // modify it, and send back the complete message.
 type WriteRequest struct {
 	// Records is an array of NDEF records to write
-	Records []NDEFRecord `json:"records"`
+	Records []WriteRecord `json:"records"`
 }
 
 // BuildNDEFMessage builds an NDEF message from the request.

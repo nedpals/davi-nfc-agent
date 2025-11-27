@@ -14,7 +14,7 @@ import (
 // cardTypeFilterItem holds a menu item and its associated card type
 type cardTypeFilterItem struct {
 	menuItem *systray.MenuItem
-	cardType CardTypeFilterName
+	cardType string
 }
 
 // getLocalIPs returns a list of local IP addresses (excluding loopback)
@@ -60,7 +60,7 @@ type SystrayApp struct {
 	// Card filter menu items
 	mCardFilterMenu *systray.MenuItem
 	mFilterAll      *systray.MenuItem
-	cardTypeFilters map[CardTypeFilterName]*cardTypeFilterItem // Maps card type to filter item
+	cardTypeFilters map[string]*cardTypeFilterItem // Maps card type to filter item
 }
 
 // NewSystrayApp creates a new systray application
@@ -70,7 +70,7 @@ func NewSystrayApp(agent *Agent, initialDevice string) *SystrayApp {
 		initialDevice:   initialDevice,
 		currentDevice:   initialDevice,
 		deviceMenuItems: make(map[string]*systray.MenuItem),
-		cardTypeFilters: make(map[CardTypeFilterName]*cardTypeFilterItem),
+		cardTypeFilters: make(map[string]*cardTypeFilterItem),
 	}
 }
 

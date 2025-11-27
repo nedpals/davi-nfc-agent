@@ -10,60 +10,38 @@ import (
 	"github.com/nedpals/davi-nfc-agent/server"
 )
 
-type CardTypeFilter struct {
-	MifareClassic1K  bool
-	MifareClassic4K  bool
-	MifareUltralight bool
-	Desfire          bool
-	Type4            bool
-}
-
-type CardTypeFilterName string
-
-var (
-	CardTypeMifareClassic1K  CardTypeFilterName = "MIFARE Classic 1K"
-	CardTypeMifareClassic4K  CardTypeFilterName = "MIFARE Classic 4K"
-	CardTypeMifareUltralight CardTypeFilterName = "MIFARE Ultralight"
-	CardTypeDesfire          CardTypeFilterName = "DESFire"
-	CardTypeType4            CardTypeFilterName = "Type4"
-)
-
-// GetAllCardTypeFilterNames returns all card type filter names
-func GetAllCardTypeFilterNames() []CardTypeFilterName {
-	return []CardTypeFilterName{
-		CardTypeMifareClassic1K,
-		CardTypeMifareClassic4K,
-		CardTypeMifareUltralight,
-		CardTypeDesfire,
-		CardTypeType4,
-	}
+// GetAllCardTypeFilterNames returns all card type filter names from nfc package constants
+func GetAllCardTypeFilterNames() []string {
+	return nfc.GetAllCardTypes()
 }
 
 // GetCardTypeFilterDisplayName returns a user-friendly display name for a card type
-func GetCardTypeFilterDisplayName(cardType CardTypeFilterName) string {
-	return string(cardType)
+func GetCardTypeFilterDisplayName(cardType string) string {
+	return cardType
 }
 
 // GetCardTypeFilterTooltip returns a tooltip for a card type filter
-func GetCardTypeFilterTooltip(cardType CardTypeFilterName) string {
-	return "Allow " + string(cardType) + " only"
+func GetCardTypeFilterTooltip(cardType string) string {
+	return "Allow " + cardType + " only"
 }
 
 type Agent struct {
-	Logger           *log.Logger
-	Manager          nfc.Manager // NFC device manager (supports hardware and smartphone)
-	Reader           *nfc.NFCReader
-	Server           *server.Server
-	AllowedCardTypes CardTypeFilter
-	APISecret        string
-	ServerPort       int
+	Logger            *log.Logger
+	Manager           nfc.Manager              // NFC device manager (supports hardware and smartphone)
+	SmartphoneManager *nfc.SmartphoneManager   // Smartphone manager for explicit dependency injection (optional)
+	Reader            *nfc.NFCReader
+	Server            *server.Server
+	AllowedCardTypes  map[string]bool          // Card type filter using map
+	APISecret         string
+	ServerPort        int
 }
 
-func NewAgent(nfcManager nfc.Manager) *Agent {
+func NewAgent(nfcManager nfc.Manager, smartphoneMgr *nfc.SmartphoneManager) *Agent {
 	return &Agent{
-		Logger:           log.New(os.Stderr, "[agent] ", log.LstdFlags),
-		Manager:          nfcManager,
-		AllowedCardTypes: CardTypeFilter{},
+		Logger:            log.New(os.Stderr, "[agent] ", log.LstdFlags),
+		Manager:           nfcManager,
+		SmartphoneManager: smartphoneMgr,
+		AllowedCardTypes:  make(map[string]bool),
 	}
 }
 
@@ -85,14 +63,10 @@ func (a *Agent) Start(devicePath string) error {
 
 	a.Reader = nfcReader
 
-	// Extract smartphone handler from manager if present
+	// Create smartphone handler if smartphone manager was injected
 	var smartphoneHandler *server.SmartphoneDeviceHandler
-	if multiManager, ok := a.Manager.(*nfc.MultiManager); ok {
-		if mgr, exists := multiManager.GetManager("smartphone"); exists {
-			if smartphoneMgr, ok := mgr.(*nfc.SmartphoneManager); ok {
-				smartphoneHandler = server.NewSmartphoneDeviceHandler(smartphoneMgr)
-			}
-		}
+	if a.SmartphoneManager != nil {
+		smartphoneHandler = server.NewSmartphoneDeviceHandler(a.SmartphoneManager)
 	}
 
 	// Create server
@@ -100,7 +74,7 @@ func (a *Agent) Start(devicePath string) error {
 		Reader:            a.Reader,
 		Port:              a.ServerPort,
 		APISecret:         a.APISecret,
-		AllowedCardTypes:  a.allowedCardToMap(),
+		AllowedCardTypes:  a.AllowedCardTypes,
 		SmartphoneHandler: smartphoneHandler,
 	})
 
@@ -127,18 +101,14 @@ func (a *Agent) Stop() {
 	}
 
 	// Cleanup smartphone manager if present
-	if multiManager, ok := a.Manager.(*nfc.MultiManager); ok {
-		if mgr, exists := multiManager.GetManager("smartphone"); exists {
-			if smartphoneMgr, ok := mgr.(*nfc.SmartphoneManager); ok {
-				smartphoneMgr.Close()
-			}
-		}
+	if a.SmartphoneManager != nil {
+		a.SmartphoneManager.Close()
 	}
 
 	a.Logger.Println("Agent stopped successfully")
 }
 
-func (a *Agent) SetAllowCardType(cardType CardTypeFilterName, allow bool) {
+func (a *Agent) SetAllowCardType(cardType string, allow bool) {
 	if allow {
 		a.AllowCardType(cardType)
 	} else {
@@ -147,96 +117,23 @@ func (a *Agent) SetAllowCardType(cardType CardTypeFilterName, allow bool) {
 }
 
 func (a *Agent) AllowAllCardTypes() {
-	a.AllowedCardTypes.MifareClassic1K = true
-	a.AllowedCardTypes.MifareClassic4K = true
-	a.AllowedCardTypes.MifareUltralight = true
-	a.AllowedCardTypes.Desfire = true
-	a.AllowedCardTypes.Type4 = true
+	for _, cardType := range nfc.GetAllCardTypes() {
+		a.AllowedCardTypes[cardType] = true
+	}
 }
 
 func (a *Agent) AllowedCardTypesLength() int {
-	count := 0
-	if a.AllowedCardTypes.MifareClassic1K {
-		count++
-	}
-	if a.AllowedCardTypes.MifareClassic4K {
-		count++
-	}
-	if a.AllowedCardTypes.MifareUltralight {
-		count++
-	}
-	if a.AllowedCardTypes.Desfire {
-		count++
-	}
-	if a.AllowedCardTypes.Type4 {
-		count++
-	}
-	return count
+	return len(a.AllowedCardTypes)
 }
 
-func (a *Agent) AllowCardType(cardType CardTypeFilterName) {
-	switch cardType {
-	case CardTypeMifareClassic1K:
-		a.AllowedCardTypes.MifareClassic1K = true
-	case CardTypeMifareClassic4K:
-		a.AllowedCardTypes.MifareClassic4K = true
-	case CardTypeMifareUltralight:
-		a.AllowedCardTypes.MifareUltralight = true
-	case CardTypeDesfire:
-		a.AllowedCardTypes.Desfire = true
-	case CardTypeType4:
-		a.AllowedCardTypes.Type4 = true
-	}
+func (a *Agent) AllowCardType(cardType string) {
+	a.AllowedCardTypes[cardType] = true
 }
 
-func (a *Agent) DisallowCardType(cardType CardTypeFilterName) {
-	switch cardType {
-	case CardTypeMifareClassic1K:
-		a.AllowedCardTypes.MifareClassic1K = false
-	case CardTypeMifareClassic4K:
-		a.AllowedCardTypes.MifareClassic4K = false
-	case CardTypeMifareUltralight:
-		a.AllowedCardTypes.MifareUltralight = false
-	case CardTypeDesfire:
-		a.AllowedCardTypes.Desfire = false
-	case CardTypeType4:
-		a.AllowedCardTypes.Type4 = false
-	}
+func (a *Agent) DisallowCardType(cardType string) {
+	delete(a.AllowedCardTypes, cardType)
 }
 
-func (a *Agent) IsCardTypeAllowed(cardType CardTypeFilterName) bool {
-	switch cardType {
-	case CardTypeMifareClassic1K:
-		return a.AllowedCardTypes.MifareClassic1K
-	case CardTypeMifareClassic4K:
-		return a.AllowedCardTypes.MifareClassic4K
-	case CardTypeMifareUltralight:
-		return a.AllowedCardTypes.MifareUltralight
-	case CardTypeDesfire:
-		return a.AllowedCardTypes.Desfire
-	case CardTypeType4:
-		return a.AllowedCardTypes.Type4
-	default:
-		return false
-	}
-}
-
-func (a *Agent) allowedCardToMap() map[string]bool {
-	allowed := make(map[string]bool)
-	if a.AllowedCardTypes.MifareClassic1K {
-		allowed[string(CardTypeMifareClassic1K)] = true
-	}
-	if a.AllowedCardTypes.MifareClassic4K {
-		allowed[string(CardTypeMifareClassic4K)] = true
-	}
-	if a.AllowedCardTypes.MifareUltralight {
-		allowed[string(CardTypeMifareUltralight)] = true
-	}
-	if a.AllowedCardTypes.Desfire {
-		allowed[string(CardTypeDesfire)] = true
-	}
-	if a.AllowedCardTypes.Type4 {
-		allowed[string(CardTypeType4)] = true
-	}
-	return allowed
+func (a *Agent) IsCardTypeAllowed(cardType string) bool {
+	return a.AllowedCardTypes[cardType]
 }

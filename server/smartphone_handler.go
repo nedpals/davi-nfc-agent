@@ -77,9 +77,9 @@ func (h *SmartphoneDeviceHandler) HandleWebSocket(w http.ResponseWriter, r *http
 		return
 	}
 
-	if wsRequest.Type != "registerDevice" {
-		log.Printf("[smartphone] Expected 'registerDevice', got '%s'", wsRequest.Type)
-		h.sendError(conn, wsRequest.ID, "INVALID_MESSAGE_TYPE", "Expected 'registerDevice' message")
+	if wsRequest.Type != WSMessageTypeRegisterDevice {
+		log.Printf("[smartphone] Expected '%s', got '%s'", WSMessageTypeRegisterDevice, wsRequest.Type)
+		h.sendError(conn, wsRequest.ID, "INVALID_MESSAGE_TYPE", fmt.Sprintf("Expected '%s' message", WSMessageTypeRegisterDevice))
 		return
 	}
 
@@ -107,11 +107,11 @@ func (h *SmartphoneDeviceHandler) HandleWebSocket(w http.ResponseWriter, r *http
 
 			// Handle request based on type
 			switch wsRequest.Type {
-			case "tagScanned":
+			case WSMessageTypeTagScanned:
 				h.handleTagScanned(conn, wsRequest)
-			case "deviceHeartbeat":
+			case WSMessageTypeDeviceHeartbeat:
 				h.handleDeviceHeartbeat(conn, wsRequest)
-			case "writeResponse":
+			case WSMessageTypeWriteResponse:
 				// Future feature
 				log.Printf("[smartphone] Write response received (not yet implemented)")
 			default:
@@ -162,7 +162,7 @@ func (h *SmartphoneDeviceHandler) handleRegisterDevice(conn *websocket.Conn, req
 	// Send registration response
 	response := WebsocketResponse{
 		ID:      req.ID,
-		Type:    "registerDeviceResponse",
+		Type:    WSMessageTypeRegisterDeviceResponse,
 		Success: true,
 		Payload: nfc.DeviceRegistrationResponse{
 			DeviceID:     deviceID,
@@ -303,7 +303,7 @@ func (h *SmartphoneDeviceHandler) SendToDevice(deviceID string, message interfac
 func (h *SmartphoneDeviceHandler) sendError(conn *websocket.Conn, requestID string, errorCode string, message string) {
 	response := WebsocketResponse{
 		ID:      requestID,
-		Type:    "error",
+		Type:    WSMessageTypeError,
 		Success: false,
 		Error:   message,
 		Payload: map[string]interface{}{

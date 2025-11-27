@@ -36,12 +36,12 @@ func main() {
 
 	// Create multi-manager combining hardware and smartphone
 	manager := nfc.NewMultiManager(
-		nfc.ManagerEntry{Name: "hardware", Manager: nfc.NewManager()},
-		nfc.ManagerEntry{Name: "smartphone", Manager: smartphoneManager},
+		nfc.ManagerEntry{Name: nfc.ManagerTypeHardware, Manager: nfc.NewManager()},
+		nfc.ManagerEntry{Name: nfc.ManagerTypeSmartphone, Manager: smartphoneManager},
 	)
 
-	// Create agent
-	agent := NewAgent(manager)
+	// Create agent with explicit smartphone manager for dependency injection
+	agent := NewAgent(manager, smartphoneManager)
 	agent.ServerPort = portFlag
 	agent.APISecret = apiSecretFlag
 

@@ -17,7 +17,7 @@ func TestBuildNDEFMessage(t *testing.T) {
 		{
 			name: "Single text record",
 			request: WriteRequest{
-				Records: []NDEFRecord{
+				Records: []WriteRecord{
 					{Type: "text", Content: "Hello, NFC!"},
 				},
 			},
@@ -36,7 +36,7 @@ func TestBuildNDEFMessage(t *testing.T) {
 		{
 			name: "Multiple records",
 			request: WriteRequest{
-				Records: []NDEFRecord{
+				Records: []WriteRecord{
 					{Type: "text", Content: "First"},
 					{Type: "text", Content: "Second"},
 				},
@@ -52,7 +52,7 @@ func TestBuildNDEFMessage(t *testing.T) {
 		{
 			name: "URI record",
 			request: WriteRequest{
-				Records: []NDEFRecord{
+				Records: []WriteRecord{
 					{Type: "uri", Content: "https://example.com"},
 				},
 			},
@@ -71,7 +71,7 @@ func TestBuildNDEFMessage(t *testing.T) {
 		{
 			name: "Mixed record types",
 			request: WriteRequest{
-				Records: []NDEFRecord{
+				Records: []WriteRecord{
 					{Type: "text", Content: "Hello"},
 					{Type: "uri", Content: "https://example.com"},
 				},
@@ -87,7 +87,7 @@ func TestBuildNDEFMessage(t *testing.T) {
 		{
 			name: "Unsupported record type",
 			request: WriteRequest{
-				Records: []NDEFRecord{
+				Records: []WriteRecord{
 					{Type: "unknown", Content: "test"},
 				},
 			},
@@ -96,7 +96,7 @@ func TestBuildNDEFMessage(t *testing.T) {
 		{
 			name: "Empty records array",
 			request: WriteRequest{
-				Records: []NDEFRecord{},
+				Records: []WriteRecord{},
 			},
 			expectError: true,
 		},

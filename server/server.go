@@ -42,17 +42,6 @@ type WebsocketResponse struct {
 	Error   string `json:"error,omitempty"` // Error message if failed
 }
 
-// NDEFRecordPayload represents an NDEF record in the broadcast payload.
-// This structure is used when reading and broadcasting tag data to WebSocket clients.
-// Field names are consistent with NDEFRecord for easier client-side handling.
-type NDEFRecordPayload struct {
-	Type     string `json:"type"`              // Record type: "text", "uri", etc. (human-readable)
-	Content  string `json:"content,omitempty"` // Decoded content (text or URI)
-	Language string `json:"language,omitempty"`// Language code for text records
-	TNF      uint8  `json:"tnf"`               // Type Name Format (technical detail)
-	ID       string `json:"id,omitempty"`      // Record ID (optional)
-	Payload  []byte `json:"payload"`           // Raw payload data
-}
 
 // Config holds the server configuration
 type Config struct {
@@ -128,7 +117,7 @@ func (s *Server) broadcast(message *WebsocketMessage) {
 // BroadcastDeviceStatus sends the device status to all connected WebSocket clients
 func (s *Server) BroadcastDeviceStatus(status nfc.DeviceStatus) {
 	s.broadcast(&WebsocketMessage{
-		Type:    "deviceStatus",
+		Type:    WSMessageTypeDeviceStatus,
 		Payload: status,
 	})
 }
@@ -162,42 +151,9 @@ func (s *Server) BroadcastTagData(data nfc.NFCData) {
 			var messageInfo map[string]interface{}
 
 			if ndefMsg, ok := msg.(*nfc.NDEFMessage); ok {
-				// NDEF message - extract text and build records array
+				// NDEF message - use ToJSONMap for structured conversion
 				text, _ = ndefMsg.GetText()
-
-				records := make([]NDEFRecordPayload, 0, len(ndefMsg.Records()))
-				for _, record := range ndefMsg.Records() {
-					recordInfo := NDEFRecordPayload{
-						TNF:     record.TNF,
-						Payload: record.Payload,
-					}
-
-					// Add ID if present
-					if len(record.ID) > 0 {
-						recordInfo.ID = string(record.ID)
-					}
-
-					// Extract type-specific data and set Type + Content fields
-					if recordText, ok := record.GetText(); ok {
-						recordInfo.Type = "text"
-						recordInfo.Content = recordText
-						// TODO: Extract language from record if available
-						recordInfo.Language = "en" // Default for now
-					} else if recordURI, ok := record.GetURI(); ok {
-						recordInfo.Type = "uri"
-						recordInfo.Content = recordURI
-					} else {
-						// Unknown type - use raw type field
-						recordInfo.Type = string(record.Type)
-					}
-
-					records = append(records, recordInfo)
-				}
-
-				messageInfo = map[string]interface{}{
-					"type":    "ndef",
-					"records": records,
-				}
+				messageInfo = ndefMsg.ToJSONMap()
 			} else if textMsg, ok := msg.(*nfc.TextMessage); ok {
 				// Raw text message
 				text = textMsg.Text
@@ -223,7 +179,7 @@ func (s *Server) BroadcastTagData(data nfc.NFCData) {
 	}
 
 	s.broadcast(&WebsocketMessage{
-		Type:    "tagData",
+		Type:    WSMessageTypeTagData,
 		Payload: payload,
 	})
 }
@@ -232,9 +188,9 @@ func (s *Server) BroadcastTagData(data nfc.NFCData) {
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Origin", CORSAllowOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", CORSAllowMethods)
+		w.Header().Set("Access-Control-Allow-Headers", CORSAllowHeaders)
 
 		// Handle preflight OPTIONS requests
 		if r.Method == "OPTIONS" {
@@ -397,9 +353,9 @@ func (s *Server) Stop() {
 func (s *Server) startMDNS() error {
 	// Service type: _nfc-agent._tcp
 	// This allows mobile apps to discover NFC agents on the local network
-	serviceName := "DAVI NFC Agent"
-	serviceType := "_nfc-agent._tcp"
-	domain := "local."
+	serviceName := MDNSServiceName
+	serviceType := MDNSServiceType
+	domain := MDNSDomain
 	port := s.config.Port
 
 	// Additional text records for service info
@@ -496,7 +452,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Send initial device status
 	status := reader.GetDeviceStatus()
 	conn.WriteJSON(map[string]interface{}{
-		"type":    "deviceStatus",
+		"type":    WSMessageTypeDeviceStatus,
 		"payload": status,
 	})
 
@@ -504,7 +460,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	uid := reader.GetLastScannedData()
 	if uid != "" {
 		conn.WriteJSON(map[string]interface{}{
-			"type": "tagData",
+			"type": WSMessageTypeTagData,
 			"payload": map[string]interface{}{
 				"uid":  uid,
 				"text": "", // Text not cached, will be sent on next scan
@@ -533,7 +489,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 			// Handle request based on type
 			switch wsRequest.Type {
-			case "writeRequest":
+			case WSMessageTypeWriteRequest:
 				s.handleWriteRequest(conn, reader, wsRequest)
 			default:
 				log.Printf("Unknown message type: %s", wsRequest.Type)
@@ -571,7 +527,7 @@ func (s *Server) handleWriteRequest(conn *websocket.Conn, reader *nfc.NFCReader,
 	// Send success response
 	response := WebsocketResponse{
 		ID:      wsRequest.ID,
-		Type:    "writeResponse",
+		Type:    WSMessageTypeWriteResponse,
 		Success: true,
 		Payload: map[string]interface{}{
 			"message": "Write operation completed successfully",
@@ -587,7 +543,7 @@ func (s *Server) handleWriteRequest(conn *websocket.Conn, reader *nfc.NFCReader,
 func (s *Server) sendErrorResponse(conn *websocket.Conn, requestID string, errorCode string, message string) {
 	response := WebsocketResponse{
 		ID:      requestID,
-		Type:    "error",
+		Type:    WSMessageTypeError,
 		Success: false,
 		Error:   message,
 		Payload: map[string]interface{}{
