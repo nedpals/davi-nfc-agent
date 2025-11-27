@@ -72,6 +72,13 @@ type DeviceHeartbeat struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// TagRemovedData is sent by mobile app when a tag leaves the NFC field.
+type TagRemovedData struct {
+	DeviceID  string    `json:"deviceID"`
+	UID       string    `json:"uid"`       // UID of the removed tag
+	RemovedAt time.Time `json:"removedAt"` // Timestamp of removal
+}
+
 // DeviceWriteRequest is sent by server to mobile app (future feature).
 type DeviceWriteRequest struct {
 	RequestID   string           `json:"requestID"`   // Unique request ID for correlation

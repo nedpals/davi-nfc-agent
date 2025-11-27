@@ -161,7 +161,29 @@ All messages are JSON with the following structure:
 - `ndefMessage` - Optional NDEF message data
 - `rawData` - Optional raw bytes from tag
 
-### 3. Heartbeat (Mobile → Server)
+### 3. Send Tag Removed (Mobile → Server)
+
+**Type:** `tagRemoved`
+
+Send this message when the NFC tag leaves the device's field.
+
+**Payload:**
+```json
+{
+  "deviceID": "abc-123-def-456",
+  "uid": "04:AB:CD:EF:12:34:56",
+  "removedAt": "2025-11-27T10:30:05Z"
+}
+```
+
+**Fields:**
+- `deviceID` - Device identifier from registration
+- `uid` - Tag UID that was removed (hex, colon-separated)
+- `removedAt` - ISO 8601 timestamp of removal
+
+**No response required**
+
+### 4. Heartbeat (Mobile → Server)
 
 Send every 10 seconds to keep the device session alive.
 

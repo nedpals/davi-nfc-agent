@@ -142,6 +142,8 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			switch wsRequest.Type {
 			case MessageTypeTagScanned:
 				handlerErr = h.handleTagScanned(ctx, conn, wsRequest)
+			case MessageTypeTagRemoved:
+				handlerErr = h.handleTagRemoved(ctx, conn, wsRequest)
 			case MessageTypeDeviceHeartbeat:
 				handlerErr = h.handleDeviceHeartbeat(ctx, conn, wsRequest)
 			case MessageTypeWriteResponse:
@@ -254,6 +256,39 @@ func (h *Handler) handleTagScanned(ctx context.Context, conn *websocket.Conn, re
 	}
 
 	log.Printf("[smartphone] Tag scanned: device=%s, UID=%s, Type=%s", tagData.DeviceID, tagData.UID, tagData.Type)
+	return nil
+}
+
+// handleTagRemoved processes a tag removal event from a mobile device.
+func (h *Handler) handleTagRemoved(ctx context.Context, conn *websocket.Conn, req server.WebsocketRequest) error {
+	payloadBytes, err := json.Marshal(req.Payload)
+	if err != nil {
+		log.Printf("[smartphone] Failed to marshal tag removed data: %v", err)
+		h.sendError(conn, req.ID, "INVALID_PAYLOAD", "Failed to process payload")
+		return err
+	}
+
+	var removedData TagRemovedData
+	if err := json.Unmarshal(payloadBytes, &removedData); err != nil {
+		log.Printf("[smartphone] Failed to parse tag removed data: %v", err)
+		h.sendError(conn, req.ID, "INVALID_PAYLOAD", "Invalid tag removed data format")
+		return err
+	}
+
+	// Validate deviceID
+	if err := h.validateDevice(removedData.DeviceID); err != nil {
+		log.Printf("[smartphone] Device validation failed: %v", err)
+		h.sendError(conn, req.ID, "INVALID_DEVICE", err.Error())
+		return err
+	}
+
+	// Send tag removed event to smartphone manager
+	if err := h.manager.SendTagRemoved(removedData.DeviceID, removedData); err != nil {
+		log.Printf("[smartphone] Failed to send tag removed: %v", err)
+		h.sendError(conn, req.ID, "TAG_SEND_FAILED", err.Error())
+		return err
+	}
+
 	return nil
 }
 

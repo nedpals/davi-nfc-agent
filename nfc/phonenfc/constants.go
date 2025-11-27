@@ -16,6 +16,7 @@ const (
 	MessageTypeRegisterDevice         = "registerDevice"
 	MessageTypeRegisterDeviceResponse = "registerDeviceResponse"
 	MessageTypeTagScanned             = "tagScanned"
+	MessageTypeTagRemoved             = "tagRemoved"
 	MessageTypeDeviceHeartbeat        = "deviceHeartbeat"
 	MessageTypeWriteResponse          = "writeResponse"
 	MessageTypeError                  = "error"

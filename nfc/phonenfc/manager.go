@@ -175,6 +175,30 @@ func (m *Manager) Data() <-chan nfc.NFCData {
 	return m.dataChan
 }
 
+// SendTagRemoved broadcasts a tag removal event via the data channel.
+func (m *Manager) SendTagRemoved(deviceID string, data TagRemovedData) error {
+	m.mu.RLock()
+	device, exists := m.devices[deviceID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("device not found: %s", deviceID)
+	}
+
+	// Broadcast removal via data channel (Card: nil signals removal)
+	select {
+	case m.dataChan <- nfc.NFCData{Card: nil, Err: nil}:
+		log.Printf("[smartphone] Tag removed: device=%s, UID=%s", deviceID, data.UID)
+	default:
+		log.Printf("[smartphone] Data channel full, dropping tag removal for device %s", deviceID)
+	}
+
+	// Update heartbeat
+	device.UpdateLastSeen()
+
+	return nil
+}
+
 // UpdateHeartbeat updates device last-seen timestamp.
 func (m *Manager) UpdateHeartbeat(deviceID string) error {
 	m.mu.RLock()
