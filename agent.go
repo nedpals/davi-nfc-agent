@@ -28,6 +28,27 @@ var (
 	CardTypeType4            CardTypeFilterName = "Type4"
 )
 
+// GetAllCardTypeFilterNames returns all card type filter names
+func GetAllCardTypeFilterNames() []CardTypeFilterName {
+	return []CardTypeFilterName{
+		CardTypeMifareClassic1K,
+		CardTypeMifareClassic4K,
+		CardTypeMifareUltralight,
+		CardTypeDesfire,
+		CardTypeType4,
+	}
+}
+
+// GetCardTypeFilterDisplayName returns a user-friendly display name for a card type
+func GetCardTypeFilterDisplayName(cardType CardTypeFilterName) string {
+	return string(cardType)
+}
+
+// GetCardTypeFilterTooltip returns a tooltip for a card type filter
+func GetCardTypeFilterTooltip(cardType CardTypeFilterName) string {
+	return "Allow " + string(cardType) + " only"
+}
+
 type Agent struct {
 	Logger           *log.Logger
 	Manager          nfc.Manager // NFC device manager (supports hardware and smartphone)
