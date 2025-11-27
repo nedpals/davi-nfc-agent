@@ -108,6 +108,24 @@ func (d *libnfcDevice) GetTags() ([]Tag, error) {
 				continue
 			}
 
+			// Check for NTAG21x (ATQA: 0x0044, SAK: 0x00, 7-byte UID)
+			// NTAG213/215/216 all share these characteristics
+			atqa := uint16(isoATarget.Atqa[0]) | uint16(isoATarget.Atqa[1])<<8
+			if atqa == 0x0044 && isoATarget.Sak == 0x00 && isoATarget.UIDLen == 7 {
+				log.Printf("Found NTAG21x tag: UID %s, ATQA %04X, SAK %02X", currentUID, atqa, isoATarget.Sak)
+				// Create tag via freefare.NewTag and wrap as NtagTag
+				ffTag, tagErr := freefare.NewTag(d.device, isoATarget)
+				if tagErr == nil {
+					if ultralightTag, ok := ffTag.(freefare.UltralightTag); ok {
+						allFoundTags = append(allFoundTags, NewNtagTag(ultralightTag))
+						processedUIDs[currentUID] = true
+						continue
+					}
+				} else {
+					log.Printf("Error creating NTAG tag: %v", tagErr)
+				}
+			}
+
 			// Check SAK for ISO14443-4 compliance (Type 4A: bit 5 = 0x20)
 			if (isoATarget.Sak & 0x20) != 0 {
 				log.Printf("Found ISO14443-4A tag: UID %s, SAK %02X", currentUID, isoATarget.Sak)

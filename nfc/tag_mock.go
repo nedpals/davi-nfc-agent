@@ -444,3 +444,129 @@ func NewMockISO14443Tag(uid string) *MockISO14443Tag {
 		MockTag: NewMockTag(uid),
 	}
 }
+
+// MockNtagTag is a test implementation of NtagTag for NTAG21x tags.
+//
+// MockNtagTag simulates page-based memory operations for NTAG213/215/216 tags.
+//
+// Example:
+//
+//	tag := NewMockNtagTag("04112233445566")
+//	tag.Connect()
+//	tag.WritePage(4, [4]byte{0x03, 0x04, 0xD1, 0x01})
+//	data, _ := tag.ReadPage(4)
+type MockNtagTag struct {
+	*MockTag
+
+	// PageData stores data for each page (0-134 for NTAG215)
+	PageData map[byte][4]byte
+
+	// ReadPageError, if set, will be returned by ReadPage()
+	ReadPageError error
+
+	// WritePageError, if set, will be returned by WritePage()
+	WritePageError error
+
+	// MaxPages defines the maximum page number (default 135 for NTAG215)
+	MaxPages byte
+
+	mu sync.Mutex
+}
+
+// NewMockNtagTag creates a new MockNtagTag with NTAG215 defaults.
+func NewMockNtagTag(uid string) *MockNtagTag {
+	tag := NewMockTag(uid)
+	tag.TagType = CardTypeNtag215
+	tag.TagNumericType = 100 // NTAG215 numeric type
+
+	return &MockNtagTag{
+		MockTag:  tag,
+		PageData: make(map[byte][4]byte),
+		MaxPages: 135, // NTAG215 has 135 pages
+	}
+}
+
+// ReadPage simulates reading a 4-byte page from the NTAG tag.
+func (m *MockNtagTag) ReadPage(page byte) ([4]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallLog = append(m.CallLog, fmt.Sprintf("ReadPage(%d)", page))
+
+	if !m.IsConnected {
+		return [4]byte{}, fmt.Errorf("tag not connected")
+	}
+
+	if page >= m.MaxPages {
+		return [4]byte{}, fmt.Errorf("page %d out of range (max %d)", page, m.MaxPages-1)
+	}
+
+	if m.ReadPageError != nil {
+		return [4]byte{}, m.ReadPageError
+	}
+
+	data, exists := m.PageData[page]
+	if !exists {
+		// Return empty page if not set
+		return [4]byte{}, nil
+	}
+
+	return data, nil
+}
+
+// WritePage simulates writing a 4-byte page to the NTAG tag.
+func (m *MockNtagTag) WritePage(page byte, data [4]byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallLog = append(m.CallLog, fmt.Sprintf("WritePage(%d)", page))
+
+	if !m.IsConnected {
+		return fmt.Errorf("tag not connected")
+	}
+
+	if m.IsReadOnly {
+		return fmt.Errorf("tag is read-only")
+	}
+
+	if page >= m.MaxPages {
+		return fmt.Errorf("page %d out of range (max %d)", page, m.MaxPages-1)
+	}
+
+	// Pages 0-3 are typically read-only (UID, lock bytes, CC)
+	if page < 4 {
+		return fmt.Errorf("page %d is read-only (header area)", page)
+	}
+
+	if m.WritePageError != nil {
+		return m.WritePageError
+	}
+
+	m.PageData[page] = data
+	return nil
+}
+
+// SetPageData sets the data for a specific page (bypasses write protection for testing).
+func (m *MockNtagTag) SetPageData(page byte, data [4]byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.PageData[page] = data
+}
+
+// GetPageData retrieves the data for a specific page.
+func (m *MockNtagTag) GetPageData(page byte) ([4]byte, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	data, exists := m.PageData[page]
+	return data, exists
+}
+
+// ClearPageData clears all page data.
+func (m *MockNtagTag) ClearPageData() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.PageData = make(map[byte][4]byte)
+}

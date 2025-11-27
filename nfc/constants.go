@@ -11,6 +11,7 @@ const (
 	CardTypeMifareClassic1K  = "MIFARE Classic 1K"
 	CardTypeMifareClassic4K  = "MIFARE Classic 4K"
 	CardTypeMifareUltralight = "MIFARE Ultralight"
+	CardTypeNtag215          = "NTAG215"
 	CardTypeDesfire          = "DESFire"
 	CardTypeType4            = "Type4"
 )
@@ -21,6 +22,7 @@ func GetAllCardTypes() []string {
 		CardTypeMifareClassic1K,
 		CardTypeMifareClassic4K,
 		CardTypeMifareUltralight,
+		CardTypeNtag215,
 		CardTypeDesfire,
 		CardTypeType4,
 	}
