@@ -52,6 +52,29 @@ func (u *UltralightTag) GetFreefareTag() freefare.Tag {
 	return u.tag
 }
 
+// Capabilities returns the capabilities of this Ultralight tag.
+func (u *UltralightTag) Capabilities() TagCapabilities {
+	caps := TagCapabilities{
+		CanRead:       true,
+		CanWrite:      true,
+		CanTransceive: false,
+		CanLock:       true,
+		TagFamily:     "MIFARE Ultralight",
+		Technology:    "ISO14443A",
+		SupportsNDEF:  true,
+	}
+	switch u.tag.Type() {
+	case freefare.UltralightC:
+		caps.MemorySize = 192
+		caps.MaxNDEFSize = 137
+		caps.SupportsCrypto = true
+	default:
+		caps.MemorySize = 64
+		caps.MaxNDEFSize = 46
+	}
+	return caps
+}
+
 func (u *UltralightTag) Connect() error {
 	return u.tag.Connect()
 }
@@ -61,7 +84,7 @@ func (u *UltralightTag) Disconnect() error {
 }
 
 func (u *UltralightTag) Transceive(data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("Transceive not directly supported for ultralightAdapter; use ReadPage/WritePage")
+	return nil, NewNotSupportedError("Transceive")
 }
 
 // ReadPage reads a 4-byte page from the Ultralight tag.

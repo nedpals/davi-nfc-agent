@@ -57,6 +57,21 @@ func (n *NtagTag) GetFreefareTag() freefare.Tag {
 	return n.tag
 }
 
+// Capabilities returns the capabilities of this NTAG tag.
+func (n *NtagTag) Capabilities() TagCapabilities {
+	return TagCapabilities{
+		CanRead:       true,
+		CanWrite:      true,
+		CanTransceive: false,
+		CanLock:       true,
+		TagFamily:     "NTAG",
+		Technology:    "ISO14443A",
+		MemorySize:    540, // NTAG215
+		MaxNDEFSize:   504,
+		SupportsNDEF:  true,
+	}
+}
+
 func (n *NtagTag) Connect() error {
 	return n.tag.Connect()
 }
@@ -66,7 +81,7 @@ func (n *NtagTag) Disconnect() error {
 }
 
 func (n *NtagTag) Transceive(data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("Transceive not directly supported for NtagTag; use ReadPage/WritePage")
+	return nil, NewNotSupportedError("Transceive")
 }
 
 // ReadPage reads a 4-byte page from the NTAG tag.

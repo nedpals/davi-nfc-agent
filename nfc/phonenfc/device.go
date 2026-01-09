@@ -85,9 +85,23 @@ func (d *Device) Connection() string {
 	return d.connection
 }
 
+// Capabilities returns the capabilities of this smartphone device.
+func (d *Device) Capabilities() nfc.DeviceCapabilities {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	return nfc.DeviceCapabilities{
+		CanTransceive:     false, // Smartphones don't support raw transceive
+		CanPoll:           false, // Tags come via WebSocket, not polling
+		DeviceType:        "smartphone",
+		SupportedTagTypes: []string{d.capabilities.NFCType},
+		SupportsEvents:    true, // Tags arrive as events via WebSocket
+	}
+}
+
 // Transceive is not directly applicable for smartphones.
 func (d *Device) Transceive(txData []byte) ([]byte, error) {
-	return nil, fmt.Errorf("transceive not supported on smartphone devices")
+	return nil, nfc.NewNotSupportedError("Transceive")
 }
 
 // GetTags returns tags from the tag channel with timeout.
@@ -171,8 +185,8 @@ func (d *Device) AppVersion() string {
 	return d.appVersion
 }
 
-// Capabilities returns the device capabilities.
-func (d *Device) Capabilities() DeviceCapabilities {
+// PhoneCapabilities returns the smartphone-specific device capabilities.
+func (d *Device) PhoneCapabilities() DeviceCapabilities {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.capabilities

@@ -85,6 +85,10 @@ type MockTag struct {
 	// CallLog tracks all method calls for verification in tests
 	CallLog []string
 
+	// MockCapabilities allows overriding the default capabilities
+	// If nil, capabilities are inferred from TagType
+	MockCapabilities *TagCapabilities
+
 	mu sync.Mutex
 }
 
@@ -126,6 +130,19 @@ func (m *MockTag) NumericType() int {
 
 	m.CallLog = append(m.CallLog, "NumericType")
 	return m.TagNumericType
+}
+
+// Capabilities returns the tag's capabilities.
+// If MockCapabilities is set, returns that; otherwise infers from TagType.
+func (m *MockTag) Capabilities() TagCapabilities {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallLog = append(m.CallLog, "Capabilities")
+	if m.MockCapabilities != nil {
+		return *m.MockCapabilities
+	}
+	return InferTagCapabilities(m.TagType)
 }
 
 // ReadData simulates reading data from the tag.

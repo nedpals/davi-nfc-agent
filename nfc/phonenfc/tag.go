@@ -37,6 +37,20 @@ func (t *Tag) NumericType() int {
 	return 0
 }
 
+// Capabilities returns the capabilities of this smartphone tag.
+// Smartphone tags are read-only as writes must go through the WebSocket protocol.
+func (t *Tag) Capabilities() nfc.TagCapabilities {
+	return nfc.TagCapabilities{
+		CanRead:       true,
+		CanWrite:      false, // Writes require WebSocket protocol
+		CanTransceive: false,
+		CanLock:       false,
+		TagFamily:     t.tagType,
+		Technology:    t.technology,
+		SupportsNDEF:  t.ndefMsg != nil || t.ndefData != nil,
+	}
+}
+
 // ReadData returns the tag data (NDEF or raw).
 func (t *Tag) ReadData() ([]byte, error) {
 	t.mu.RLock()
@@ -52,12 +66,12 @@ func (t *Tag) ReadData() ([]byte, error) {
 // WriteData is not supported for smartphone tags.
 // Write requests must go through server -> device WebSocket.
 func (t *Tag) WriteData(data []byte) error {
-	return fmt.Errorf("write operations not supported on smartphone tags directly")
+	return nfc.NewNotSupportedError("WriteData")
 }
 
 // Transceive is not supported for smartphone tags.
 func (t *Tag) Transceive(data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("transceive not supported on smartphone tags")
+	return nil, nfc.NewNotSupportedError("Transceive")
 }
 
 // Connect is a no-op for smartphone tags (already "connected" via WebSocket).
@@ -82,7 +96,7 @@ func (t *Tag) CanMakeReadOnly() (bool, error) {
 
 // MakeReadOnly is not supported for smartphone tags.
 func (t *Tag) MakeReadOnly() error {
-	return fmt.Errorf("make read-only not supported on smartphone tags")
+	return nfc.NewNotSupportedError("MakeReadOnly")
 }
 
 // GetNDEFMessage returns the parsed NDEF message if available.

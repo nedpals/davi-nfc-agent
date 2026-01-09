@@ -44,9 +44,9 @@ func TestDeviceCreation(t *testing.T) {
 		t.Error("Device should be active after creation")
 	}
 
-	caps := device.Capabilities()
+	caps := device.PhoneCapabilities()
 	if !caps.CanRead || caps.CanWrite {
-		t.Errorf("Capabilities not set correctly: %+v", caps)
+		t.Errorf("PhoneCapabilities not set correctly: %+v", caps)
 	}
 }
 

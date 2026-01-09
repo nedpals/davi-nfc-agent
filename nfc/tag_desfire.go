@@ -47,6 +47,22 @@ func (d *DESFireTag) GetFreefareTag() freefare.Tag {
 	return d.tag
 }
 
+// Capabilities returns the capabilities of this DESFire tag.
+func (d *DESFireTag) Capabilities() TagCapabilities {
+	return TagCapabilities{
+		CanRead:                true,
+		CanWrite:               true,
+		CanTransceive:          false,
+		CanLock:                false, // Not implemented
+		TagFamily:              "DESFire",
+		Technology:             "ISO14443A",
+		MemorySize:             8192, // Varies by model
+		SupportsNDEF:           true,
+		SupportsCrypto:         true,
+		SupportsAuthentication: true,
+	}
+}
+
 func (d *DESFireTag) Connect() error {
 	return d.tag.Connect()
 }
@@ -56,7 +72,7 @@ func (d *DESFireTag) Disconnect() error {
 }
 
 func (d *DESFireTag) Transceive(data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("Transceive not directly supported for DESFireTag; use DESFire-specific commands")
+	return nil, NewNotSupportedError("Transceive")
 }
 
 // Version returns the DESFire version information as a byte slice.
@@ -347,5 +363,5 @@ func (d *DESFireTag) CanMakeReadOnly() (bool, error) {
 func (d *DESFireTag) MakeReadOnly() error {
 	// DESFire read-only functionality would require changing application-level
 	// access rights, which is complex and card-specific. Not implemented yet.
-	return fmt.Errorf("MakeReadOnly not yet implemented for DESFire tags")
+	return NewNotSupportedError("MakeReadOnly")
 }

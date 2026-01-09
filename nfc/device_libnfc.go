@@ -36,6 +36,17 @@ func (d *libnfcDevice) Connection() string {
 	return d.device.Connection()
 }
 
+// Capabilities returns the capabilities of this libnfc device.
+func (d *libnfcDevice) Capabilities() DeviceCapabilities {
+	return DeviceCapabilities{
+		CanTransceive:     true,
+		CanPoll:           true,
+		DeviceType:        "libnfc",
+		SupportedTagTypes: []string{"MIFARE Classic", "DESFire", "Ultralight", "NTAG", "ISO14443-4"},
+		SupportsEvents:    false,
+	}
+}
+
 // Transceive implements the Device Transceive method for raw data exchange.
 func (d *libnfcDevice) Transceive(txData []byte) ([]byte, error) {
 	var rxData [262]byte // Max buffer size for NFC

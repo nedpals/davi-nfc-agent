@@ -111,6 +111,19 @@ func (i *ISO14443Tag) NumericType() int {
 	return i.numericType
 }
 
+// Capabilities returns the capabilities of this ISO14443 Type 4 tag.
+func (i *ISO14443Tag) Capabilities() TagCapabilities {
+	return TagCapabilities{
+		CanRead:       true,
+		CanWrite:      true,
+		CanTransceive: true,
+		CanLock:       true,
+		TagFamily:     "Type 4",
+		Technology:    "ISO14443A",
+		SupportsNDEF:  true,
+	}
+}
+
 // Connect establishes a connection to the tag.
 // For Type 4 tags, this might involve selecting the NDEF application.
 // For now, it's a placeholder.

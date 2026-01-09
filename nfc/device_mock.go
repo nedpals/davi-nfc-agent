@@ -56,6 +56,10 @@ type MockDevice struct {
 	// CallLog tracks all method calls for verification in tests
 	CallLog []string
 
+	// MockCapabilities allows overriding the default capabilities
+	// If nil, returns default mock device capabilities
+	MockCapabilities *DeviceCapabilities
+
 	mu sync.Mutex
 }
 
@@ -114,6 +118,25 @@ func (m *MockDevice) Connection() string {
 
 	m.CallLog = append(m.CallLog, "Connection")
 	return m.DeviceConnection
+}
+
+// Capabilities returns the device capabilities.
+// If MockCapabilities is set, returns that; otherwise returns default mock capabilities.
+func (m *MockDevice) Capabilities() DeviceCapabilities {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallLog = append(m.CallLog, "Capabilities")
+	if m.MockCapabilities != nil {
+		return *m.MockCapabilities
+	}
+	return DeviceCapabilities{
+		CanTransceive:     true,
+		CanPoll:           true,
+		DeviceType:        "mock",
+		SupportedTagTypes: []string{"MIFARE Classic", "NTAG", "Type 4"},
+		SupportsEvents:    false,
+	}
 }
 
 // Transceive simulates data transmission with the device.

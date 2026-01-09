@@ -54,6 +54,30 @@ func (c *ClassicTag) GetFreefareTag() freefare.Tag {
 	return c.tag
 }
 
+// Capabilities returns the capabilities of this MIFARE Classic tag.
+func (c *ClassicTag) Capabilities() TagCapabilities {
+	caps := TagCapabilities{
+		CanRead:                true,
+		CanWrite:               true,
+		CanTransceive:          false,
+		CanLock:                true,
+		TagFamily:              "MIFARE Classic",
+		Technology:             "ISO14443A",
+		SupportsNDEF:           true,
+		SupportsCrypto:         true,
+		SupportsAuthentication: true,
+	}
+	switch c.tag.Type() {
+	case freefare.Classic1k:
+		caps.MemorySize = 1024
+		caps.MaxNDEFSize = 716
+	case freefare.Classic4k:
+		caps.MemorySize = 4096
+		caps.MaxNDEFSize = 3356
+	}
+	return caps
+}
+
 func (c *ClassicTag) Connect() error {
 	return c.tag.Connect()
 }
@@ -63,7 +87,7 @@ func (c *ClassicTag) Disconnect() error {
 }
 
 func (c *ClassicTag) Transceive(data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("Transceive not directly supported for classicAdapter; use Read/Write or device-level Transceive")
+	return nil, NewNotSupportedError("Transceive")
 }
 
 func (c *ClassicTag) Read(sector, block uint8, key []byte, keyType int) ([]byte, error) {
