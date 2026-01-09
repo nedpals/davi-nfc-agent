@@ -137,13 +137,8 @@ func TestIsNotSupportedError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "legacy string error - not supported",
-			err:      fmt.Errorf("Transceive not supported for this tag"),
-			expected: true,
-		},
-		{
-			name:     "legacy string error - not directly supported",
-			err:      fmt.Errorf("operation not directly supported"),
+			name:     "wrapped NFCError",
+			err:      fmt.Errorf("failed: %w", NewNotSupportedError("Transceive")),
 			expected: true,
 		},
 		{
@@ -179,13 +174,8 @@ func TestIsTagRemovedError(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "legacy string - tag removed",
-			err:      fmt.Errorf("tag removed during read"),
-			expected: true,
-		},
-		{
-			name:     "legacy string - Target was removed",
-			err:      fmt.Errorf("Target was removed from field"),
+			name:     "wrapped NFCError",
+			err:      fmt.Errorf("failed: %w", NewTagRemovedError("ReadData", nil)),
 			expected: true,
 		},
 		{
@@ -221,18 +211,18 @@ func TestIsAuthError(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "legacy string - authentication",
-			err:      fmt.Errorf("authentication failed for sector 0"),
-			expected: true,
-		},
-		{
-			name:     "legacy string - auth",
-			err:      fmt.Errorf("auth error"),
+			name:     "wrapped NFCError",
+			err:      fmt.Errorf("failed: %w", NewAuthError("ReadData", "04A1B2C3", nil)),
 			expected: true,
 		},
 		{
 			name:     "unrelated error",
 			err:      errors.New("connection lost"),
+			expected: false,
+		},
+		{
+			name:     "nil error",
+			err:      nil,
 			expected: false,
 		},
 	}

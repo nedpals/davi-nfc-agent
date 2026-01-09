@@ -3,7 +3,6 @@ package nfc
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // ErrorCode represents a specific type of NFC error for programmatic handling.
@@ -33,17 +32,16 @@ type NFCError struct {
 }
 
 func (e *NFCError) Error() string {
-	var sb strings.Builder
-	if e.Op != "" {
-		sb.WriteString(e.Op)
-		sb.WriteString(": ")
+	if e.Op == "" {
+		if e.Cause != nil {
+			return e.Message + ": " + e.Cause.Error()
+		}
+		return e.Message
 	}
-	sb.WriteString(e.Message)
 	if e.Cause != nil {
-		sb.WriteString(": ")
-		sb.WriteString(e.Cause.Error())
+		return e.Op + ": " + e.Message + ": " + e.Cause.Error()
 	}
-	return sb.String()
+	return e.Op + ": " + e.Message
 }
 
 func (e *NFCError) Unwrap() error {
@@ -126,11 +124,7 @@ func IsNotSupportedError(err error) bool {
 	if errors.As(err, &nfcErr) {
 		return nfcErr.Code == ErrCodeNotSupported
 	}
-	// Fallback to string matching for backward compatibility
-	errStr := err.Error()
-	return strings.Contains(errStr, "not supported") ||
-		strings.Contains(errStr, "not directly supported") ||
-		strings.Contains(errStr, "operation not supported")
+	return false
 }
 
 // IsTagRemovedError checks if an error indicates the tag was removed.
@@ -142,11 +136,7 @@ func IsTagRemovedError(err error) bool {
 	if errors.As(err, &nfcErr) {
 		return nfcErr.Code == ErrCodeTagRemoved
 	}
-	// Fallback to string matching
-	errStr := err.Error()
-	return strings.Contains(errStr, "tag removed") ||
-		strings.Contains(errStr, "tag lost") ||
-		strings.Contains(errStr, "Target was removed")
+	return false
 }
 
 // IsAuthError checks if an error indicates authentication failure.
@@ -158,10 +148,7 @@ func IsAuthError(err error) bool {
 	if errors.As(err, &nfcErr) {
 		return nfcErr.Code == ErrCodeAuthFailed
 	}
-	// Fallback to string matching
-	errStr := err.Error()
-	return strings.Contains(errStr, "authentication") ||
-		strings.Contains(errStr, "auth")
+	return false
 }
 
 // GetErrorCode extracts the ErrorCode from an error if it's an NFCError.
