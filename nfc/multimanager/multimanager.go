@@ -152,23 +152,22 @@ func (mm *MultiManager) OpenDevice(deviceStr string) (nfc.Device, error) {
 	}
 
 	// Check if device string has manager prefix
+	// Format: "managerName:deviceID" where managerName must be a registered manager
 	parts := strings.SplitN(deviceStr, ":", 2)
 	if len(parts) == 2 {
-		// Has prefix - try specific manager
 		managerName := parts[0]
 		deviceID := parts[1]
 
-		manager, exists := managers[managerName]
-		if !exists {
-			return nil, fmt.Errorf("manager not found: %s", managerName)
+		// Only treat as manager prefix if it's actually a registered manager
+		// This handles cases where device IDs contain colons (e.g., "acr122_usb:001:003")
+		if manager, exists := managers[managerName]; exists {
+			device, err := manager.OpenDevice(deviceID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open device '%s' with manager '%s': %w", deviceID, managerName, err)
+			}
+			return device, nil
 		}
-
-		device, err := manager.OpenDevice(deviceID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open device '%s' with manager '%s': %w", deviceID, managerName, err)
-		}
-
-		return device, nil
+		// Not a registered manager name - fall through to try all managers
 	}
 
 	// No prefix or empty string - try all managers in order

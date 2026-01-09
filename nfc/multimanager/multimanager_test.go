@@ -227,6 +227,56 @@ func TestMultiManagerOpenDeviceWithPrefix(t *testing.T) {
 	}
 }
 
+// TestMultiManagerOpenDeviceWithColonInDeviceID tests that device IDs containing colons
+// (like libnfc format "acr122_usb:001:003") are handled correctly when the first part
+// is NOT a registered manager name.
+func TestMultiManagerOpenDeviceWithColonInDeviceID(t *testing.T) {
+	mm := NewMultiManager()
+
+	// Register managers with names "hardware" and "smartphone"
+	// The mock hardware manager accepts libnfc-style device IDs with colons
+	mock1 := &mockManager{name: "mock1", devices: []string{"acr122_usb:001:003", "pn532_uart:/dev/ttyUSB0"}}
+	mock2 := &mockManager{name: "mock2", devices: []string{"phone123"}}
+
+	mm.AddManager("hardware", mock1)
+	mm.AddManager("smartphone", mock2)
+
+	// Open device with colon in ID - "acr122_usb" is NOT a registered manager,
+	// so it should fall through and try all managers with the full device string
+	device, err := mm.OpenDevice("acr122_usb:001:003")
+	if err != nil {
+		t.Errorf("OpenDevice() with colon in device ID failed: %v", err)
+	}
+	if device == nil {
+		t.Error("OpenDevice() returned nil device")
+	}
+	if device != nil && device.Connection() != "acr122_usb:001:003" {
+		t.Errorf("Device connection = %v, want %v", device.Connection(), "acr122_usb:001:003")
+	}
+
+	// Also test another format with colons
+	device, err = mm.OpenDevice("pn532_uart:/dev/ttyUSB0")
+	if err != nil {
+		t.Errorf("OpenDevice() with colon in device ID failed: %v", err)
+	}
+	if device == nil {
+		t.Error("OpenDevice() returned nil device")
+	}
+
+	// Explicit manager prefix should still work
+	device, err = mm.OpenDevice("hardware:acr122_usb:001:003")
+	if err != nil {
+		t.Errorf("OpenDevice() with explicit manager prefix failed: %v", err)
+	}
+	if device == nil {
+		t.Error("OpenDevice() returned nil device")
+	}
+	// When using explicit prefix, the manager receives everything after "hardware:"
+	if device != nil && device.Connection() != "acr122_usb:001:003" {
+		t.Errorf("Device connection = %v, want %v", device.Connection(), "acr122_usb:001:003")
+	}
+}
+
 func TestMultiManagerOpenDeviceWithoutPrefix(t *testing.T) {
 	mm := NewMultiManager()
 
