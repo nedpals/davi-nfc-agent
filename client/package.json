@@ -6,7 +6,9 @@
   "types": "nfc-client.d.ts",
   "files": [
     "nfc-client.js",
-    "nfc-client.d.ts"
+    "nfc-client.d.ts",
+    "nfc-device-client.js",
+    "nfc-device-client.d.ts"
   ],
   "keywords": [
     "nfc",
@@ -14,7 +16,8 @@
     "websocket",
     "ndef",
     "mifare",
-    "card"
+    "card",
+    "webnfc"
   ],
   "author": "",
   "license": "MIT",

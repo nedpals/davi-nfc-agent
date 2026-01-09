@@ -38,8 +38,44 @@
         .subtitle {
             text-align: center;
             color: #666;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
             font-size: 16px;
+        }
+
+        /* Tab navigation */
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 12px 20px;
+            text-align: center;
+            cursor: pointer;
+            background: #f9f9f9;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
+            color: black;
+        }
+
+        .tab:hover {
+            background: #eee;
+        }
+
+        .tab.active {
+            background: #333;
+            color: white;
+        }
+
+        .tab:not(:last-child) {
+            border-right: 1px solid #ddd;
         }
 
         .section {
@@ -54,6 +90,13 @@
             font-size: 18px;
             margin-bottom: 20px;
             font-weight: 600;
+        }
+
+        .section h3 {
+            font-size: 15px;
+            margin-bottom: 15px;
+            font-weight: 500;
+            color: #555;
         }
 
         .status {
@@ -76,6 +119,11 @@
         .status-dot.connected {
             background: #22c55e;
             animation: pulse 2s infinite;
+        }
+
+        .status-dot.scanning {
+            background: #3b82f6;
+            animation: pulse 1s infinite;
         }
 
         @keyframes pulse {
@@ -136,6 +184,14 @@
 
         button.secondary:hover {
             background: #f9f9f9;
+        }
+
+        button.danger {
+            background: #dc2626;
+        }
+
+        button.danger:hover {
+            background: #b91c1c;
         }
 
         .empty-state {
@@ -216,10 +272,68 @@
             color: #1e40af;
         }
 
+        .alert-warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
         .two-col {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 10px;
+        }
+
+        .log-entry {
+            padding: 8px 10px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .log-entry .time {
+            color: #999;
+            font-size: 11px;
+        }
+
+        .log-entry .source {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: #e5e7eb;
+            color: #6b7280;
+        }
+
+        .log-entry .source.webnfc {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .write-request-item {
+            padding: 15px;
+            background: #fef3c7;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        .write-request-item .request-id {
+            font-size: 11px;
+            color: #92400e;
+            margin-bottom: 5px;
+        }
+
+        .write-request-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .write-request-actions button {
+            flex: 1;
+            padding: 8px;
         }
 
         @media (max-width: 600px) {
@@ -239,131 +353,313 @@
 </head>
 <body>
     <div id="app" class="container">
-        <!-- State 1: Landing / Connection -->
-        <template v-if="state === 'landing'">
-            <h1>NFC Agent Test Client</h1>
-            <p class="subtitle">Connect to your NFC reader</p>
+        <h1>NFC Agent Test Client</h1>
 
-            <div class="section">
-                <div v-if="error" class="alert alert-error">{{ error }}</div>
+        <!-- Tab Navigation -->
+        <div class="tabs">
+            <button class="tab" :class="{ active: mode === 'consumer' }" @click="switchMode('consumer')">
+                Consumer
+            </button>
+            <button class="tab" :class="{ active: mode === 'device' }" @click="switchMode('device')">
+                Device
+            </button>
+        </div>
 
-                <div class="form-group">
-                    <label>Server URL</label>
-                    <input type="text" v-model="serverUrl" :disabled="connecting">
+        <!-- Consumer Mode -->
+        <div v-show="mode === 'consumer'">
+            <!-- State 1: Landing / Connection -->
+            <template v-if="consumerState === 'landing'">
+                <p class="subtitle">Connect to receive NFC data</p>
+
+                <div class="section">
+                    <div v-if="consumerError" class="alert alert-error">{{ consumerError }}</div>
+
+                    <div class="form-group">
+                        <label>Consumer Server URL</label>
+                        <input type="text" v-model="consumerUrl" :disabled="consumerConnecting">
+                    </div>
+                    <div class="form-group">
+                        <label>API Secret (optional)</label>
+                        <input type="password" v-model="apiSecret" placeholder="Enter API secret" :disabled="consumerConnecting">
+                    </div>
+                    <button @click="connectConsumer" :disabled="consumerConnecting">
+                        {{ consumerConnecting ? 'Connecting...' : 'Connect' }}
+                    </button>
                 </div>
-                <div class="form-group">
-                    <label>API Secret</label>
-                    <input type="password" v-model="apiSecret" placeholder="Enter API secret" :disabled="connecting">
+            </template>
+
+            <!-- State 2: Connected / Ready to scan -->
+            <template v-else-if="consumerState === 'scan'">
+                <p class="subtitle">Ready to receive</p>
+
+                <div class="section">
+                    <div class="status">
+                        <div class="status-dot connected"></div>
+                        <span>Connected to ConsumerServer</span>
+                    </div>
+
+                    <div class="empty-state">
+                        <div class="empty-icon">📱</div>
+                        <div>Waiting for tag data...</div>
+                    </div>
+
+                    <button class="secondary" @click="disconnectConsumer">Disconnect</button>
                 </div>
-                <button @click="connect" :disabled="connecting">
-                    {{ connecting ? 'Connecting...' : 'Connect' }}
-                </button>
-            </div>
-        </template>
+            </template>
 
-        <!-- State 2: Connected / Ready to scan -->
-        <template v-else-if="state === 'scan'">
-            <h1>NFC Agent Test Client</h1>
-            <p class="subtitle">Ready to scan</p>
+            <!-- State 3: Card detected -->
+            <template v-else-if="consumerState === 'card'">
+                <p class="subtitle">{{ card.uid }}</p>
 
-            <div class="section">
-                <div class="status">
-                    <div class="status-dot connected"></div>
-                    <span>Connected to agent</span>
-                </div>
-
-                <div class="empty-state">
-                    <div class="empty-icon">📱</div>
-                    <div>Hold a card near your reader</div>
-                </div>
-
-                <button class="secondary" @click="disconnect">Disconnect</button>
-            </div>
-        </template>
-
-        <!-- State 3: Card detected -->
-        <template v-else-if="state === 'card'">
-            <h1>NFC Agent Test Client</h1>
-            <p class="subtitle">{{ card.uid }}</p>
-
-            <!-- Card Info -->
-            <div class="section">
-                <h2>Card Information</h2>
-                <div class="card-data">
-                    <div><strong>UID:</strong> {{ card.uid }}</div>
-                    <div><strong>Type:</strong> {{ card.type || 'Unknown' }}</div>
-                    <div v-if="card.technology"><strong>Technology:</strong> {{ card.technology }}</div>
-                    <div v-if="card.scannedAt"><strong>Scanned:</strong> {{ formatDate(card.scannedAt) }}</div>
-                </div>
-            </div>
-
-            <!-- Records -->
-            <div class="section" v-if="card.records && card.records.length > 0">
-                <h2>NDEF Records</h2>
-                <div v-for="(record, index) in card.records" :key="index" class="record">
-                    <div class="record-type">{{ record.type.toUpperCase() }} (TNF: {{ record.tnf }}) [{{ index }}]</div>
-                    <div>{{ record.content || '(Binary Data)' }}</div>
-                    <div v-if="record.language" style="font-size: 11px; color: #999; margin-top: 5px;">Language: {{ record.language }}</div>
-                </div>
-            </div>
-
-            <!-- Raw Payload -->
-            <div class="section">
-                <h2>Raw Payload</h2>
-                <pre class="raw-dump">{{ JSON.stringify(rawPayload, null, 2) }}</pre>
-            </div>
-
-            <!-- Write -->
-            <div class="section">
-                <h2>Write to Card</h2>
-
-                <div v-if="writeStatus.message" :class="['alert', writeStatus.type]">
-                    {{ writeStatus.message }}
+                <!-- Card Info -->
+                <div class="section">
+                    <h2>Card Information</h2>
+                    <div class="card-data">
+                        <div><strong>UID:</strong> {{ card.uid }}</div>
+                        <div><strong>Type:</strong> {{ card.type || 'Unknown' }}</div>
+                        <div v-if="card.technology"><strong>Technology:</strong> {{ card.technology }}</div>
+                        <div v-if="card.scannedAt"><strong>Scanned:</strong> {{ formatDate(card.scannedAt) }}</div>
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label>Content</label>
-                    <textarea v-model="writeForm.content" :disabled="writeStatus.writing" placeholder="Enter text or URI to write"></textarea>
+                <!-- Records -->
+                <div class="section" v-if="card.records && card.records.length > 0">
+                    <h2>NDEF Records</h2>
+                    <div v-for="(record, index) in card.records" :key="index" class="record">
+                        <div class="record-type">{{ record.type.toUpperCase() }} (TNF: {{ record.tnf }}) [{{ index }}]</div>
+                        <div>{{ record.content || '(Binary Data)' }}</div>
+                        <div v-if="record.language" style="font-size: 11px; color: #999; margin-top: 5px;">Language: {{ record.language }}</div>
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label>Record Type</label>
-                    <select v-model="writeForm.type" :disabled="writeStatus.writing">
-                        <option value="text">Text</option>
-                        <option value="uri">URI</option>
-                    </select>
+                <!-- Raw Payload -->
+                <div class="section">
+                    <h2>Raw Payload</h2>
+                    <pre class="raw-dump">{{ JSON.stringify(rawPayload, null, 2) }}</pre>
                 </div>
 
-                <div class="alert alert-info">
-                    <strong>Note:</strong> Writing will overwrite all existing records on the card.
+                <!-- Write -->
+                <div class="section">
+                    <h2>Write to Card</h2>
+
+                    <div v-if="writeStatus.message" :class="['alert', writeStatus.type]">
+                        {{ writeStatus.message }}
+                    </div>
+
+                    <div class="form-group">
+                        <label>Content</label>
+                        <textarea v-model="writeForm.content" :disabled="writeStatus.writing" placeholder="Enter text or URI to write"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Record Type</label>
+                        <select v-model="writeForm.type" :disabled="writeStatus.writing">
+                            <option value="text">Text</option>
+                            <option value="uri">URI</option>
+                        </select>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <strong>Note:</strong> Writing will overwrite all existing records on the card.
+                    </div>
+
+                    <button @click="writeCard" :disabled="writeStatus.writing || !writeForm.content.trim()">
+                        {{ writeStatus.writing ? 'Writing...' : 'Write to Card' }}
+                    </button>
                 </div>
 
-                <button @click="writeCard" :disabled="writeStatus.writing || !writeForm.content.trim()">
-                    {{ writeStatus.writing ? 'Writing...' : 'Write to Card' }}
-                </button>
-            </div>
+                <button class="secondary" @click="backToScan">Back to Scan</button>
+            </template>
+        </div>
 
-            <button class="secondary" @click="backToScan">Back to Scan</button>
-        </template>
+        <!-- Device Mode -->
+        <div v-show="mode === 'device'">
+            <!-- Connection Section -->
+            <template v-if="deviceState === 'disconnected'">
+                <p class="subtitle">Connect as NFC device</p>
+
+                <div class="section">
+                    <div v-if="deviceError" class="alert alert-error">{{ deviceError }}</div>
+
+                    <div class="form-group">
+                        <label>Input Server URL</label>
+                        <input type="text" v-model="deviceUrl" :disabled="deviceConnecting">
+                    </div>
+                    <div class="form-group">
+                        <label>Device Name</label>
+                        <input type="text" v-model="deviceName" :disabled="deviceConnecting" placeholder="My Browser Device">
+                    </div>
+                    <button @click="connectDevice" :disabled="deviceConnecting">
+                        {{ deviceConnecting ? 'Connecting...' : 'Connect as Device' }}
+                    </button>
+                </div>
+            </template>
+
+            <!-- Connected State -->
+            <template v-else>
+                <p class="subtitle">Device: {{ deviceID }}</p>
+
+                <!-- Connection Status -->
+                <div class="section">
+                    <div class="status">
+                        <div class="status-dot connected"></div>
+                        <span>Connected as device</span>
+                    </div>
+                    <div class="card-data">
+                        <div><strong>Device ID:</strong> {{ deviceID }}</div>
+                        <div><strong>Server:</strong> {{ serverInfo?.version || 'Unknown' }}</div>
+                    </div>
+                    <button class="secondary" @click="disconnectDevice" style="margin-top: 15px;">Disconnect</button>
+                </div>
+
+                <!-- WebNFC Scanner -->
+                <div class="section">
+                    <h2>WebNFC Scanner</h2>
+
+                    <template v-if="webNFCSupported">
+                        <div v-if="nfcScanning" class="status">
+                            <div class="status-dot scanning"></div>
+                            <span>Scanning for NFC tags...</span>
+                        </div>
+
+                        <div class="two-col" style="margin-bottom: 15px;">
+                            <button @click="startNFCScanning" :disabled="nfcScanning">
+                                Start Scanning
+                            </button>
+                            <button class="secondary" @click="stopNFCScanning" :disabled="!nfcScanning">
+                                Stop Scanning
+                            </button>
+                        </div>
+
+                        <div v-if="nfcError" class="alert alert-error">{{ nfcError }}</div>
+                    </template>
+
+                    <template v-else>
+                        <div class="alert alert-warning">
+                            WebNFC is not supported in this browser. WebNFC requires Chrome 89+ on Android with HTTPS or localhost.
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Manual Tag Input -->
+                <div class="section">
+                    <h2>Manual Tag Input</h2>
+                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">For testing without physical NFC hardware</p>
+
+                    <div class="form-group">
+                        <label>Tag UID</label>
+                        <input type="text" v-model="manualTag.uid" placeholder="04:AB:CD:EF:12:34:56">
+                    </div>
+
+                    <div class="two-col">
+                        <div class="form-group">
+                            <label>Type</label>
+                            <select v-model="manualTag.type">
+                                <option value="MIFARE Classic 1K">MIFARE Classic 1K</option>
+                                <option value="MIFARE Classic 4K">MIFARE Classic 4K</option>
+                                <option value="MIFARE Ultralight">MIFARE Ultralight</option>
+                                <option value="MIFARE DESFire">MIFARE DESFire</option>
+                                <option value="NTAG213">NTAG213</option>
+                                <option value="NTAG215">NTAG215</option>
+                                <option value="NTAG216">NTAG216</option>
+                                <option value="Type 4 Tag">Type 4 Tag</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Technology</label>
+                            <select v-model="manualTag.technology">
+                                <option value="ISO14443A">ISO14443A</option>
+                                <option value="ISO14443B">ISO14443B</option>
+                                <option value="ISO15693">ISO15693</option>
+                                <option value="NFC-F">NFC-F</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>NDEF Text Content (optional)</label>
+                        <textarea v-model="manualTag.ndefText" placeholder="Enter NDEF text content"></textarea>
+                    </div>
+
+                    <div class="two-col">
+                        <button @click="sendManualScan" :disabled="!manualTag.uid.trim()">
+                            Scan Tag
+                        </button>
+                        <button class="danger" @click="sendManualRemove" :disabled="!lastScannedUID">
+                            Remove Tag
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Incoming Write Requests -->
+                <div class="section">
+                    <h2>Incoming Write Requests</h2>
+
+                    <template v-if="writeRequests.length > 0">
+                        <div v-for="req in writeRequests" :key="req.requestID" class="write-request-item">
+                            <div class="request-id">Request ID: {{ req.requestID }}</div>
+                            <div v-if="req.ndefMessage">
+                                <strong>NDEF Message:</strong>
+                                <pre style="font-size: 11px; margin-top: 5px;">{{ JSON.stringify(req.ndefMessage, null, 2) }}</pre>
+                            </div>
+                            <div class="write-request-actions">
+                                <button @click="respondWrite(req.requestID, true)">Success</button>
+                                <button class="danger" @click="respondWrite(req.requestID, false, 'Write failed')">Fail</button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <template v-else>
+                        <div style="text-align: center; color: #999; padding: 20px;">
+                            No pending write requests
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Scanned Tags Log -->
+                <div class="section">
+                    <h2>Scanned Tags Log</h2>
+
+                    <template v-if="scanLog.length > 0">
+                        <div v-for="(entry, index) in scanLog" :key="index" class="log-entry">
+                            <div>
+                                <strong>{{ entry.uid }}</strong>
+                                <span :class="['source', entry.source]">{{ entry.source }}</span>
+                            </div>
+                            <span class="time">{{ entry.time }}</span>
+                        </div>
+                        <button class="secondary" @click="clearScanLog" style="margin-top: 10px;">Clear Log</button>
+                    </template>
+
+                    <template v-else>
+                        <div style="text-align: center; color: #999; padding: 20px;">
+                            No tags scanned yet
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
     </div>
 
     <script src="./nfc-client.js"></script>
+    <script src="./nfc-device-client.js"></script>
     <script>
-        const { createApp, ref, reactive } = Vue;
+        const { createApp, ref, reactive, computed, onMounted } = Vue;
 
         createApp({
             setup() {
-                // Connection state
-                const state = ref('landing');
-                const serverUrl = ref('http://localhost:18080');
+                // Mode: 'consumer' or 'device'
+                const mode = ref('consumer');
+
+                // ==================== Consumer Mode State ====================
+                const consumerState = ref('landing');
+                const consumerUrl = ref('http://localhost:9471');
                 const apiSecret = ref('');
-                const connecting = ref(false);
-                const error = ref('');
+                const consumerConnecting = ref(false);
+                const consumerError = ref('');
 
-                // NFC client instance
-                let client = null;
+                let consumerClient = null;
 
-                // Card data
                 const card = reactive({
                     uid: '',
                     type: '',
@@ -372,103 +668,130 @@
                     records: []
                 });
 
-                // Raw payload from server
                 const rawPayload = ref(null);
 
-                // Write form
                 const writeForm = reactive({
                     content: '',
                     type: 'text'
                 });
 
-                // Write status
                 const writeStatus = reactive({
                     writing: false,
                     message: '',
                     type: ''
                 });
 
-                // Connect to NFC agent
-                async function connect() {
-                    connecting.value = true;
-                    error.value = '';
+                // ==================== Device Mode State ====================
+                const deviceState = ref('disconnected');
+                const deviceUrl = ref('ws://localhost:9470');
+                const deviceName = ref('Browser NFC Device');
+                const deviceConnecting = ref(false);
+                const deviceError = ref('');
+                const deviceID = ref('');
+                const serverInfo = ref(null);
+
+                let deviceClient = null;
+
+                // WebNFC state
+                const webNFCSupported = ref(false);
+                const nfcScanning = ref(false);
+                const nfcError = ref('');
+
+                // Manual tag input
+                const manualTag = reactive({
+                    uid: '',
+                    type: 'MIFARE Classic 1K',
+                    technology: 'ISO14443A',
+                    ndefText: ''
+                });
+
+                const lastScannedUID = ref('');
+
+                // Write requests from server
+                const writeRequests = ref([]);
+
+                // Scan log
+                const scanLog = ref([]);
+
+                // ==================== Mode Switching ====================
+                function switchMode(newMode) {
+                    mode.value = newMode;
+                }
+
+                // ==================== Consumer Mode Functions ====================
+                async function connectConsumer() {
+                    consumerConnecting.value = true;
+                    consumerError.value = '';
 
                     try {
-                        client = new NFCClient(serverUrl.value, { apiSecret: apiSecret.value });
+                        consumerClient = new NFCClient(consumerUrl.value, { apiSecret: apiSecret.value });
 
-                        client.on('connected', () => {
-                            state.value = 'scan';
-                            connecting.value = false;
+                        consumerClient.on('connected', () => {
+                            consumerState.value = 'scan';
+                            consumerConnecting.value = false;
                         });
 
-                        client.on('disconnected', () => {
-                            state.value = 'landing';
-                            connecting.value = false;
+                        consumerClient.on('disconnected', () => {
+                            consumerState.value = 'landing';
+                            consumerConnecting.value = false;
                         });
 
-                        client.on('error', (err) => {
-                            console.error('Client error:', err);
-                            error.value = err.error?.message || 'Connection error';
-                            connecting.value = false;
+                        consumerClient.on('error', (err) => {
+                            console.error('Consumer client error:', err);
+                            consumerError.value = err.error?.message || 'Connection error';
+                            consumerConnecting.value = false;
                         });
 
-                        client.on('tagData', (data) => {
+                        consumerClient.on('tagData', (data) => {
                             if (data.uid) {
                                 handleCard(data);
                             }
                         });
 
-                        client.on('deviceStatus', (status) => {
-                            // Go back to scan screen when card is removed
-                            if (!status.CardPresent && state.value === 'card') {
-                                state.value = 'scan';
+                        consumerClient.on('deviceStatus', (status) => {
+                            if (!status.CardPresent && consumerState.value === 'card') {
+                                consumerState.value = 'scan';
                             }
                         });
 
-                        await client.connect();
+                        await consumerClient.connect();
                     } catch (err) {
-                        console.error('Connection failed:', err);
-                        error.value = err.message;
-                        connecting.value = false;
+                        console.error('Consumer connection failed:', err);
+                        consumerError.value = err.message;
+                        consumerConnecting.value = false;
                     }
                 }
 
-                // Disconnect from NFC agent
-                async function disconnect() {
-                    if (client) {
-                        await client.disconnect();
-                        client = null;
+                async function disconnectConsumer() {
+                    if (consumerClient) {
+                        await consumerClient.disconnect();
+                        consumerClient = null;
                     }
-                    state.value = 'landing';
+                    consumerState.value = 'landing';
                 }
 
-                // Handle card data
                 function handleCard(data) {
                     card.uid = data.uid;
                     card.type = data.type || '';
                     card.technology = data.technology || '';
                     card.scannedAt = data.scannedAt;
-                    
-                    // Extract records from message structure
+
                     card.records = [];
                     if (data.message && data.message.type === 'ndef' && data.message.records) {
                         card.records = data.message.records;
                     }
 
-                    // Store raw payload for debugging
                     rawPayload.value = data;
 
-                    // Reset write form
                     writeForm.content = '';
                     writeStatus.message = '';
                     writeStatus.type = '';
 
-                    state.value = 'card';
+                    consumerState.value = 'card';
                 }
 
-                // Write to card
                 async function writeCard() {
-                    if (!client || !client.isConnected()) {
+                    if (!consumerClient || !consumerClient.isConnected()) {
                         writeStatus.message = 'Not connected';
                         writeStatus.type = 'alert-error';
                         return;
@@ -482,7 +805,6 @@
                     writeStatus.type = 'alert-info';
 
                     try {
-                        // Use the new simplified write API with records array
                         const request = {
                             records: [
                                 {
@@ -493,9 +815,9 @@
                             ]
                         };
 
-                        await client.write(request);
+                        await consumerClient.write(request);
 
-                        writeStatus.message = 'Write successful! ✓';
+                        writeStatus.message = 'Write successful!';
                         writeStatus.type = 'alert-success';
                         writeForm.content = '';
 
@@ -517,32 +839,227 @@
                     }
                 }
 
-                // Back to scan state
                 function backToScan() {
-                    state.value = 'scan';
+                    consumerState.value = 'scan';
                 }
 
-                // Format date
+                // ==================== Device Mode Functions ====================
+                async function connectDevice() {
+                    deviceConnecting.value = true;
+                    deviceError.value = '';
+
+                    try {
+                        deviceClient = new NFCDeviceClient(deviceUrl.value, {
+                            deviceName: deviceName.value,
+                            platform: 'web',
+                            canRead: true,
+                            canWrite: true
+                        });
+
+                        deviceClient.on('registered', (event) => {
+                            deviceID.value = event.deviceID;
+                            serverInfo.value = event.serverInfo;
+                            deviceState.value = 'connected';
+                            deviceConnecting.value = false;
+                        });
+
+                        deviceClient.on('disconnected', () => {
+                            deviceState.value = 'disconnected';
+                            deviceID.value = '';
+                            serverInfo.value = null;
+                            nfcScanning.value = false;
+                        });
+
+                        deviceClient.on('error', (err) => {
+                            console.error('Device client error:', err);
+                            deviceError.value = err.error?.message || 'Connection error';
+                            deviceConnecting.value = false;
+                        });
+
+                        deviceClient.on('writeRequest', (req) => {
+                            writeRequests.value.unshift(req);
+                        });
+
+                        deviceClient.on('nfcReading', (tagData) => {
+                            addToScanLog(tagData.uid, 'webnfc');
+                            lastScannedUID.value = tagData.uid;
+                        });
+
+                        deviceClient.on('nfcReadingError', (err) => {
+                            nfcError.value = err.error?.message || 'NFC reading error';
+                            setTimeout(() => { nfcError.value = ''; }, 5000);
+                        });
+
+                        await deviceClient.connect();
+                    } catch (err) {
+                        console.error('Device connection failed:', err);
+                        deviceError.value = err.message;
+                        deviceConnecting.value = false;
+                    }
+                }
+
+                async function disconnectDevice() {
+                    if (deviceClient) {
+                        await deviceClient.disconnect();
+                        deviceClient = null;
+                    }
+                    deviceState.value = 'disconnected';
+                    deviceID.value = '';
+                    serverInfo.value = null;
+                    nfcScanning.value = false;
+                }
+
+                async function startNFCScanning() {
+                    if (!deviceClient) return;
+
+                    try {
+                        nfcError.value = '';
+                        await deviceClient.startNFCScanning();
+                        nfcScanning.value = true;
+                    } catch (err) {
+                        console.error('Failed to start NFC scanning:', err);
+                        nfcError.value = err.message || 'Failed to start NFC scanning';
+                    }
+                }
+
+                function stopNFCScanning() {
+                    if (!deviceClient) return;
+                    deviceClient.stopNFCScanning();
+                    nfcScanning.value = false;
+                }
+
+                async function sendManualScan() {
+                    if (!deviceClient || !deviceClient.isConnected()) {
+                        deviceError.value = 'Not connected';
+                        return;
+                    }
+
+                    const uid = manualTag.uid.trim();
+                    if (!uid) return;
+
+                    try {
+                        const tagData = {
+                            uid: uid,
+                            type: manualTag.type,
+                            technology: manualTag.technology
+                        };
+
+                        // Add NDEF message if text provided
+                        if (manualTag.ndefText.trim()) {
+                            tagData.ndefMessage = {
+                                records: [{
+                                    recordType: 'text',
+                                    content: manualTag.ndefText.trim(),
+                                    language: 'en'
+                                }]
+                            };
+                        }
+
+                        await deviceClient.scanTag(tagData);
+                        addToScanLog(uid, 'manual');
+                        lastScannedUID.value = uid;
+                    } catch (err) {
+                        console.error('Failed to send tag scan:', err);
+                        deviceError.value = err.message;
+                    }
+                }
+
+                async function sendManualRemove() {
+                    if (!deviceClient || !deviceClient.isConnected() || !lastScannedUID.value) {
+                        return;
+                    }
+
+                    try {
+                        await deviceClient.removeTag(lastScannedUID.value);
+                        lastScannedUID.value = '';
+                    } catch (err) {
+                        console.error('Failed to send tag remove:', err);
+                        deviceError.value = err.message;
+                    }
+                }
+
+                async function respondWrite(requestID, success, error = '') {
+                    if (!deviceClient) return;
+
+                    try {
+                        await deviceClient.respondToWrite(requestID, success, error);
+                        writeRequests.value = writeRequests.value.filter(r => r.requestID !== requestID);
+                    } catch (err) {
+                        console.error('Failed to respond to write:', err);
+                    }
+                }
+
+                function addToScanLog(uid, source) {
+                    const now = new Date();
+                    const time = now.toLocaleTimeString();
+                    scanLog.value.unshift({ uid, source, time });
+
+                    // Keep only last 20 entries
+                    if (scanLog.value.length > 20) {
+                        scanLog.value.pop();
+                    }
+                }
+
+                function clearScanLog() {
+                    scanLog.value = [];
+                }
+
+                // ==================== Utility Functions ====================
                 function formatDate(date) {
                     if (!date) return '';
                     return date.toLocaleString();
                 }
 
+                // Check WebNFC support on mount
+                onMounted(() => {
+                    webNFCSupported.value = NFCDeviceClient.isWebNFCSupported();
+                });
 
                 return {
-                    state,
-                    serverUrl,
+                    // Mode
+                    mode,
+                    switchMode,
+
+                    // Consumer mode
+                    consumerState,
+                    consumerUrl,
                     apiSecret,
-                    connecting,
-                    error,
+                    consumerConnecting,
+                    consumerError,
                     card,
                     rawPayload,
                     writeForm,
                     writeStatus,
-                    connect,
-                    disconnect,
+                    connectConsumer,
+                    disconnectConsumer,
                     writeCard,
                     backToScan,
+
+                    // Device mode
+                    deviceState,
+                    deviceUrl,
+                    deviceName,
+                    deviceConnecting,
+                    deviceError,
+                    deviceID,
+                    serverInfo,
+                    webNFCSupported,
+                    nfcScanning,
+                    nfcError,
+                    manualTag,
+                    lastScannedUID,
+                    writeRequests,
+                    scanLog,
+                    connectDevice,
+                    disconnectDevice,
+                    startNFCScanning,
+                    stopNFCScanning,
+                    sendManualScan,
+                    sendManualRemove,
+                    respondWrite,
+                    clearScanLog,
+
+                    // Utility
                     formatDate
                 };
             }
