@@ -187,15 +187,20 @@ func (dm *DeviceManager) TryConnect() error {
 	currentDevice := dm.device
 	dm.mu.Unlock()
 
-	var initErr error
 	if hasDev && currentDevice != nil {
-		// Quick check if device is responsive
-		initErr = currentDevice.InitiatorInit()
-		if initErr == nil {
-			log.Println("Device already connected and responsive.")
+		// Quick check if device is responsive (if it supports health checking)
+		if checker, ok := currentDevice.(DeviceHealthChecker); ok {
+			if healthErr := checker.IsHealthy(); healthErr == nil {
+				log.Println("Device already connected and responsive.")
+				return nil
+			} else {
+				log.Printf("Device was marked connected, but health check failed: %v. Attempting full reconnect.", healthErr)
+			}
+		} else {
+			// Device doesn't support health checking, assume it's still good
+			log.Println("Device already connected (no health check available).")
 			return nil
 		}
-		log.Printf("Device was marked connected, but Init failed: %v. Attempting full reconnect.", initErr)
 		dm.mu.Lock()
 		currentDevice.Close() // Ignore error
 		dm.device = nil
@@ -221,11 +226,7 @@ func (dm *DeviceManager) TryConnect() error {
 	if errOpen != nil {
 		return fmt.Errorf("failed to open device %s: %w", devicePathToConnect, errOpen)
 	}
-
-	if errInit := newDevice.InitiatorInit(); errInit != nil {
-		newDevice.Close()
-		return fmt.Errorf("failed to initialize device %s: %w", devicePathToConnect, errInit)
-	}
+	// Note: Device initialization is handled inside OpenDevice()
 
 	dm.mu.Lock()
 	dm.device = newDevice

@@ -172,7 +172,7 @@ func WrapError(code ErrorCode, op, message string, cause error) *NFCError {
 }
 
 // Errorf creates an NFCError with a formatted message.
-func Errorf(code ErrorCode, op, format string, args ...interface{}) *NFCError {
+func Errorf(code ErrorCode, op, format string, args ...any) *NFCError {
 	return &NFCError{
 		Code:    code,
 		Op:      op,

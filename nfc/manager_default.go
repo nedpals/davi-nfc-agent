@@ -15,6 +15,14 @@ func (m *defaultManager) OpenDevice(deviceStr string) (Device, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Initialize the device before returning - this ensures
+	// the device is ready for use immediately
+	if err := dev.InitiatorInit(); err != nil {
+		dev.Close()
+		return nil, fmt.Errorf("failed to initialize device: %w", err)
+	}
+
 	return NewDevice(dev), nil
 }
 

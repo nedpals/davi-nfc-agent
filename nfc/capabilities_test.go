@@ -199,13 +199,12 @@ type mockDeviceWithCaps struct {
 	caps DeviceCapabilities
 }
 
-func (m *mockDeviceWithCaps) Close() error                             { return nil }
-func (m *mockDeviceWithCaps) InitiatorInit() error                     { return nil }
-func (m *mockDeviceWithCaps) String() string                           { return "mock" }
-func (m *mockDeviceWithCaps) Connection() string                       { return "mock:0" }
-func (m *mockDeviceWithCaps) Transceive(tx []byte) ([]byte, error)     { return nil, nil }
-func (m *mockDeviceWithCaps) GetTags() ([]Tag, error)                  { return nil, nil }
-func (m *mockDeviceWithCaps) Capabilities() DeviceCapabilities         { return m.caps }
+func (m *mockDeviceWithCaps) Close() error                         { return nil }
+func (m *mockDeviceWithCaps) String() string                       { return "mock" }
+func (m *mockDeviceWithCaps) Connection() string                   { return "mock:0" }
+func (m *mockDeviceWithCaps) Transceive(tx []byte) ([]byte, error) { return nil, nil }
+func (m *mockDeviceWithCaps) GetTags() ([]Tag, error)              { return nil, nil }
+func (m *mockDeviceWithCaps) Capabilities() DeviceCapabilities     { return m.caps }
 
 func TestGetDeviceCapabilities_WithProvider(t *testing.T) {
 	device := &mockDeviceWithCaps{

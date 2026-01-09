@@ -18,9 +18,9 @@ func TestMockDevice_BasicOperations(t *testing.T) {
 		t.Errorf("Expected connection 'mock:usb:001', got '%s'", conn)
 	}
 
-	// Test InitiatorInit()
-	if err := device.InitiatorInit(); err != nil {
-		t.Errorf("InitiatorInit() failed: %v", err)
+	// Test IsHealthy()
+	if err := device.IsHealthy(); err != nil {
+		t.Errorf("IsHealthy() failed: %v", err)
 	}
 
 	// Test Close()
@@ -34,12 +34,12 @@ func TestMockDevice_BasicOperations(t *testing.T) {
 	}
 }
 
-func TestMockDevice_InitError(t *testing.T) {
+func TestMockDevice_HealthCheckError(t *testing.T) {
 	device := NewMockDevice()
-	expectedErr := fmt.Errorf("init failed")
+	expectedErr := fmt.Errorf("health check failed")
 	device.InitError = expectedErr
 
-	if err := device.InitiatorInit(); err != expectedErr {
+	if err := device.IsHealthy(); err != expectedErr {
 		t.Errorf("Expected error '%v', got '%v'", expectedErr, err)
 	}
 }
@@ -99,7 +99,7 @@ func TestMockDevice_CallLog(t *testing.T) {
 
 	_ = device.String()
 	_ = device.Connection()
-	_ = device.InitiatorInit()
+	_ = device.IsHealthy()
 	_, _ = device.Transceive([]byte{0x01})
 	_ = device.Close()
 
@@ -107,7 +107,7 @@ func TestMockDevice_CallLog(t *testing.T) {
 	expectedCalls := []string{
 		"String",
 		"Connection",
-		"InitiatorInit",
+		"IsHealthy",
 		"Transceive(1 bytes)",
 		"Close",
 	}

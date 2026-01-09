@@ -132,39 +132,10 @@ func TestNFCReader_DeviceReconnection(t *testing.T) {
 	manager := NewMockManager()
 	manager.DevicesList = []string{"mock:usb:001"}
 
-	// Create mock device that will fail init first time
+	// Create mock device
 	mockDevice := NewMockDevice()
-	callCount := 0
-	originalInit := mockDevice.InitiatorInit
-
-	// Make init fail on first call, succeed on second
 	mockDevice.InitError = nil
 	manager.MockDevice = mockDevice
-
-	// Override InitiatorInit to fail first time
-	mockDevice.mu.Lock()
-	mockDevice.InitError = nil
-	mockDevice.mu.Unlock()
-
-	// Create a custom mock that tracks calls
-	var initCallCount int
-	mockDevice2 := &MockDevice{
-		DeviceName:       "Mock NFC Reader",
-		DeviceConnection: "mock:usb:001",
-		IsOpen:           true,
-		CallLog:          make([]string, 0),
-	}
-
-	// Custom behavior: fail first call, succeed after
-	originalInitFunc := mockDevice2.InitiatorInit
-	mockDevice2.InitError = nil
-
-	manager.MockDevice = mockDevice2
-
-	_ = callCount
-	_ = originalInit
-	_ = initCallCount
-	_ = originalInitFunc
 
 	// Create NFCReader
 	reader, err := NewNFCReader("mock:usb:001", manager, 5*time.Second)

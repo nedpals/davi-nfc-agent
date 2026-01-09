@@ -24,10 +24,6 @@ func (d *libnfcDevice) Close() error {
 	return d.device.Close()
 }
 
-func (d *libnfcDevice) InitiatorInit() error {
-	return d.device.InitiatorInit()
-}
-
 func (d *libnfcDevice) String() string {
 	return d.device.String()
 }

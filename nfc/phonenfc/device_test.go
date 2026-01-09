@@ -125,7 +125,7 @@ func TestDeviceClose(t *testing.T) {
 	}
 }
 
-func TestDeviceInitiatorInit(t *testing.T) {
+func TestDeviceIsHealthy(t *testing.T) {
 	req := DeviceRegistrationRequest{
 		DeviceName: "Test Device",
 		Platform:   "android",
@@ -136,9 +136,9 @@ func TestDeviceInitiatorInit(t *testing.T) {
 	defer device.Close()
 
 	// Should succeed when active and recent
-	err := device.InitiatorInit()
+	err := device.IsHealthy()
 	if err != nil {
-		t.Errorf("InitiatorInit() failed: %v", err)
+		t.Errorf("IsHealthy() failed: %v", err)
 	}
 
 	// Test timeout by setting old lastSeen
@@ -146,9 +146,9 @@ func TestDeviceInitiatorInit(t *testing.T) {
 	device.lastSeen = time.Now().Add(-DeviceTimeout - time.Second)
 	device.mu.Unlock()
 
-	err = device.InitiatorInit()
+	err = device.IsHealthy()
 	if err == nil {
-		t.Error("InitiatorInit() should fail after timeout")
+		t.Error("IsHealthy() should fail after timeout")
 	}
 }
 

@@ -57,8 +57,8 @@ func (d *Device) Close() error {
 	return nil
 }
 
-// InitiatorInit initializes the device (validates connection health).
-func (d *Device) InitiatorInit() error {
+// IsHealthy checks if the device connection is healthy (implements nfc.DeviceHealthChecker).
+func (d *Device) IsHealthy() error {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 

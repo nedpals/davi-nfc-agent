@@ -9,6 +9,7 @@ import (
 //
 // MockDevice allows testing NFC functionality without physical hardware by
 // simulating device behavior, connection states, and data transmission.
+// It also implements DeviceHealthChecker for health check simulation.
 //
 // Example:
 //
@@ -16,7 +17,7 @@ import (
 //	    DeviceName: "Mock NFC Reader",
 //	    DeviceConnection: "mock:usb:001",
 //	}
-//	err := mock.InitiatorInit()
+//	tags, err := mock.GetTags()
 type MockDevice struct {
 	// DeviceName is the simulated device name returned by String()
 	DeviceName string
@@ -27,7 +28,7 @@ type MockDevice struct {
 	// IsOpen tracks whether the device is currently open
 	IsOpen bool
 
-	// InitError, if set, will be returned by InitiatorInit()
+	// InitError, if set, will be returned by IsHealthy()
 	InitError error
 
 	// CloseError, if set, will be returned by Close()
@@ -88,12 +89,12 @@ func (m *MockDevice) Close() error {
 	return m.CloseError
 }
 
-// InitiatorInit simulates device initialization.
-func (m *MockDevice) InitiatorInit() error {
+// IsHealthy checks if the mock device is healthy (implements DeviceHealthChecker).
+func (m *MockDevice) IsHealthy() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.CallLog = append(m.CallLog, "InitiatorInit")
+	m.CallLog = append(m.CallLog, "IsHealthy")
 
 	if !m.IsOpen {
 		return fmt.Errorf("device not open")

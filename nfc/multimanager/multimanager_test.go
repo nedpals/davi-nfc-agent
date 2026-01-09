@@ -43,12 +43,11 @@ type mockDevice struct {
 	connection string
 }
 
-func (m *mockDevice) Close() error                               { return nil }
-func (m *mockDevice) InitiatorInit() error                       { return nil }
-func (m *mockDevice) String() string                             { return m.connection }
-func (m *mockDevice) Connection() string                         { return m.connection }
-func (m *mockDevice) Transceive(txData []byte) ([]byte, error)   { return nil, nil }
-func (m *mockDevice) GetTags() ([]nfc.Tag, error)                { return []nfc.Tag{}, nil }
+func (m *mockDevice) Close() error                             { return nil }
+func (m *mockDevice) String() string                           { return m.connection }
+func (m *mockDevice) Connection() string                       { return m.connection }
+func (m *mockDevice) Transceive(txData []byte) ([]byte, error) { return nil, nil }
+func (m *mockDevice) GetTags() ([]nfc.Tag, error)              { return []nfc.Tag{}, nil }
 
 func TestNewMultiManager(t *testing.T) {
 	// Test empty constructor
