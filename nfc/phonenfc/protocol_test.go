@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/protocol"
 )
 
 func TestParseUID(t *testing.T) {
@@ -78,28 +79,31 @@ func TestParseUID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseUID(tt.input)
+			got, err := protocol.ParseUID(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseUID() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ParseUID() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.want {
-				t.Errorf("parseUID() = %v, want %v", got, tt.want)
+				t.Errorf("ParseUID() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestConvertNDEFRecordData(t *testing.T) {
+func TestConvertNDEFRecordInput(t *testing.T) {
+	tnf01 := uint8(0x01)
+	tnf08 := uint8(0x08)
+
 	tests := []struct {
 		name    string
-		input   NDEFRecordData
+		input   protocol.NDEFRecordInput
 		wantErr bool
 	}{
 		{
-			name: "valid text record",
-			input: NDEFRecordData{
-				TNF:        0x01,
+			name: "valid text record with TNF",
+			input: protocol.NDEFRecordInput{
+				TNF:        &tnf01,
 				Type:       []byte("T"),
 				Payload:    []byte("test payload"),
 				RecordType: "text",
@@ -108,9 +112,9 @@ func TestConvertNDEFRecordData(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "valid URI record",
-			input: NDEFRecordData{
-				TNF:        0x01,
+			name: "valid URI record with TNF",
+			input: protocol.NDEFRecordInput{
+				TNF:        &tnf01,
 				Type:       []byte("U"),
 				Payload:    []byte{0x00, 'h', 't', 't', 'p', 's', ':', '/', '/', 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm'},
 				RecordType: "uri",
@@ -120,41 +124,60 @@ func TestConvertNDEFRecordData(t *testing.T) {
 		},
 		{
 			name: "invalid TNF",
-			input: NDEFRecordData{
-				TNF:     0x08,
+			input: protocol.NDEFRecordInput{
+				TNF:     &tnf08,
 				Type:    []byte("T"),
 				Payload: []byte("test"),
 			},
 			wantErr: true,
 		},
+		{
+			name: "high-level text record",
+			input: protocol.NDEFRecordInput{
+				RecordType: "text",
+				Content:    "Hello World",
+				Language:   "en",
+			},
+			wantErr: false,
+		},
+		{
+			name: "high-level URI record",
+			input: protocol.NDEFRecordInput{
+				RecordType: "uri",
+				Content:    "https://example.com",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			record, err := ConvertNDEFRecordData(tt.input)
+			record, err := nfc.ConvertNDEFRecordInput(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ConvertNDEFRecordData() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ConvertNDEFRecordInput() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr && record == nil {
-				t.Error("ConvertNDEFRecordData() returned nil record")
+				t.Error("ConvertNDEFRecordInput() returned nil record")
 			}
 		})
 	}
 }
 
-func TestConvertNDEFMessageData(t *testing.T) {
+func TestConvertNDEFInput(t *testing.T) {
+	tnf01 := uint8(0x01)
+
 	tests := []struct {
 		name    string
-		input   *NDEFMessageData
+		input   *protocol.NDEFMessageInput
 		wantErr bool
 	}{
 		{
 			name: "valid message with text record",
-			input: &NDEFMessageData{
-				Records: []NDEFRecordData{
+			input: &protocol.NDEFMessageInput{
+				Records: []protocol.NDEFRecordInput{
 					{
-						TNF:        0x01,
+						TNF:        &tnf01,
 						Type:       []byte("T"),
 						Payload:    nfc.MakeTextRecordPayload("Hello", "en"),
 						RecordType: "text",
@@ -167,16 +190,16 @@ func TestConvertNDEFMessageData(t *testing.T) {
 		},
 		{
 			name: "valid message with multiple records",
-			input: &NDEFMessageData{
-				Records: []NDEFRecordData{
+			input: &protocol.NDEFMessageInput{
+				Records: []protocol.NDEFRecordInput{
 					{
-						TNF:        0x01,
+						TNF:        &tnf01,
 						Type:       []byte("T"),
 						Payload:    nfc.MakeTextRecordPayload("Hello", "en"),
 						RecordType: "text",
 					},
 					{
-						TNF:        0x01,
+						TNF:        &tnf01,
 						Type:       []byte("U"),
 						Payload:    nfc.MakeURIRecordPayload("https://example.com"),
 						RecordType: "uri",
@@ -192,28 +215,47 @@ func TestConvertNDEFMessageData(t *testing.T) {
 		},
 		{
 			name: "empty records",
-			input: &NDEFMessageData{
-				Records: []NDEFRecordData{},
+			input: &protocol.NDEFMessageInput{
+				Records: []protocol.NDEFRecordInput{},
 			},
 			wantErr: true,
+		},
+		{
+			name: "high-level format only",
+			input: &protocol.NDEFMessageInput{
+				Records: []protocol.NDEFRecordInput{
+					{
+						RecordType: "text",
+						Content:    "Hello",
+						Language:   "en",
+					},
+					{
+						RecordType: "uri",
+						Content:    "https://example.com",
+					},
+				},
+			},
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, err := ConvertNDEFMessageData(tt.input)
+			msg, err := nfc.ConvertNDEFInput(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ConvertNDEFMessageData() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ConvertNDEFInput() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr && msg == nil {
-				t.Error("ConvertNDEFMessageData() returned nil message")
+				t.Error("ConvertNDEFInput() returned nil message")
 			}
 		})
 	}
 }
 
 func TestConvertTagData(t *testing.T) {
+	tnf01 := uint8(0x01)
+
 	tests := []struct {
 		name    string
 		input   TagData
@@ -227,10 +269,10 @@ func TestConvertTagData(t *testing.T) {
 				Technology: "ISO14443A",
 				Type:       "MIFARE Classic 1K",
 				ScannedAt:  time.Now(),
-				NDEFMessage: &NDEFMessageData{
-					Records: []NDEFRecordData{
+				NDEFMessage: &protocol.NDEFMessageInput{
+					Records: []protocol.NDEFRecordInput{
 						{
-							TNF:        0x01,
+							TNF:        &tnf01,
 							Type:       []byte("T"),
 							Payload:    nfc.MakeTextRecordPayload("Test", "en"),
 							RecordType: "text",
@@ -297,7 +339,7 @@ func TestConvertTagData(t *testing.T) {
 					// Verify tag fields
 					if tag.UID() != tt.input.UID {
 						// UID might be normalized
-						normalizedUID, _ := parseUID(tt.input.UID)
+						normalizedUID, _ := protocol.ParseUID(tt.input.UID)
 						if tag.UID() != normalizedUID {
 							t.Errorf("Tag UID = %v, want %v", tag.UID(), normalizedUID)
 						}
