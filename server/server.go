@@ -273,6 +273,15 @@ func (s *Server) Start() error {
 		s.handleHealthCheck(w, r)
 	}))
 
+	// Tag input endpoint for external tools
+	http.HandleFunc(apiV1+"/tag", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			s.handleTagInput(w, r)
+		} else if r.Method != http.MethodOptions {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+
 	// Configure WebSocket endpoint
 	http.HandleFunc("/ws", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		s.handleWebSocket(w, r.WithContext(baseCtx))
