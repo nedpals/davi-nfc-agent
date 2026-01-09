@@ -195,25 +195,26 @@ func TestCanTagHelpers(t *testing.T) {
 	}
 }
 
-type mockDeviceWithCaps struct {
-	caps DeviceCapabilities
+type mockDeviceWithInfo struct {
+	deviceType        string
+	supportedTagTypes []string
+	supportsEvents    bool
 }
 
-func (m *mockDeviceWithCaps) Close() error                         { return nil }
-func (m *mockDeviceWithCaps) String() string                       { return "mock" }
-func (m *mockDeviceWithCaps) Connection() string                   { return "mock:0" }
-func (m *mockDeviceWithCaps) Transceive(tx []byte) ([]byte, error) { return nil, nil }
-func (m *mockDeviceWithCaps) GetTags() ([]Tag, error)              { return nil, nil }
-func (m *mockDeviceWithCaps) Capabilities() DeviceCapabilities     { return m.caps }
+func (m *mockDeviceWithInfo) Close() error                         { return nil }
+func (m *mockDeviceWithInfo) String() string                       { return "mock" }
+func (m *mockDeviceWithInfo) Connection() string                   { return "mock:0" }
+func (m *mockDeviceWithInfo) Transceive(tx []byte) ([]byte, error) { return nil, nil }
+func (m *mockDeviceWithInfo) GetTags() ([]Tag, error)              { return nil, nil }
+func (m *mockDeviceWithInfo) DeviceType() string                   { return m.deviceType }
+func (m *mockDeviceWithInfo) SupportedTagTypes() []string          { return m.supportedTagTypes }
+func (m *mockDeviceWithInfo) SupportsEvents() bool                 { return m.supportsEvents }
 
-func TestGetDeviceCapabilities_WithProvider(t *testing.T) {
-	device := &mockDeviceWithCaps{
-		caps: DeviceCapabilities{
-			CanTransceive:     true,
-			CanPoll:           true,
-			DeviceType:        "test",
-			SupportedTagTypes: []string{"MIFARE Classic", "NTAG"},
-		},
+func TestGetDeviceCapabilities_WithInfoProvider(t *testing.T) {
+	device := &mockDeviceWithInfo{
+		deviceType:        "test",
+		supportedTagTypes: []string{"MIFARE Classic", "NTAG"},
+		supportsEvents:    false,
 	}
 
 	caps := GetDeviceCapabilities(device)
@@ -224,14 +225,45 @@ func TestGetDeviceCapabilities_WithProvider(t *testing.T) {
 	if len(caps.SupportedTagTypes) != 2 {
 		t.Errorf("SupportedTagTypes length = %d, want 2", len(caps.SupportedTagTypes))
 	}
+	// Not event-based, so should support transceive and poll
+	if !caps.CanTransceive {
+		t.Error("Expected CanTransceive to be true for non-event device")
+	}
+	if !caps.CanPoll {
+		t.Error("Expected CanPoll to be true for non-event device")
+	}
+}
+
+func TestGetDeviceCapabilities_EventBasedDevice(t *testing.T) {
+	device := &mockDeviceWithInfo{
+		deviceType:        "smartphone",
+		supportedTagTypes: []string{"ISO-DEP"},
+		supportsEvents:    true,
+	}
+
+	caps := GetDeviceCapabilities(device)
+
+	if caps.DeviceType != "smartphone" {
+		t.Errorf("DeviceType = %q, want %q", caps.DeviceType, "smartphone")
+	}
+	if !caps.SupportsEvents {
+		t.Error("Expected SupportsEvents to be true")
+	}
+	// Event-based devices don't poll or transceive directly
+	if caps.CanTransceive {
+		t.Error("Expected CanTransceive to be false for event-based device")
+	}
+	if caps.CanPoll {
+		t.Error("Expected CanPoll to be false for event-based device")
+	}
 }
 
 func TestGetDeviceCapabilities_Fallback(t *testing.T) {
-	// MockDevice now implements DeviceCapabilityProvider
+	// MockDevice implements DeviceInfoProvider
 	device := NewMockDevice()
 	caps := GetDeviceCapabilities(device)
 
-	// Should get mock device capabilities
+	// Should get mock device capabilities via BuildDeviceCapabilities
 	if !caps.CanTransceive {
 		t.Error("Expected CanTransceive to be true")
 	}

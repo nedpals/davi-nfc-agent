@@ -57,9 +57,14 @@ type MockDevice struct {
 	// CallLog tracks all method calls for verification in tests
 	CallLog []string
 
-	// MockCapabilities allows overriding the default capabilities
-	// If nil, returns default mock device capabilities
-	MockCapabilities *DeviceCapabilities
+	// MockDeviceType allows overriding the device type (default: "mock")
+	MockDeviceType string
+
+	// MockSupportedTagTypes allows overriding supported tag types
+	MockSupportedTagTypes []string
+
+	// MockSupportsEvents makes the device report as event-based (like smartphone)
+	MockSupportsEvents bool
 
 	mu sync.Mutex
 }
@@ -121,23 +126,37 @@ func (m *MockDevice) Connection() string {
 	return m.DeviceConnection
 }
 
-// Capabilities returns the device capabilities.
-// If MockCapabilities is set, returns that; otherwise returns default mock capabilities.
-func (m *MockDevice) Capabilities() DeviceCapabilities {
+// DeviceType returns the device type (implements DeviceInfoProvider).
+func (m *MockDevice) DeviceType() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.CallLog = append(m.CallLog, "Capabilities")
-	if m.MockCapabilities != nil {
-		return *m.MockCapabilities
+	m.CallLog = append(m.CallLog, "DeviceType")
+	if m.MockDeviceType != "" {
+		return m.MockDeviceType
 	}
-	return DeviceCapabilities{
-		CanTransceive:     true,
-		CanPoll:           true,
-		DeviceType:        "mock",
-		SupportedTagTypes: []string{"MIFARE Classic", "NTAG", "Type 4"},
-		SupportsEvents:    false,
+	return "mock"
+}
+
+// SupportedTagTypes returns the supported tag types (implements DeviceInfoProvider).
+func (m *MockDevice) SupportedTagTypes() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallLog = append(m.CallLog, "SupportedTagTypes")
+	if m.MockSupportedTagTypes != nil {
+		return m.MockSupportedTagTypes
 	}
+	return []string{"MIFARE Classic", "NTAG", "Type 4"}
+}
+
+// SupportsEvents returns whether this device emits events (implements DeviceEventEmitter).
+func (m *MockDevice) SupportsEvents() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallLog = append(m.CallLog, "SupportsEvents")
+	return m.MockSupportsEvents
 }
 
 // Transceive simulates data transmission with the device.

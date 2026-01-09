@@ -32,15 +32,14 @@ func (d *libnfcDevice) Connection() string {
 	return d.device.Connection()
 }
 
-// Capabilities returns the capabilities of this libnfc device.
-func (d *libnfcDevice) Capabilities() DeviceCapabilities {
-	return DeviceCapabilities{
-		CanTransceive:     true,
-		CanPoll:           true,
-		DeviceType:        "libnfc",
-		SupportedTagTypes: []string{"MIFARE Classic", "DESFire", "Ultralight", "NTAG", "ISO14443-4"},
-		SupportsEvents:    false,
-	}
+// DeviceType returns the device type identifier (implements DeviceInfoProvider).
+func (d *libnfcDevice) DeviceType() string {
+	return "libnfc"
+}
+
+// SupportedTagTypes returns the list of supported tag types (implements DeviceInfoProvider).
+func (d *libnfcDevice) SupportedTagTypes() []string {
+	return []string{"MIFARE Classic", "DESFire", "Ultralight", "NTAG", "ISO14443-4"}
 }
 
 // Transceive implements the Device Transceive method for raw data exchange.

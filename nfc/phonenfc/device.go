@@ -85,18 +85,21 @@ func (d *Device) Connection() string {
 	return d.connection
 }
 
-// Capabilities returns the capabilities of this smartphone device.
-func (d *Device) Capabilities() nfc.DeviceCapabilities {
+// DeviceType returns the device type identifier (implements nfc.DeviceInfoProvider).
+func (d *Device) DeviceType() string {
+	return "smartphone"
+}
+
+// SupportedTagTypes returns the NFC types this device supports (implements nfc.DeviceInfoProvider).
+func (d *Device) SupportedTagTypes() []string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	return []string{d.capabilities.NFCType}
+}
 
-	return nfc.DeviceCapabilities{
-		CanTransceive:     false, // Smartphones don't support raw transceive
-		CanPoll:           false, // Tags come via WebSocket, not polling
-		DeviceType:        "smartphone",
-		SupportedTagTypes: []string{d.capabilities.NFCType},
-		SupportsEvents:    true, // Tags arrive as events via WebSocket
-	}
+// SupportsEvents returns true as smartphones emit tag events (implements nfc.DeviceEventEmitter).
+func (d *Device) SupportsEvents() bool {
+	return true
 }
 
 // Transceive is not directly applicable for smartphones.

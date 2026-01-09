@@ -49,9 +49,17 @@ type TagCapabilityProvider interface {
 	Capabilities() TagCapabilities
 }
 
-// DeviceCapabilityProvider is an optional interface for devices to report capabilities.
-type DeviceCapabilityProvider interface {
-	Capabilities() DeviceCapabilities
+// DeviceInfoProvider provides device metadata for capability building.
+// Implement this interface to provide device-specific information.
+type DeviceInfoProvider interface {
+	DeviceType() string
+	SupportedTagTypes() []string
+}
+
+// DeviceEventEmitter is a marker interface for devices that emit tag events
+// (e.g., tag arrival/removal) rather than requiring polling.
+type DeviceEventEmitter interface {
+	SupportsEvents() bool
 }
 
 // GetTagCapabilities returns capabilities for any Tag.
@@ -65,18 +73,35 @@ func GetTagCapabilities(tag Tag) TagCapabilities {
 }
 
 // GetDeviceCapabilities returns capabilities for any Device.
-// If the device implements DeviceCapabilityProvider, it uses that.
-// Otherwise, returns conservative defaults.
+// Capabilities are built by checking which interfaces the device implements.
 func GetDeviceCapabilities(device Device) DeviceCapabilities {
-	if provider, ok := device.(DeviceCapabilityProvider); ok {
-		return provider.Capabilities()
-	}
-	// Conservative defaults for unknown devices
-	return DeviceCapabilities{
-		CanTransceive: true,
-		CanPoll:       true,
+	return BuildDeviceCapabilities(device)
+}
+
+// BuildDeviceCapabilities constructs a DeviceCapabilities struct by
+// checking which interfaces the device implements.
+func BuildDeviceCapabilities(device Device) DeviceCapabilities {
+	caps := DeviceCapabilities{
+		CanTransceive: true,  // Default true, will check for actual support
+		CanPoll:       true,  // Default true
 		DeviceType:    "unknown",
 	}
+
+	// Get device metadata if available
+	if info, ok := device.(DeviceInfoProvider); ok {
+		caps.DeviceType = info.DeviceType()
+		caps.SupportedTagTypes = info.SupportedTagTypes()
+	}
+
+	// Check for event-based device (smartphone-style)
+	// Event-based devices typically don't poll and don't support raw transceive
+	if emitter, ok := device.(DeviceEventEmitter); ok && emitter.SupportsEvents() {
+		caps.SupportsEvents = true
+		caps.CanPoll = false       // Event-driven, not polling
+		caps.CanTransceive = false // Usually no raw transceive for event-based
+	}
+
+	return caps
 }
 
 // InferTagCapabilities infers capabilities from a tag type string.
