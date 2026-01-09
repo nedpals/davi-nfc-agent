@@ -8,11 +8,12 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/protocol"
 )
 
 // HandlerFunc is a function type for handling websocket messages.
 // It processes a websocket request and returns an error if processing fails.
-type HandlerFunc func(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error
+type HandlerFunc func(ctx context.Context, conn *websocket.Conn, req protocol.WebSocketRequest) error
 
 // WebSocketHandlerFunc is a function type for custom WebSocket connection handling.
 // It takes over the entire WebSocket connection lifecycle when matched.

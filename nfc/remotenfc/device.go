@@ -1,4 +1,4 @@
-package phonenfc
+package remotenfc
 
 import (
 	"fmt"
@@ -10,18 +10,18 @@ import (
 
 // Device implements the nfc.Device interface for smartphone NFC scanning.
 type Device struct {
-	deviceID     string            // Unique ID for this smartphone (UUID)
-	connection   string            // Connection info (e.g., "smartphone:uuid")
-	deviceName   string            // Human-readable name (e.g., "iPhone 12 Pro")
-	platform     string            // "ios" or "android"
-	appVersion   string            // Mobile app version
-	isActive     bool              // Whether device is connected
-	tagChannel   chan []nfc.Tag    // Channel to receive tags from smartphone
-	closeChannel chan struct{}     // Signal to close device
-	mu           sync.RWMutex      // Protects device state
-	lastSeen     time.Time         // Last activity timestamp (for health monitoring)
+	deviceID     string             // Unique ID for this smartphone (UUID)
+	connection   string             // Connection info (e.g., "smartphone:uuid")
+	deviceName   string             // Human-readable name (e.g., "iPhone 12 Pro")
+	platform     string             // "ios" or "android"
+	appVersion   string             // Mobile app version
+	isActive     bool               // Whether device is connected
+	tagChannel   chan []nfc.Tag     // Channel to receive tags from smartphone
+	closeChannel chan struct{}      // Signal to close device
+	mu           sync.RWMutex       // Protects device state
+	lastSeen     time.Time          // Last activity timestamp (for health monitoring)
 	capabilities DeviceCapabilities // Read/write capabilities
-	metadata     map[string]string // Additional device info
+	metadata     map[string]string  // Additional device info
 }
 
 // NewDevice creates a new smartphone device instance.

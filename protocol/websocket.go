@@ -1,12 +1,23 @@
 package protocol
 
-// WebSocket message type constants
+// WebSocket message type constants for consumer/client communication
 const (
 	WSTypeTagData       = "tagData"
 	WSTypeDeviceStatus  = "deviceStatus"
 	WSTypeWriteRequest  = "writeRequest"
 	WSTypeWriteResponse = "writeResponse"
 	WSTypeError         = "error"
+)
+
+// WebSocket message type constants for device communication
+const (
+	WSTypeRegisterDevice         = "registerDevice"
+	WSTypeRegisterDeviceResponse = "registerDeviceResponse"
+	WSTypeTagScanned             = "tagScanned"
+	WSTypeTagRemoved             = "tagRemoved"
+	WSTypeDeviceHeartbeat        = "deviceHeartbeat"
+	WSTypeDeviceWriteRequest     = "deviceWriteRequest"
+	WSTypeDeviceWriteResponse    = "deviceWriteResponse"
 )
 
 // WebSocketMessage is the generic message envelope for WebSocket communication.

@@ -1,7 +1,6 @@
-package phonenfc
+package remotenfc
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/server"
 )
 
 // Manager implements the nfc.Manager interface for managing smartphone connections.
@@ -88,8 +86,8 @@ func (m *Manager) RegisterDevice(req DeviceRegistrationRequest) (*Device, error)
 	if req.DeviceName == "" {
 		return nil, fmt.Errorf("device name is required")
 	}
-	if req.Platform != "ios" && req.Platform != "android" {
-		return nil, fmt.Errorf("invalid platform: %s (must be 'ios' or 'android')", req.Platform)
+	if req.Platform != "ios" && req.Platform != "android" && req.Platform != "web" {
+		return nil, fmt.Errorf("invalid platform: %s (must be 'ios', 'android', or 'web')", req.Platform)
 	}
 
 	// Generate unique device ID
@@ -297,25 +295,4 @@ func (m *Manager) GetActiveDeviceCount() int {
 		}
 	}
 	return count
-}
-
-// Register implements server.ServerHandler interface.
-// Registers WebSocket handler and lifecycle for broadcasting tag data.
-func (m *Manager) Register(s server.HandlerServer) {
-	handler := NewHandler(m)
-	handler.Register(s)
-
-	// Register lifecycle to broadcast smartphone tag data
-	s.StartLifecycle(func(ctx context.Context) {
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case data := <-m.dataChan:
-					s.BroadcastTagData(data)
-				}
-			}
-		}()
-	})
 }

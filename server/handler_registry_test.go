@@ -7,15 +7,16 @@ import (
 	"testing"
 
 	"github.com/gorilla/websocket"
+	"github.com/nedpals/davi-nfc-agent/protocol"
 )
 
 // mockHandlerFunc is a mock implementation of HandlerFunc for testing
-func mockHandlerFunc(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error {
+func mockHandlerFunc(ctx context.Context, conn *websocket.Conn, req protocol.WebSocketRequest) error {
 	return nil
 }
 
 // errorHandlerFunc is a mock that returns an error
-func errorHandlerFunc(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error {
+func errorHandlerFunc(ctx context.Context, conn *websocket.Conn, req protocol.WebSocketRequest) error {
 	return errors.New("test error")
 }
 
@@ -187,7 +188,7 @@ func TestHandlerRegistry_HandleExecution(t *testing.T) {
 	registry := NewHandlerRegistry()
 
 	called := false
-	handler := func(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error {
+	handler := func(ctx context.Context, conn *websocket.Conn, req protocol.WebSocketRequest) error {
 		called = true
 		return nil
 	}
@@ -200,7 +201,7 @@ func TestHandlerRegistry_HandleExecution(t *testing.T) {
 			t.Fatal("handler not found")
 		}
 
-		err := h(context.Background(), nil, WebsocketRequest{})
+		err := h(context.Background(), nil, protocol.WebSocketRequest{})
 		if err != nil {
 			t.Fatalf("handler execution failed: %v", err)
 		}
@@ -212,14 +213,14 @@ func TestHandlerRegistry_HandleExecution(t *testing.T) {
 
 	t.Run("handler returns error", func(t *testing.T) {
 		expectedErr := errors.New("test error")
-		errorHandler := func(ctx context.Context, conn *websocket.Conn, req WebsocketRequest) error {
+		errorHandler := func(ctx context.Context, conn *websocket.Conn, req protocol.WebSocketRequest) error {
 			return expectedErr
 		}
 
 		registry.Handle("error", errorHandler)
 
 		h, _ := registry.Get("error")
-		err := h(context.Background(), nil, WebsocketRequest{})
+		err := h(context.Background(), nil, protocol.WebSocketRequest{})
 		if err != expectedErr {
 			t.Fatalf("expected error %v, got %v", expectedErr, err)
 		}
@@ -240,11 +241,11 @@ func TestHandlerRegistry_LifecycleHandlers(t *testing.T) {
 
 	t.Run("register multiple lifecycle functions", func(t *testing.T) {
 		registry := NewHandlerRegistry()
-		
+
 		starter1 := func(ctx context.Context) {}
 		starter2 := func(ctx context.Context) {}
 		starter3 := func(ctx context.Context) {}
-		
+
 		registry.RegisterLifecycle(starter1)
 		registry.RegisterLifecycle(starter2)
 		registry.RegisterLifecycle(starter3)
@@ -307,7 +308,7 @@ func TestHandlerRegistry_StartLifecycleHandlers(t *testing.T) {
 		ctx := context.Background()
 		registry.StartLifecycleHandlers(ctx)
 	})
-	
+
 	t.Run("lifecycle function receives context", func(t *testing.T) {
 		registry := NewHandlerRegistry()
 		var receivedCtx context.Context

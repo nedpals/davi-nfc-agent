@@ -14,27 +14,32 @@ import (
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
 	"github.com/nedpals/davi-nfc-agent/nfc/multimanager"
-	"github.com/nedpals/davi-nfc-agent/nfc/phonenfc"
+	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
 )
 
-const DEFAULT_PORT = 18080
+const (
+	DEFAULT_INPUT_PORT    = 9470
+	DEFAULT_CONSUMER_PORT = 9471
+)
 
 var (
 	// CLI flags
-	devicePathFlag string
-	portFlag       int
-	apiSecretFlag  string
+	devicePathFlag   string
+	inputPortFlag    int
+	consumerPortFlag int
+	apiSecretFlag    string
 )
 
 func main() {
 	// Command line flags
 	flag.StringVar(&devicePathFlag, "device", "", "Path to NFC device (optional)")
-	flag.IntVar(&portFlag, "port", DEFAULT_PORT, "Port to listen on for the web interface")
+	flag.IntVar(&inputPortFlag, "input-port", DEFAULT_INPUT_PORT, "Port for input server (devices, readers)")
+	flag.IntVar(&consumerPortFlag, "consumer-port", DEFAULT_CONSUMER_PORT, "Port for consumer server (web clients)")
 	flag.StringVar(&apiSecretFlag, "api-secret", "", "API secret for session handshake (optional)")
 	flag.Parse()
 
 	// Initialize smartphone manager
-	smartphoneManager := phonenfc.NewManager(30 * time.Second)
+	smartphoneManager := remotenfc.NewManager(30 * time.Second)
 
 	// Create multi-manager combining hardware and smartphone
 	manager := multimanager.NewMultiManager(
@@ -44,7 +49,8 @@ func main() {
 
 	// Create agent
 	agent := NewAgent(manager)
-	agent.ServerPort = portFlag
+	agent.InputPort = inputPortFlag
+	agent.ConsumerPort = consumerPortFlag
 	agent.APISecret = apiSecretFlag
 
 	// Set up signal handling for graceful shutdown

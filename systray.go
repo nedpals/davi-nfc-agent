@@ -185,8 +185,8 @@ func (s *SystrayApp) startCardInfoUpdater() {
 
 		for range ticker.C {
 			var card *nfc.Card
-			if s.agent.Server != nil {
-				card = s.agent.Server.GetLastCard()
+			if s.agent.ConsumerServer != nil {
+				card = s.agent.ConsumerServer.GetLastCard()
 			}
 
 			uid, cardType := s.getCardInfo(card)
@@ -404,7 +404,7 @@ func (s *SystrayApp) updateDeviceList() {
 // updateStatus updates the status menu item and icon
 func (s *SystrayApp) updateStatus(status string) {
 	s.mStatus.SetTitle(status)
-	
+
 	// Update icon based on status
 	switch status {
 	case "Running":
@@ -448,14 +448,14 @@ func (s *SystrayApp) updateCardType(cardType string) {
 
 // updateServerInfo updates the server address and port display
 func (s *SystrayApp) updateServerInfo() {
-	if s.agent.Server == nil {
+	if s.agent.ConsumerServer == nil {
 		s.mServerInfo.SetTitle("Server: Not running")
 		return
 	}
 
-	port := s.agent.ServerPort
+	port := s.agent.ConsumerPort
 	if port == 0 {
-		port = DEFAULT_PORT
+		port = DEFAULT_CONSUMER_PORT
 	}
 
 	ips := getLocalIPs()

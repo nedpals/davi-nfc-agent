@@ -1,4 +1,4 @@
-package phonenfc
+package remotenfc
 
 import (
 	"fmt"
@@ -39,14 +39,14 @@ type ServerInfo struct {
 
 // TagData is sent by mobile app when a tag is scanned.
 type TagData struct {
-	DeviceID    string                   `json:"deviceID"`    // Device that scanned the tag
-	UID         string                   `json:"uid"`         // Tag UID (hex format)
-	Technology  string                   `json:"technology"`  // "ISO14443A", "ISO14443B", etc.
-	Type        string                   `json:"type"`        // "MIFARE Classic 1K", "Type4", etc.
-	ATR         string                   `json:"atr"`         // Answer to Reset (if applicable)
-	ScannedAt   time.Time                `json:"scannedAt"`   // Timestamp of scan
+	DeviceID    string                     `json:"deviceID"`    // Device that scanned the tag
+	UID         string                     `json:"uid"`         // Tag UID (hex format)
+	Technology  string                     `json:"technology"`  // "ISO14443A", "ISO14443B", etc.
+	Type        string                     `json:"type"`        // "MIFARE Classic 1K", "Type4", etc.
+	ATR         string                     `json:"atr"`         // Answer to Reset (if applicable)
+	ScannedAt   time.Time                  `json:"scannedAt"`   // Timestamp of scan
 	NDEFMessage *protocol.NDEFMessageInput `json:"ndefMessage"` // Parsed NDEF data (if available)
-	RawData     []byte                   `json:"rawData"`     // Raw tag data (base64 encoded)
+	RawData     []byte                     `json:"rawData"`     // Raw tag data (base64 encoded)
 }
 
 // DeviceHeartbeat is sent by mobile app periodically.
@@ -122,5 +122,3 @@ func ConvertTagData(data TagData) (nfc.Tag, error) {
 
 	return tag, nil
 }
-
-

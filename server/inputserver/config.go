@@ -1,0 +1,24 @@
+package inputserver
+
+import (
+	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
+)
+
+// Config holds configuration for the Input Server.
+type Config struct {
+	// Reader is the NFC reader instance (hardware NFC)
+	Reader *nfc.NFCReader
+
+	// DeviceManager manages external devices (phones, tablets, etc.)
+	DeviceManager *remotenfc.Manager
+
+	// Port is the HTTP/WebSocket port to listen on
+	Port int
+
+	// APISecret is the optional API secret for authentication
+	APISecret string
+
+	// AllowedCardTypes limits which card types are accepted
+	AllowedCardTypes map[string]bool
+}

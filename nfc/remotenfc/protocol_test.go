@@ -1,4 +1,4 @@
-package phonenfc
+package remotenfc
 
 import (
 	"testing"

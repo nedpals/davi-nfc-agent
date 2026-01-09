@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
 	"github.com/nedpals/davi-nfc-agent/server"
+	"github.com/nedpals/davi-nfc-agent/server/consumerserver"
+	"github.com/nedpals/davi-nfc-agent/server/inputserver"
 )
 
 // GetAllCardTypeFilterNames returns all card type filter names from nfc package constants
@@ -27,12 +30,17 @@ func GetCardTypeFilterTooltip(cardType string) string {
 
 type Agent struct {
 	Logger           *log.Logger
-	Manager          nfc.Manager     // NFC device manager (supports hardware and smartphone)
+	Manager          nfc.Manager // NFC device manager (supports hardware and smartphone)
 	Reader           *nfc.NFCReader
-	Server           *server.Server
 	AllowedCardTypes map[string]bool // Card type filter using map
 	APISecret        string
-	ServerPort       int
+
+	// Two-server architecture
+	Bridge         *server.ServerBridge
+	InputServer    *inputserver.Server
+	ConsumerServer *consumerserver.Server
+	InputPort      int // Default: 9470
+	ConsumerPort   int // Default: 9471
 }
 
 func NewAgent(nfcManager nfc.Manager) *Agent {
@@ -40,6 +48,8 @@ func NewAgent(nfcManager nfc.Manager) *Agent {
 		Logger:           log.New(os.Stderr, "[agent] ", log.LstdFlags),
 		Manager:          nfcManager,
 		AllowedCardTypes: make(map[string]bool),
+		InputPort:        9470,
+		ConsumerPort:     9471,
 	}
 }
 
@@ -61,34 +71,66 @@ func (a *Agent) Start(devicePath string) error {
 
 	a.Reader = nfcReader
 
-	// Create server
-	a.Server = server.New(server.Config{
-		Reader:           a.Reader,
-		Port:             a.ServerPort,
-		APISecret:        a.APISecret,
-		AllowedCardTypes: a.AllowedCardTypes,
-	})
+	// Create bridge for inter-server communication
+	a.Bridge = server.NewServerBridge()
 
-	// Register handlers if Manager implements ServerHandler
-	if handler, ok := a.Manager.(server.ServerHandler); ok {
-		handler.Register(a.Server)
+	// Get device manager - try direct cast first, then check MultiManager
+	var deviceManager *remotenfc.Manager
+	if pm, ok := a.Manager.(*remotenfc.Manager); ok {
+		deviceManager = pm
+	} else if mm, ok := a.Manager.(interface{ GetManager(string) (nfc.Manager, bool) }); ok {
+		// MultiManager - get the smartphone manager
+		if mgr, exists := mm.GetManager(nfc.ManagerTypeSmartphone); exists {
+			if pm, ok := mgr.(*remotenfc.Manager); ok {
+				deviceManager = pm
+			}
+		}
 	}
 
-	go a.Server.Start()
+	// Create input server (handles devices via WebSocket, hardware readers)
+	a.InputServer = inputserver.New(inputserver.Config{
+		Reader:           a.Reader,
+		DeviceManager:    deviceManager,
+		Port:             a.InputPort,
+		APISecret:        a.APISecret,
+		AllowedCardTypes: a.AllowedCardTypes,
+	}, a.Bridge)
+
+	// Create consumer server (handles client connections)
+	a.ConsumerServer = consumerserver.New(consumerserver.Config{
+		Port:      a.ConsumerPort,
+		APISecret: a.APISecret,
+	}, a.Bridge)
+
+	// Start both servers
+	go a.InputServer.Start()
+	go a.ConsumerServer.Start()
+
+	a.Logger.Printf("Input server on port %d, Consumer server on port %d", a.InputPort, a.ConsumerPort)
 	return nil
 }
 
 func (a *Agent) Stop() {
-	if a.Reader == nil && a.Server == nil {
+	if a.Reader == nil && a.InputServer == nil {
 		a.Logger.Println("Agent is not running")
 		return
 	}
 
 	a.Logger.Println("Stopping agent...")
 
-	if a.Server != nil {
-		a.Server.Stop()
-		a.Server = nil
+	if a.ConsumerServer != nil {
+		a.ConsumerServer.Stop()
+		a.ConsumerServer = nil
+	}
+
+	if a.InputServer != nil {
+		a.InputServer.Stop()
+		a.InputServer = nil
+	}
+
+	if a.Bridge != nil {
+		a.Bridge.Close()
+		a.Bridge = nil
 	}
 
 	if a.Reader != nil {
@@ -96,9 +138,9 @@ func (a *Agent) Stop() {
 		a.Reader = nil
 	}
 
-	// Cleanup Manager if it implements ServerHandlerCloser
-	if closer, ok := a.Manager.(server.ServerHandlerCloser); ok {
-		closer.Close()
+	// Cleanup Manager if it's a remotenfc.Manager
+	if pm, ok := a.Manager.(*remotenfc.Manager); ok {
+		pm.Close()
 	}
 
 	a.Logger.Println("Agent stopped successfully")
