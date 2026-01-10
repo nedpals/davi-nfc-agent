@@ -95,8 +95,15 @@ func (s *Server) Start() error {
 
 	// Start HTTP server in goroutine
 	go func() {
-		log.Printf("[consumer] Listening on :%d", s.config.Port)
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if s.config.TLSEnabled() {
+			log.Printf("[consumer] Listening on :%d (TLS)", s.config.Port)
+			err = s.httpServer.ListenAndServeTLS(s.config.CertFile, s.config.KeyFile)
+		} else {
+			log.Printf("[consumer] Listening on :%d", s.config.Port)
+			err = s.httpServer.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			log.Printf("[consumer] HTTP server error: %v", err)
 		}
 	}()

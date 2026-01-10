@@ -41,6 +41,10 @@ type Agent struct {
 	ConsumerServer *consumerserver.Server
 	InputPort      int // Default: 9470
 	ConsumerPort   int // Default: 9471
+
+	// TLS configuration (optional, shared by both servers)
+	CertFile string // Path to TLS certificate file
+	KeyFile  string // Path to TLS private key file
 }
 
 func NewAgent(nfcManager nfc.Manager) *Agent {
@@ -94,12 +98,16 @@ func (a *Agent) Start(devicePath string) error {
 		Port:             a.InputPort,
 		APISecret:        a.APISecret,
 		AllowedCardTypes: a.AllowedCardTypes,
+		CertFile:         a.CertFile,
+		KeyFile:          a.KeyFile,
 	}, a.Bridge)
 
 	// Create consumer server (handles client connections)
 	a.ConsumerServer = consumerserver.New(consumerserver.Config{
 		Port:      a.ConsumerPort,
 		APISecret: a.APISecret,
+		CertFile:  a.CertFile,
+		KeyFile:   a.KeyFile,
 	}, a.Bridge)
 
 	// Start both servers

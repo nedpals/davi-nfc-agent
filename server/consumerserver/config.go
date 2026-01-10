@@ -7,4 +7,13 @@ type Config struct {
 
 	// APISecret is the optional API secret for authentication
 	APISecret string
+
+	// TLS configuration (optional)
+	CertFile string // Path to TLS certificate file
+	KeyFile  string // Path to TLS private key file
+}
+
+// TLSEnabled returns true if TLS is configured.
+func (c Config) TLSEnabled() bool {
+	return c.CertFile != "" && c.KeyFile != ""
 }

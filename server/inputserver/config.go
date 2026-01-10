@@ -21,4 +21,13 @@ type Config struct {
 
 	// AllowedCardTypes limits which card types are accepted
 	AllowedCardTypes map[string]bool
+
+	// TLS configuration (optional)
+	CertFile string // Path to TLS certificate file
+	KeyFile  string // Path to TLS private key file
+}
+
+// TLSEnabled returns true if TLS is configured.
+func (c Config) TLSEnabled() bool {
+	return c.CertFile != "" && c.KeyFile != ""
 }
