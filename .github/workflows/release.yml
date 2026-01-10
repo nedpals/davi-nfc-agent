@@ -1,0 +1,194 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  LIBNFC_VERSION: "1.8.0"
+  LIBFREEFARE_VERSION: "0.4.0"
+  LIBUSB_VERSION: "1.0.27"
+  LIBUSB_COMPAT_VERSION: "0.1.8"
+  OPENSSL_VERSION: "1.1.1w"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.5'
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.11.0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config autoconf automake libtool wget
+
+      - name: Build for Linux ${{ matrix.arch }}
+        env:
+          BUILD_VERSION: ${{ github.ref_name }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: ./scripts/build-unix.sh linux ${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: davi-nfc-agent-linux-${{ matrix.arch }}
+          path: davi-nfc-agent-linux-${{ matrix.arch }}
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.5'
+
+      - name: Install build dependencies
+        run: |
+          brew install autoconf automake libtool wget pkg-config
+
+      - name: Build for macOS ${{ matrix.arch }}
+        env:
+          BUILD_VERSION: ${{ github.ref_name }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: ./scripts/build-unix.sh darwin ${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: davi-nfc-agent-darwin-${{ matrix.arch }}
+          path: davi-nfc-agent-darwin-${{ matrix.arch }}
+
+  build-windows:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.5'
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.11.0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config autoconf automake libtool wget p7zip-full
+
+      - name: Build for Windows amd64
+        env:
+          BUILD_VERSION: ${{ github.ref_name }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: ./scripts/build-windows.sh amd64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: davi-nfc-agent-windows-amd64
+          path: davi-nfc-agent-windows-amd64.exe
+
+  package:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release archives
+        run: |
+          mkdir -p dist
+
+          # Linux amd64
+          mkdir -p pkg/davi-nfc-agent-linux-amd64
+          cp artifacts/davi-nfc-agent-linux-amd64/davi-nfc-agent-linux-amd64 pkg/davi-nfc-agent-linux-amd64/davi-nfc-agent
+          chmod +x pkg/davi-nfc-agent-linux-amd64/davi-nfc-agent
+          cp README.md LICENSE pkg/davi-nfc-agent-linux-amd64/
+          tar -czvf dist/davi-nfc-agent-linux-amd64.tar.gz -C pkg davi-nfc-agent-linux-amd64
+
+          # Linux arm64
+          mkdir -p pkg/davi-nfc-agent-linux-arm64
+          cp artifacts/davi-nfc-agent-linux-arm64/davi-nfc-agent-linux-arm64 pkg/davi-nfc-agent-linux-arm64/davi-nfc-agent
+          chmod +x pkg/davi-nfc-agent-linux-arm64/davi-nfc-agent
+          cp README.md LICENSE pkg/davi-nfc-agent-linux-arm64/
+          tar -czvf dist/davi-nfc-agent-linux-arm64.tar.gz -C pkg davi-nfc-agent-linux-arm64
+
+          # macOS amd64
+          mkdir -p pkg/davi-nfc-agent-darwin-amd64
+          cp artifacts/davi-nfc-agent-darwin-amd64/davi-nfc-agent-darwin-amd64 pkg/davi-nfc-agent-darwin-amd64/davi-nfc-agent
+          chmod +x pkg/davi-nfc-agent-darwin-amd64/davi-nfc-agent
+          cp README.md LICENSE pkg/davi-nfc-agent-darwin-amd64/
+          tar -czvf dist/davi-nfc-agent-darwin-amd64.tar.gz -C pkg davi-nfc-agent-darwin-amd64
+
+          # macOS arm64
+          mkdir -p pkg/davi-nfc-agent-darwin-arm64
+          cp artifacts/davi-nfc-agent-darwin-arm64/davi-nfc-agent-darwin-arm64 pkg/davi-nfc-agent-darwin-arm64/davi-nfc-agent
+          chmod +x pkg/davi-nfc-agent-darwin-arm64/davi-nfc-agent
+          cp README.md LICENSE pkg/davi-nfc-agent-darwin-arm64/
+          tar -czvf dist/davi-nfc-agent-darwin-arm64.tar.gz -C pkg davi-nfc-agent-darwin-arm64
+
+          # Windows amd64
+          mkdir -p pkg/davi-nfc-agent-windows-amd64
+          cp artifacts/davi-nfc-agent-windows-amd64/davi-nfc-agent-windows-amd64.exe pkg/davi-nfc-agent-windows-amd64/davi-nfc-agent.exe
+          cp README.md LICENSE pkg/davi-nfc-agent-windows-amd64/
+          cd pkg && zip -r ../dist/davi-nfc-agent-windows-amd64.zip davi-nfc-agent-windows-amd64 && cd ..
+
+          ls -la dist/
+
+      - name: Upload packaged archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-archives
+          path: dist/*
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packaged archives
+        uses: actions/download-artifact@v4
+        with:
+          name: release-archives
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

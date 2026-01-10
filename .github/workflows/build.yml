@@ -136,21 +136,3 @@ jobs:
           name: davi-nfc-agent-windows-amd64
           path: davi-nfc-agent-windows-amd64.exe
 
-  create-release:
-    needs: [build-linux, build-macos, build-windows]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/davi-nfc-agent-*
-          generate_release_notes: true
-          tag_name: release-${{ github.sha }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
