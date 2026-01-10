@@ -1,4 +1,4 @@
-package inputserver
+package deviceserver
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/nedpals/davi-nfc-agent/server"
 )
 
-// NFCHandler handles NFC reader operations for the input server.
+// NFCHandler handles NFC reader operations for the device server.
 // It reads from the NFC reader and sends data through the bridge.
 type NFCHandler struct {
 	reader           *nfc.NFCReader
@@ -17,7 +17,7 @@ type NFCHandler struct {
 	bridge           *server.ServerBridge
 }
 
-// NewNFCHandler creates a new NFC handler for the input server.
+// NewNFCHandler creates a new NFC handler for the device server.
 func NewNFCHandler(reader *nfc.NFCReader, allowedCardTypes map[string]bool, bridge *server.ServerBridge) *NFCHandler {
 	return &NFCHandler{
 		reader:           reader,
@@ -26,7 +26,7 @@ func NewNFCHandler(reader *nfc.NFCReader, allowedCardTypes map[string]bool, brid
 	}
 }
 
-// Register sets up message handlers and lifecycle for the input server.
+// Register sets up message handlers and lifecycle for the device server.
 func (h *NFCHandler) Register(s *Server) {
 	// Register lifecycle - listen for tag data from reader
 	s.StartLifecycle(func(ctx context.Context) {

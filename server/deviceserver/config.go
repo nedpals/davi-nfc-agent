@@ -1,11 +1,11 @@
-package inputserver
+package deviceserver
 
 import (
 	"github.com/nedpals/davi-nfc-agent/nfc"
 	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
 )
 
-// Config holds configuration for the Input Server.
+// Config holds configuration for the Device Server.
 type Config struct {
 	// Reader is the NFC reader instance (hardware NFC)
 	Reader *nfc.NFCReader

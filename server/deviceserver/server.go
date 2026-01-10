@@ -1,5 +1,5 @@
-// Package inputserver provides the WebSocket server for NFC readers and devices.
-package inputserver
+// Package deviceserver provides the WebSocket server for NFC readers and devices.
+package deviceserver
 
 import (
 	"context"
@@ -40,7 +40,7 @@ type Server struct {
 	devicesMux sync.RWMutex
 }
 
-// New creates a new input server instance.
+// New creates a new device server instance.
 func New(config Config, bridge *server.ServerBridge) *Server {
 	s := &Server{
 		config:  config,
@@ -84,23 +84,23 @@ func (s *Server) HandleWebSocket(matcher func(r *http.Request) bool, handler ser
 	s.handlerRegistry.HandleWebSocket(matcher, handler)
 }
 
-// BroadcastTagData sends tag data through the bridge to the consumer server.
+// BroadcastTagData sends tag data through the bridge to the client server.
 func (s *Server) BroadcastTagData(data nfc.NFCData) {
 	if !s.bridge.SendTagData(data) {
-		log.Printf("[input] Warning: failed to send tag data to bridge (channel full or closed)")
+		log.Printf("[device] Warning: failed to send tag data to bridge (channel full or closed)")
 	}
 }
 
-// BroadcastDeviceStatus sends device status through the bridge to the consumer server.
+// BroadcastDeviceStatus sends device status through the bridge to the client server.
 func (s *Server) BroadcastDeviceStatus(status nfc.DeviceStatus) {
 	if !s.bridge.SendDeviceStatus(status) {
-		log.Printf("[input] Warning: failed to send device status to bridge (channel full or closed)")
+		log.Printf("[device] Warning: failed to send device status to bridge (channel full or closed)")
 	}
 }
 
-// Start starts the input server.
+// Start starts the device server.
 func (s *Server) Start() error {
-	log.Printf("[input] Starting Input Server on port %d...", s.config.Port)
+	log.Printf("[device] Starting Device Server on port %d...", s.config.Port)
 
 	reader := s.config.Reader
 
@@ -110,7 +110,7 @@ func (s *Server) Start() error {
 		if deviceStatus.Connected {
 			reader.LogDeviceInfo()
 		} else {
-			log.Printf("[input] No NFC device connected, waiting for device...")
+			log.Printf("[device] No NFC device connected, waiting for device...")
 		}
 	}
 
@@ -130,13 +130,13 @@ func (s *Server) Start() error {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"status": "ok",
-			"type":   "input",
+			"type":   "device",
 		})
 	}))
 
 	// Root
 	mux.HandleFunc("/", s.enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("NFC Input Server"))
+		w.Write([]byte("NFC Device Server"))
 	}))
 
 	// Create HTTP server
@@ -149,20 +149,20 @@ func (s *Server) Start() error {
 	go func() {
 		var err error
 		if s.config.TLSEnabled() {
-			log.Printf("[input] Listening on :%d (TLS)", s.config.Port)
+			log.Printf("[device] Listening on :%d (TLS)", s.config.Port)
 			err = s.httpServer.ListenAndServeTLS(s.config.CertFile, s.config.KeyFile)
 		} else {
-			log.Printf("[input] Listening on :%d", s.config.Port)
+			log.Printf("[device] Listening on :%d", s.config.Port)
 			err = s.httpServer.ListenAndServe()
 		}
 		if err != nil && err != http.ErrServerClosed {
-			log.Printf("[input] HTTP server error: %v", err)
+			log.Printf("[device] HTTP server error: %v", err)
 		}
 	}()
 
 	// Start mDNS service
 	if err := s.startMDNS(); err != nil {
-		log.Printf("[input] Warning: Failed to start mDNS: %v", err)
+		log.Printf("[device] Warning: Failed to start mDNS: %v", err)
 	}
 
 	// Start reader
@@ -178,12 +178,12 @@ func (s *Server) Start() error {
 
 	// Block until shutdown
 	<-s.ctx.Done()
-	log.Printf("[input] Server context cancelled, shutting down...")
+	log.Printf("[device] Server context cancelled, shutting down...")
 
 	return nil
 }
 
-// Stop stops the input server.
+// Stop stops the device server.
 func (s *Server) Stop() {
 	if s.mdnsServer != nil {
 		s.mdnsServer.Shutdown()
@@ -211,7 +211,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Default device handling (if no custom handler matched)
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[input] WebSocket upgrade error: %v", err)
+		log.Printf("[device] WebSocket upgrade error: %v", err)
 		return
 	}
 	defer conn.Close()
@@ -227,36 +227,36 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		s.devicesMux.Unlock()
 	}()
 
-	log.Printf("[input] Device connected")
+	log.Printf("[device] Device connected")
 
 	// Handle incoming messages
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("[input] WebSocket read error: %v", err)
+				log.Printf("[device] WebSocket read error: %v", err)
 			}
 			break
 		}
 
 		var req protocol.WebSocketRequest
 		if err := json.Unmarshal(message, &req); err != nil {
-			log.Printf("[input] Failed to parse message: %v", err)
+			log.Printf("[device] Failed to parse message: %v", err)
 			continue
 		}
 
 		// Route to handler
 		if handler, ok := s.handlerRegistry.Get(req.Type); ok {
 			if err := handler(s.ctx, conn, req); err != nil {
-				log.Printf("[input] Handler error for %s: %v", req.Type, err)
+				log.Printf("[device] Handler error for %s: %v", req.Type, err)
 			}
 		} else {
-			log.Printf("[input] No handler for message type: %s", req.Type)
+			log.Printf("[device] No handler for message type: %s", req.Type)
 		}
 	}
 }
 
-// handleWriteRequests listens for write requests from the consumer server.
+// handleWriteRequests listens for write requests from the client server.
 func (s *Server) handleWriteRequests() {
 	for {
 		select {
@@ -271,7 +271,7 @@ func (s *Server) handleWriteRequests() {
 	}
 }
 
-// executeWriteRequest executes a write request from the consumer server.
+// executeWriteRequest executes a write request from the client server.
 func (s *Server) executeWriteRequest(msg server.WriteRequestMessage) {
 	reader := s.config.Reader
 	if reader == nil {
@@ -334,21 +334,21 @@ func (s *Server) enableCORS(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) startMDNS() error {
 	var err error
 	s.mdnsServer, err = zeroconf.Register(
-		server.MDNSInputServiceName,
-		server.MDNSInputServiceType,
+		server.MDNSDeviceServiceName,
+		server.MDNSDeviceServiceType,
 		server.MDNSDomain,
 		s.config.Port,
 		[]string{
 			"version=1.0",
 			"protocol=websocket",
 			"path=/ws",
-			"type=input",
+			"type=device",
 		},
 		nil,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register mDNS service: %w", err)
 	}
-	log.Printf("[input] mDNS service registered: %s on port %d", server.MDNSInputServiceType, s.config.Port)
+	log.Printf("[device] mDNS service registered: %s on port %d", server.MDNSDeviceServiceType, s.config.Port)
 	return nil
 }

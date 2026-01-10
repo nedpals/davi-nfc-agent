@@ -10,8 +10,8 @@ import (
 	"github.com/nedpals/davi-nfc-agent/nfc"
 	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
 	"github.com/nedpals/davi-nfc-agent/server"
-	"github.com/nedpals/davi-nfc-agent/server/consumerserver"
-	"github.com/nedpals/davi-nfc-agent/server/inputserver"
+	"github.com/nedpals/davi-nfc-agent/server/clientserver"
+	"github.com/nedpals/davi-nfc-agent/server/deviceserver"
 	"github.com/nedpals/davi-nfc-agent/tls"
 )
 
@@ -38,11 +38,11 @@ type Agent struct {
 	APISecret        string
 
 	// Two-server architecture
-	Bridge         *server.ServerBridge
-	InputServer    *inputserver.Server
-	ConsumerServer *consumerserver.Server
-	InputPort      int // Default: 9470
-	ConsumerPort   int // Default: 9471
+	Bridge       *server.ServerBridge
+	DeviceServer *deviceserver.Server
+	ClientServer *clientserver.Server
+	DevicePort   int // Default: 9470
+	ClientPort   int // Default: 9471
 
 	// TLS configuration (optional, shared by both servers)
 	CertFile   string       // Path to TLS certificate file
@@ -60,8 +60,8 @@ func NewAgent(nfcManager nfc.Manager) *Agent {
 		Logger:            log.New(os.Stderr, "[agent] ", log.LstdFlags),
 		Manager:           nfcManager,
 		AllowedCardTypes:  make(map[string]bool),
-		InputPort:         9470,
-		ConsumerPort:      9471,
+		DevicePort:        9470,
+		ClientPort:        9471,
 		serverRestartChan: make(chan struct{}, 1),
 	}
 }
@@ -103,21 +103,21 @@ func (a *Agent) Start(devicePath string) error {
 }
 
 func (a *Agent) Stop() {
-	if a.Reader == nil && a.InputServer == nil {
+	if a.Reader == nil && a.DeviceServer == nil {
 		a.Logger.Println("Agent is not running")
 		return
 	}
 
 	a.Logger.Println("Stopping agent...")
 
-	if a.ConsumerServer != nil {
-		a.ConsumerServer.Stop()
-		a.ConsumerServer = nil
+	if a.ClientServer != nil {
+		a.ClientServer.Stop()
+		a.ClientServer = nil
 	}
 
-	if a.InputServer != nil {
-		a.InputServer.Stop()
-		a.InputServer = nil
+	if a.DeviceServer != nil {
+		a.DeviceServer.Stop()
+		a.DeviceServer = nil
 	}
 
 	if a.Bridge != nil {
@@ -186,14 +186,14 @@ func (a *Agent) RestartServers() error {
 
 // stopServers stops only the HTTP/WebSocket servers (not the NFC reader).
 func (a *Agent) stopServers() {
-	if a.ConsumerServer != nil {
-		a.ConsumerServer.Stop()
-		a.ConsumerServer = nil
+	if a.ClientServer != nil {
+		a.ClientServer.Stop()
+		a.ClientServer = nil
 	}
 
-	if a.InputServer != nil {
-		a.InputServer.Stop()
-		a.InputServer = nil
+	if a.DeviceServer != nil {
+		a.DeviceServer.Stop()
+		a.DeviceServer = nil
 	}
 
 	if a.Bridge != nil {
@@ -223,30 +223,30 @@ func (a *Agent) startServers() error {
 		}
 	}
 
-	// Create input server
-	a.InputServer = inputserver.New(inputserver.Config{
+	// Create device server
+	a.DeviceServer = deviceserver.New(deviceserver.Config{
 		Reader:           a.Reader,
 		DeviceManager:    deviceManager,
-		Port:             a.InputPort,
+		Port:             a.DevicePort,
 		APISecret:        a.APISecret,
 		AllowedCardTypes: a.AllowedCardTypes,
 		CertFile:         a.CertFile,
 		KeyFile:          a.KeyFile,
 	}, a.Bridge)
 
-	// Create consumer server
-	a.ConsumerServer = consumerserver.New(consumerserver.Config{
-		Port:      a.ConsumerPort,
+	// Create client server
+	a.ClientServer = clientserver.New(clientserver.Config{
+		Port:      a.ClientPort,
 		APISecret: a.APISecret,
 		CertFile:  a.CertFile,
 		KeyFile:   a.KeyFile,
 	}, a.Bridge)
 
 	// Start both servers
-	go a.InputServer.Start()
-	go a.ConsumerServer.Start()
+	go a.DeviceServer.Start()
+	go a.ClientServer.Start()
 
-	a.Logger.Printf("Servers started: Input on port %d, Consumer on port %d", a.InputPort, a.ConsumerPort)
+	a.Logger.Printf("Servers started: Device on port %d, Client on port %d", a.DevicePort, a.ClientPort)
 	return nil
 }
 

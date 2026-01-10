@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	DEFAULT_INPUT_PORT     = 9470
-	DEFAULT_CONSUMER_PORT  = 9471
+	DEFAULT_DEVICE_PORT    = 9470
+	DEFAULT_CLIENT_PORT    = 9471
 	DEFAULT_BOOTSTRAP_PORT = 9472
 )
 
@@ -32,8 +32,8 @@ var (
 	// CLI flags
 	versionFlag       bool
 	devicePathFlag    string
-	inputPortFlag     int
-	consumerPortFlag  int
+	devicePortFlag    int
+	clientPortFlag    int
 	bootstrapPortFlag int
 	apiSecretFlag     string
 	certFileFlag      string
@@ -46,8 +46,8 @@ func main() {
 	// Command line flags
 	flag.BoolVar(&versionFlag, "version", false, "Print version information and exit")
 	flag.StringVar(&devicePathFlag, "device", "", "Path to NFC device (optional)")
-	flag.IntVar(&inputPortFlag, "input-port", DEFAULT_INPUT_PORT, "Port for input server (devices, readers)")
-	flag.IntVar(&consumerPortFlag, "consumer-port", DEFAULT_CONSUMER_PORT, "Port for consumer server (web clients)")
+	flag.IntVar(&devicePortFlag, "device-port", DEFAULT_DEVICE_PORT, "Port for device server (NFC devices, readers)")
+	flag.IntVar(&clientPortFlag, "client-port", DEFAULT_CLIENT_PORT, "Port for client server (web clients)")
 	flag.IntVar(&bootstrapPortFlag, "bootstrap-port", DEFAULT_BOOTSTRAP_PORT, "Port for CA bootstrap server (0 to disable)")
 	flag.StringVar(&apiSecretFlag, "api-secret", "", "API secret for session handshake (optional)")
 	flag.StringVar(&certFileFlag, "cert", "", "Path to TLS certificate file (enables HTTPS/WSS)")
@@ -103,8 +103,8 @@ func main() {
 
 	// Create agent
 	agent := NewAgent(manager)
-	agent.InputPort = inputPortFlag
-	agent.ConsumerPort = consumerPortFlag
+	agent.DevicePort = devicePortFlag
+	agent.ClientPort = clientPortFlag
 	agent.APISecret = apiSecretFlag
 	agent.CertFile = certFileFlag
 	agent.KeyFile = keyFileFlag

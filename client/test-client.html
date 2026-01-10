@@ -357,8 +357,8 @@
 
         <!-- Tab Navigation -->
         <div class="tabs">
-            <button class="tab" :class="{ active: mode === 'consumer' }" @click="switchMode('consumer')">
-                Consumer
+            <button class="tab" :class="{ active: mode === 'client' }" @click="switchMode('client')">
+                Client
             </button>
             <button class="tab" :class="{ active: mode === 'device' }" @click="switchMode('device')">
                 Device
@@ -366,36 +366,36 @@
         </div>
 
         <!-- Consumer Mode -->
-        <div v-show="mode === 'consumer'">
+        <div v-show="mode === 'client'">
             <!-- State 1: Landing / Connection -->
-            <template v-if="consumerState === 'landing'">
+            <template v-if="clientState === 'landing'">
                 <p class="subtitle">Connect to receive NFC data</p>
 
                 <div class="section">
-                    <div v-if="consumerError" class="alert alert-error">{{ consumerError }}</div>
+                    <div v-if="clientError" class="alert alert-error">{{ clientError }}</div>
 
                     <div class="form-group">
-                        <label>Consumer Server URL</label>
-                        <input type="text" v-model="consumerUrl" :disabled="consumerConnecting">
+                        <label>Client Server URL</label>
+                        <input type="text" v-model="clientUrl" :disabled="clientConnecting">
                     </div>
                     <div class="form-group">
                         <label>API Secret (optional)</label>
-                        <input type="password" v-model="apiSecret" placeholder="Enter API secret" :disabled="consumerConnecting">
+                        <input type="password" v-model="apiSecret" placeholder="Enter API secret" :disabled="clientConnecting">
                     </div>
-                    <button @click="connectConsumer" :disabled="consumerConnecting">
-                        {{ consumerConnecting ? 'Connecting...' : 'Connect' }}
+                    <button @click="connectClient" :disabled="clientConnecting">
+                        {{ clientConnecting ? 'Connecting...' : 'Connect' }}
                     </button>
                 </div>
             </template>
 
             <!-- State 2: Connected / Ready to scan -->
-            <template v-else-if="consumerState === 'scan'">
+            <template v-else-if="clientState === 'scan'">
                 <p class="subtitle">Ready to receive</p>
 
                 <div class="section">
                     <div class="status">
                         <div class="status-dot connected"></div>
-                        <span>Connected to ConsumerServer</span>
+                        <span>Connected to ClientServer</span>
                     </div>
 
                     <div class="empty-state">
@@ -403,12 +403,12 @@
                         <div>Waiting for tag data...</div>
                     </div>
 
-                    <button class="secondary" @click="disconnectConsumer">Disconnect</button>
+                    <button class="secondary" @click="disconnectClient">Disconnect</button>
                 </div>
             </template>
 
             <!-- State 3: Card detected -->
-            <template v-else-if="consumerState === 'card'">
+            <template v-else-if="clientState === 'card'">
                 <p class="subtitle">{{ card.uid }}</p>
 
                 <!-- Card Info -->
@@ -482,7 +482,7 @@
                     <div v-if="deviceError" class="alert alert-error">{{ deviceError }}</div>
 
                     <div class="form-group">
-                        <label>Input Server URL</label>
+                        <label>Device Server URL</label>
                         <input type="text" v-model="deviceUrl" :disabled="deviceConnecting">
                     </div>
                     <div class="form-group">
@@ -648,17 +648,17 @@
 
         createApp({
             setup() {
-                // Mode: 'consumer' or 'device'
-                const mode = ref('consumer');
+                // Mode: 'client' or 'device'
+                const mode = ref('client');
 
-                // ==================== Consumer Mode State ====================
-                const consumerState = ref('landing');
-                const consumerUrl = ref('http://localhost:9471');
+                // ==================== Client Mode State ====================
+                const clientState = ref('landing');
+                const clientUrl = ref('http://localhost:9471');
                 const apiSecret = ref('');
-                const consumerConnecting = ref(false);
-                const consumerError = ref('');
+                const clientConnecting = ref(false);
+                const clientError = ref('');
 
-                let consumerClient = null;
+                let nfcClient = null;
 
                 const card = reactive({
                     uid: '',
@@ -718,56 +718,56 @@
                     mode.value = newMode;
                 }
 
-                // ==================== Consumer Mode Functions ====================
-                async function connectConsumer() {
-                    consumerConnecting.value = true;
-                    consumerError.value = '';
+                // ==================== Client Mode Functions ====================
+                async function connectClient() {
+                    clientConnecting.value = true;
+                    clientError.value = '';
 
                     try {
-                        consumerClient = new NFCClient(consumerUrl.value, { apiSecret: apiSecret.value });
+                        nfcClient = new NFCClient(clientUrl.value, { apiSecret: apiSecret.value });
 
-                        consumerClient.on('connected', () => {
-                            consumerState.value = 'scan';
-                            consumerConnecting.value = false;
+                        nfcClient.on('connected', () => {
+                            clientState.value = 'scan';
+                            clientConnecting.value = false;
                         });
 
-                        consumerClient.on('disconnected', () => {
-                            consumerState.value = 'landing';
-                            consumerConnecting.value = false;
+                        nfcClient.on('disconnected', () => {
+                            clientState.value = 'landing';
+                            clientConnecting.value = false;
                         });
 
-                        consumerClient.on('error', (err) => {
-                            console.error('Consumer client error:', err);
-                            consumerError.value = err.error?.message || 'Connection error';
-                            consumerConnecting.value = false;
+                        nfcClient.on('error', (err) => {
+                            console.error('Client error:', err);
+                            clientError.value = err.error?.message || 'Connection error';
+                            clientConnecting.value = false;
                         });
 
-                        consumerClient.on('tagData', (data) => {
+                        nfcClient.on('tagData', (data) => {
                             if (data.uid) {
                                 handleCard(data);
                             }
                         });
 
-                        consumerClient.on('deviceStatus', (status) => {
-                            if (!status.CardPresent && consumerState.value === 'card') {
-                                consumerState.value = 'scan';
+                        nfcClient.on('deviceStatus', (status) => {
+                            if (!status.CardPresent && clientState.value === 'card') {
+                                clientState.value = 'scan';
                             }
                         });
 
-                        await consumerClient.connect();
+                        await nfcClient.connect();
                     } catch (err) {
-                        console.error('Consumer connection failed:', err);
-                        consumerError.value = err.message;
-                        consumerConnecting.value = false;
+                        console.error('Client connection failed:', err);
+                        clientError.value = err.message;
+                        clientConnecting.value = false;
                     }
                 }
 
-                async function disconnectConsumer() {
-                    if (consumerClient) {
-                        await consumerClient.disconnect();
-                        consumerClient = null;
+                async function disconnectClient() {
+                    if (nfcClient) {
+                        await nfcClient.disconnect();
+                        nfcClient = null;
                     }
-                    consumerState.value = 'landing';
+                    clientState.value = 'landing';
                 }
 
                 function handleCard(data) {
@@ -787,11 +787,11 @@
                     writeStatus.message = '';
                     writeStatus.type = '';
 
-                    consumerState.value = 'card';
+                    clientState.value = 'card';
                 }
 
                 async function writeCard() {
-                    if (!consumerClient || !consumerClient.isConnected()) {
+                    if (!nfcClient || !nfcClient.isConnected()) {
                         writeStatus.message = 'Not connected';
                         writeStatus.type = 'alert-error';
                         return;
@@ -815,7 +815,7 @@
                             ]
                         };
 
-                        await consumerClient.write(request);
+                        await nfcClient.write(request);
 
                         writeStatus.message = 'Write successful!';
                         writeStatus.type = 'alert-success';
@@ -840,7 +840,7 @@
                 }
 
                 function backToScan() {
-                    consumerState.value = 'scan';
+                    clientState.value = 'scan';
                 }
 
                 // ==================== Device Mode Functions ====================
@@ -1020,18 +1020,18 @@
                     mode,
                     switchMode,
 
-                    // Consumer mode
-                    consumerState,
-                    consumerUrl,
+                    // Client mode
+                    clientState,
+                    clientUrl,
                     apiSecret,
-                    consumerConnecting,
-                    consumerError,
+                    clientConnecting,
+                    clientError,
                     card,
                     rawPayload,
                     writeForm,
                     writeStatus,
-                    connectConsumer,
-                    disconnectConsumer,
+                    connectClient,
+                    disconnectClient,
                     writeCard,
                     backToScan,
 

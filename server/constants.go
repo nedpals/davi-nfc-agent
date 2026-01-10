@@ -9,10 +9,10 @@ var (
 	MDNSDomain      = "local."
 )
 
-// mDNS service discovery constants for input server
+// mDNS service discovery constants for device server
 var (
-	MDNSInputServiceType = "_nfc-input._tcp"
-	MDNSInputServiceName = buildinfo.DisplayName + " Input"
+	MDNSDeviceServiceType = "_nfc-device._tcp"
+	MDNSDeviceServiceName = buildinfo.DisplayName + " Device"
 )
 
 // WebSocket message types for client-server communication

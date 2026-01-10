@@ -1,6 +1,6 @@
-package consumerserver
+package clientserver
 
-// Config holds configuration for the Consumer Server.
+// Config holds configuration for the Client Server.
 type Config struct {
 	// Port is the HTTP/WebSocket port to listen on
 	Port int

@@ -1,5 +1,5 @@
-// Package consumerserver provides the WebSocket server for client applications.
-package consumerserver
+// Package clientserver provides the WebSocket server for client applications.
+package clientserver
 
 import (
 	"context"
@@ -38,7 +38,7 @@ type Server struct {
 	cardMu   sync.RWMutex
 }
 
-// New creates a new consumer server instance.
+// New creates a new client server instance.
 func New(config Config, bridge *server.ServerBridge) *Server {
 	return &Server{
 		config:  config,
@@ -52,9 +52,9 @@ func New(config Config, bridge *server.ServerBridge) *Server {
 	}
 }
 
-// Start starts the consumer server.
+// Start starts the client server.
 func (s *Server) Start() error {
-	log.Printf("[consumer] Starting Consumer Server on port %d...", s.config.Port)
+	log.Printf("[client] Starting Client Server on port %d...", s.config.Port)
 
 	// Create context
 	s.ctx, s.cancel = context.WithCancel(context.Background())
@@ -76,7 +76,7 @@ func (s *Server) Start() error {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":    "ok",
-			"type":      "consumer",
+			"type":      "client",
 			"timestamp": time.Now().Format("2006-01-02T15:04:05Z07:00"),
 			"clients":   s.clientCount(),
 		})
@@ -84,7 +84,7 @@ func (s *Server) Start() error {
 
 	// Root
 	mux.HandleFunc("/", s.enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("NFC Consumer Server"))
+		w.Write([]byte("NFC Client Server"))
 	}))
 
 	// Create HTTP server
@@ -97,14 +97,14 @@ func (s *Server) Start() error {
 	go func() {
 		var err error
 		if s.config.TLSEnabled() {
-			log.Printf("[consumer] Listening on :%d (TLS)", s.config.Port)
+			log.Printf("[client] Listening on :%d (TLS)", s.config.Port)
 			err = s.httpServer.ListenAndServeTLS(s.config.CertFile, s.config.KeyFile)
 		} else {
-			log.Printf("[consumer] Listening on :%d", s.config.Port)
+			log.Printf("[client] Listening on :%d", s.config.Port)
 			err = s.httpServer.ListenAndServe()
 		}
 		if err != nil && err != http.ErrServerClosed {
-			log.Printf("[consumer] HTTP server error: %v", err)
+			log.Printf("[client] HTTP server error: %v", err)
 		}
 	}()
 
@@ -114,12 +114,12 @@ func (s *Server) Start() error {
 
 	// Block until shutdown
 	<-s.ctx.Done()
-	log.Printf("[consumer] Server context cancelled, shutting down...")
+	log.Printf("[client] Server context cancelled, shutting down...")
 
 	return nil
 }
 
-// Stop stops the consumer server.
+// Stop stops the client server.
 func (s *Server) Stop() {
 	if s.httpServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -152,7 +152,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if s.config.APISecret != "" {
 		secret := r.URL.Query().Get("secret")
 		if secret != s.config.APISecret {
-			log.Printf("[consumer] WebSocket connection rejected: invalid API secret")
+			log.Printf("[client] WebSocket connection rejected: invalid API secret")
 			http.Error(w, "Unauthorized: Invalid API secret", http.StatusUnauthorized)
 			return
 		}
@@ -160,7 +160,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[consumer] WebSocket upgrade error: %v", err)
+		log.Printf("[client] WebSocket upgrade error: %v", err)
 		return
 	}
 
@@ -171,14 +171,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.clients[conn] = clientID
 	s.clientsMux.Unlock()
 
-	log.Printf("[consumer] Client connected: %s (total: %d)", clientID[:8], s.clientCount())
+	log.Printf("[client] Client connected: %s (total: %d)", clientID[:8], s.clientCount())
 
 	defer func() {
 		conn.Close()
 		s.clientsMux.Lock()
 		delete(s.clients, conn)
 		s.clientsMux.Unlock()
-		log.Printf("[consumer] Client disconnected: %s (total: %d)", clientID[:8], s.clientCount())
+		log.Printf("[client] Client disconnected: %s (total: %d)", clientID[:8], s.clientCount())
 	}()
 
 	// Send last card data if available
@@ -194,14 +194,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("[consumer] WebSocket read error: %v", err)
+				log.Printf("[client] WebSocket read error: %v", err)
 			}
 			break
 		}
 
 		var req protocol.WebSocketRequest
 		if err := json.Unmarshal(message, &req); err != nil {
-			log.Printf("[consumer] Failed to parse message: %v", err)
+			log.Printf("[client] Failed to parse message: %v", err)
 			s.sendErrorResponse(conn, "", "PARSE_ERROR", "Invalid message format")
 			continue
 		}
@@ -211,7 +211,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case server.WSMessageTypeWriteRequest:
 			s.handleWriteRequest(conn, clientID, req)
 		default:
-			log.Printf("[consumer] Unknown message type: %s", req.Type)
+			log.Printf("[client] Unknown message type: %s", req.Type)
 			s.sendErrorResponse(conn, req.ID, "UNKNOWN_TYPE", fmt.Sprintf("Unknown message type: %s", req.Type))
 		}
 	}
@@ -222,14 +222,14 @@ func (s *Server) handleWriteRequest(conn *websocket.Conn, clientID string, req p
 	// Parse write request from payload
 	payloadBytes, err := json.Marshal(req.Payload)
 	if err != nil {
-		log.Printf("[consumer] Failed to marshal write request payload: %v", err)
+		log.Printf("[client] Failed to marshal write request payload: %v", err)
 		s.sendErrorResponse(conn, req.ID, "INVALID_PAYLOAD", "Invalid write request payload")
 		return
 	}
 
 	var writeReq server.WriteRequest
 	if err := json.Unmarshal(payloadBytes, &writeReq); err != nil {
-		log.Printf("[consumer] Failed to parse write request: %v", err)
+		log.Printf("[client] Failed to parse write request: %v", err)
 		s.sendErrorResponse(conn, req.ID, "INVALID_WRITE_REQUEST", "Failed to parse write request")
 		return
 	}
@@ -250,7 +250,7 @@ func (s *Server) handleWriteRequest(conn *websocket.Conn, clientID string, req p
 	// Send through bridge and wait for response
 	response, err := s.bridge.SendWriteRequest(msg)
 	if err != nil {
-		log.Printf("[consumer] Write request failed: %v", err)
+		log.Printf("[client] Write request failed: %v", err)
 		s.sendErrorResponse(conn, req.ID, "WRITE_FAILED", err.Error())
 		return
 	}
@@ -273,7 +273,7 @@ func (s *Server) handleWriteRequest(conn *websocket.Conn, clientID string, req p
 	}
 
 	if err := conn.WriteJSON(wsResponse); err != nil {
-		log.Printf("[consumer] Failed to send write response: %v", err)
+		log.Printf("[client] Failed to send write response: %v", err)
 	}
 }
 
@@ -378,7 +378,7 @@ func (s *Server) sendTagDataToClient(conn *websocket.Conn, data nfc.NFCData) {
 	}
 
 	if err := conn.WriteJSON(message); err != nil {
-		log.Printf("[consumer] Failed to send tag data: %v", err)
+		log.Printf("[client] Failed to send tag data: %v", err)
 	}
 }
 
@@ -394,7 +394,7 @@ func (s *Server) broadcastDeviceStatus(status nfc.DeviceStatus) {
 
 	for conn := range s.clients {
 		if err := conn.WriteJSON(message); err != nil {
-			log.Printf("[consumer] Failed to send device status: %v", err)
+			log.Printf("[client] Failed to send device status: %v", err)
 		}
 	}
 }
@@ -412,7 +412,7 @@ func (s *Server) sendErrorResponse(conn *websocket.Conn, requestID string, error
 	}
 
 	if err := conn.WriteJSON(response); err != nil {
-		log.Printf("[consumer] Failed to send error response: %v", err)
+		log.Printf("[client] Failed to send error response: %v", err)
 	}
 }
 

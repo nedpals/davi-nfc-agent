@@ -2,16 +2,16 @@ package server
 
 import "github.com/nedpals/davi-nfc-agent/nfc"
 
-// ServerBridge facilitates communication between Input and Consumer servers.
+// ServerBridge facilitates communication between Device and Client servers.
 // All channels are buffered to prevent blocking.
 type ServerBridge struct {
-	// TagData flows from Input -> Consumer when tags are scanned
+	// TagData flows from Device -> Client when tags are scanned
 	TagData chan nfc.NFCData
 
-	// WriteRequest flows from Consumer -> Input for write operations
+	// WriteRequest flows from Client -> Device for write operations
 	WriteRequest chan WriteRequestMessage
 
-	// DeviceStatus flows from Input -> Consumer for device state updates
+	// DeviceStatus flows from Device -> Client for device state updates
 	DeviceStatus chan nfc.DeviceStatus
 
 	// done signals when the bridge should stop
@@ -71,7 +71,7 @@ func (b *ServerBridge) Done() <-chan struct{} {
 	return b.done
 }
 
-// SendTagData sends tag data to the consumer server.
+// SendTagData sends tag data to the client server.
 // Returns false if the bridge is closed or channel is full.
 func (b *ServerBridge) SendTagData(data nfc.NFCData) bool {
 	select {
@@ -85,7 +85,7 @@ func (b *ServerBridge) SendTagData(data nfc.NFCData) bool {
 	}
 }
 
-// SendDeviceStatus sends device status to the consumer server.
+// SendDeviceStatus sends device status to the client server.
 // Returns false if the bridge is closed or channel is full.
 func (b *ServerBridge) SendDeviceStatus(status nfc.DeviceStatus) bool {
 	select {
@@ -99,7 +99,7 @@ func (b *ServerBridge) SendDeviceStatus(status nfc.DeviceStatus) bool {
 	}
 }
 
-// SendWriteRequest sends a write request to the input server and waits for response.
+// SendWriteRequest sends a write request to the device server and waits for response.
 // Returns the response or an error if the bridge is closed.
 func (b *ServerBridge) SendWriteRequest(msg WriteRequestMessage) (WriteResponseMessage, error) {
 	// Ensure response channel is created

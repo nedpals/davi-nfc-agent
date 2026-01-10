@@ -54,12 +54,12 @@ type SystrayApp struct {
 	mDeviceMenu *systray.MenuItem
 
 	// URL menu items
-	mURLsMenu        *systray.MenuItem
-	mInputURL        *systray.MenuItem
-	mConsumerURL     *systray.MenuItem
-	mBootstrapURL    *systray.MenuItem
-	mCopyInputURL    *systray.MenuItem
-	mCopyConsumerURL *systray.MenuItem
+	mURLsMenu         *systray.MenuItem
+	mDeviceURL        *systray.MenuItem
+	mClientURL        *systray.MenuItem
+	mBootstrapURL     *systray.MenuItem
+	mCopyDeviceURL    *systray.MenuItem
+	mCopyClientURL    *systray.MenuItem
 	mCopyBootstrapURL *systray.MenuItem
 
 	deviceMenuItems map[string]*systray.MenuItem
@@ -118,12 +118,12 @@ func (s *SystrayApp) setupUI() {
 
 	// URLs menu
 	s.mURLsMenu = systray.AddMenuItem("Server URLs", "Server addresses")
-	s.mInputURL = s.mURLsMenu.AddSubMenuItem("Input: Not running", "InputServer WebSocket URL")
-	s.mInputURL.Disable()
-	s.mCopyInputURL = s.mURLsMenu.AddSubMenuItem("  Copy Input URL", "Copy InputServer URL to clipboard")
-	s.mConsumerURL = s.mURLsMenu.AddSubMenuItem("Consumer: Not running", "ConsumerServer URL")
-	s.mConsumerURL.Disable()
-	s.mCopyConsumerURL = s.mURLsMenu.AddSubMenuItem("  Copy Consumer URL", "Copy ConsumerServer URL to clipboard")
+	s.mDeviceURL = s.mURLsMenu.AddSubMenuItem("Device: Not running", "DeviceServer WebSocket URL")
+	s.mDeviceURL.Disable()
+	s.mCopyDeviceURL = s.mURLsMenu.AddSubMenuItem("  Copy Device URL", "Copy DeviceServer URL to clipboard")
+	s.mClientURL = s.mURLsMenu.AddSubMenuItem("Client: Not running", "ClientServer URL")
+	s.mClientURL.Disable()
+	s.mCopyClientURL = s.mURLsMenu.AddSubMenuItem("  Copy Client URL", "Copy ClientServer URL to clipboard")
 	s.mBootstrapURL = s.mURLsMenu.AddSubMenuItem("CA Cert: Not running", "CA Certificate download URL")
 	s.mBootstrapURL.Disable()
 	s.mCopyBootstrapURL = s.mURLsMenu.AddSubMenuItem("  Copy CA URL", "Copy CA Certificate URL to clipboard")
@@ -227,8 +227,8 @@ func (s *SystrayApp) startCardInfoUpdater() {
 
 		for range ticker.C {
 			var card *nfc.Card
-			if s.agent.ConsumerServer != nil {
-				card = s.agent.ConsumerServer.GetLastCard()
+			if s.agent.ClientServer != nil {
+				card = s.agent.ClientServer.GetLastCard()
 			}
 
 			uid, cardType := s.getCardInfo(card)
@@ -272,20 +272,20 @@ func (s *SystrayApp) handleMenuEvents(mRefreshDevices, mQuit *systray.MenuItem) 
 			s.handleStopAgent()
 		case <-mRefreshDevices.ClickedCh:
 			s.updateDeviceList()
-		case <-s.mCopyInputURL.ClickedCh:
-			if url := s.getInputURL(); url != "" {
+		case <-s.mCopyDeviceURL.ClickedCh:
+			if url := s.getDeviceURL(); url != "" {
 				if err := copyToClipboard(url); err != nil {
 					log.Printf("[systray] Failed to copy to clipboard: %v", err)
 				} else {
-					log.Printf("[systray] Copied InputServer URL to clipboard")
+					log.Printf("[systray] Copied DeviceServer URL to clipboard")
 				}
 			}
-		case <-s.mCopyConsumerURL.ClickedCh:
-			if url := s.getConsumerURL(); url != "" {
+		case <-s.mCopyClientURL.ClickedCh:
+			if url := s.getClientURL(); url != "" {
 				if err := copyToClipboard(url); err != nil {
 					log.Printf("[systray] Failed to copy to clipboard: %v", err)
 				} else {
-					log.Printf("[systray] Copied ConsumerServer URL to clipboard")
+					log.Printf("[systray] Copied ClientServer URL to clipboard")
 				}
 			}
 		case <-s.mCopyBootstrapURL.ClickedCh:
@@ -538,21 +538,21 @@ func (s *SystrayApp) updateURLs() {
 		wsProto = "wss"
 	}
 
-	// Input server URL
-	inputPort := s.agent.InputPort
-	if inputPort == 0 {
-		inputPort = DEFAULT_INPUT_PORT
+	// Device server URL
+	devicePort := s.agent.DevicePort
+	if devicePort == 0 {
+		devicePort = DEFAULT_DEVICE_PORT
 	}
-	inputURL := fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, inputPort)
-	s.mInputURL.SetTitle(fmt.Sprintf("Input: %s", inputURL))
+	deviceURL := fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, devicePort)
+	s.mDeviceURL.SetTitle(fmt.Sprintf("Device: %s", deviceURL))
 
-	// Consumer server URL
-	consumerPort := s.agent.ConsumerPort
-	if consumerPort == 0 {
-		consumerPort = DEFAULT_CONSUMER_PORT
+	// Client server URL
+	clientPort := s.agent.ClientPort
+	if clientPort == 0 {
+		clientPort = DEFAULT_CLIENT_PORT
 	}
-	consumerURL := fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, consumerPort)
-	s.mConsumerURL.SetTitle(fmt.Sprintf("Consumer: %s", consumerURL))
+	clientURL := fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, clientPort)
+	s.mClientURL.SetTitle(fmt.Sprintf("Client: %s", clientURL))
 
 	// Bootstrap/CA URL (always HTTP, only if bootstrap port is set)
 	if s.bootstrapPort > 0 {
@@ -565,13 +565,13 @@ func (s *SystrayApp) updateURLs() {
 
 // clearURLs resets all URL displays to "Not running"
 func (s *SystrayApp) clearURLs() {
-	s.mInputURL.SetTitle("Input: Not running")
-	s.mConsumerURL.SetTitle("Consumer: Not running")
+	s.mDeviceURL.SetTitle("Device: Not running")
+	s.mClientURL.SetTitle("Client: Not running")
 	s.mBootstrapURL.SetTitle("CA Cert: Not running")
 }
 
-// getInputURL returns the current InputServer URL
-func (s *SystrayApp) getInputURL() string {
+// getDeviceURL returns the current DeviceServer URL
+func (s *SystrayApp) getDeviceURL() string {
 	ips := getLocalIPs()
 	ip := "localhost"
 	if len(ips) > 0 {
@@ -584,15 +584,15 @@ func (s *SystrayApp) getInputURL() string {
 		wsProto = "wss"
 	}
 
-	inputPort := s.agent.InputPort
-	if inputPort == 0 {
-		inputPort = DEFAULT_INPUT_PORT
+	devicePort := s.agent.DevicePort
+	if devicePort == 0 {
+		devicePort = DEFAULT_DEVICE_PORT
 	}
-	return fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, inputPort)
+	return fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, devicePort)
 }
 
-// getConsumerURL returns the current ConsumerServer URL
-func (s *SystrayApp) getConsumerURL() string {
+// getClientURL returns the current ClientServer URL
+func (s *SystrayApp) getClientURL() string {
 	ips := getLocalIPs()
 	ip := "localhost"
 	if len(ips) > 0 {
@@ -605,11 +605,11 @@ func (s *SystrayApp) getConsumerURL() string {
 		wsProto = "wss"
 	}
 
-	consumerPort := s.agent.ConsumerPort
-	if consumerPort == 0 {
-		consumerPort = DEFAULT_CONSUMER_PORT
+	clientPort := s.agent.ClientPort
+	if clientPort == 0 {
+		clientPort = DEFAULT_CLIENT_PORT
 	}
-	return fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, consumerPort)
+	return fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, clientPort)
 }
 
 // getBootstrapURL returns the CA certificate download URL

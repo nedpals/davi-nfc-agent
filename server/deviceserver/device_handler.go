@@ -1,4 +1,4 @@
-package inputserver
+package deviceserver
 
 import (
 	"context"
