@@ -110,7 +110,7 @@ func main() {
 	}()
 
 	// Create and run systray app
-	app := NewSystrayApp(agent, devicePathFlag)
+	app := NewSystrayApp(agent, devicePathFlag, bootstrapPortFlag)
 	app.Run()
 }
 

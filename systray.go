@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os/exec"
+	"runtime"
 	"time"
 
 	"fyne.io/systray"
@@ -40,15 +42,25 @@ type SystrayApp struct {
 	agent         *Agent
 	currentDevice string
 	initialDevice string
+	bootstrapPort int
 
 	// Menu items
-	mStatus         *systray.MenuItem
-	mServerInfo     *systray.MenuItem
-	mCardUID        *systray.MenuItem
-	mCardType       *systray.MenuItem
-	mStart          *systray.MenuItem
-	mStop           *systray.MenuItem
-	mDeviceMenu     *systray.MenuItem
+	mStatus     *systray.MenuItem
+	mCardUID    *systray.MenuItem
+	mCardType   *systray.MenuItem
+	mStart      *systray.MenuItem
+	mStop       *systray.MenuItem
+	mDeviceMenu *systray.MenuItem
+
+	// URL menu items
+	mURLsMenu        *systray.MenuItem
+	mInputURL        *systray.MenuItem
+	mConsumerURL     *systray.MenuItem
+	mBootstrapURL    *systray.MenuItem
+	mCopyInputURL    *systray.MenuItem
+	mCopyConsumerURL *systray.MenuItem
+	mCopyBootstrapURL *systray.MenuItem
+
 	deviceMenuItems map[string]*systray.MenuItem
 
 	// Mode menu items
@@ -64,11 +76,12 @@ type SystrayApp struct {
 }
 
 // NewSystrayApp creates a new systray application
-func NewSystrayApp(agent *Agent, initialDevice string) *SystrayApp {
+func NewSystrayApp(agent *Agent, initialDevice string, bootstrapPort int) *SystrayApp {
 	return &SystrayApp{
 		agent:           agent,
 		initialDevice:   initialDevice,
 		currentDevice:   initialDevice,
+		bootstrapPort:   bootstrapPort,
 		deviceMenuItems: make(map[string]*systray.MenuItem),
 		cardTypeFilters: make(map[string]*cardTypeFilterItem),
 	}
@@ -101,8 +114,17 @@ func (s *SystrayApp) setupUI() {
 	s.mStatus = systray.AddMenuItem("Starting...", "Agent Status")
 	s.mStatus.Disable()
 
-	s.mServerInfo = systray.AddMenuItem("Server: Not running", "Server address and port")
-	s.mServerInfo.Disable()
+	// URLs menu
+	s.mURLsMenu = systray.AddMenuItem("Server URLs", "Server addresses")
+	s.mInputURL = s.mURLsMenu.AddSubMenuItem("Input: Not running", "InputServer WebSocket URL")
+	s.mInputURL.Disable()
+	s.mCopyInputURL = s.mURLsMenu.AddSubMenuItem("  Copy Input URL", "Copy InputServer URL to clipboard")
+	s.mConsumerURL = s.mURLsMenu.AddSubMenuItem("Consumer: Not running", "ConsumerServer URL")
+	s.mConsumerURL.Disable()
+	s.mCopyConsumerURL = s.mURLsMenu.AddSubMenuItem("  Copy Consumer URL", "Copy ConsumerServer URL to clipboard")
+	s.mBootstrapURL = s.mURLsMenu.AddSubMenuItem("CA Cert: Not running", "CA Certificate download URL")
+	s.mBootstrapURL.Disable()
+	s.mCopyBootstrapURL = s.mURLsMenu.AddSubMenuItem("  Copy CA URL", "Copy CA Certificate URL to clipboard")
 
 	systray.AddSeparator()
 
@@ -168,7 +190,7 @@ func (s *SystrayApp) autoStartAgent() {
 	go func() {
 		if err := s.agent.Start(s.currentDevice); err == nil {
 			s.updateStatus("Running")
-			s.updateServerInfo()
+			s.updateURLs()
 			s.mStop.Enable()
 		} else {
 			s.updateStatus("Failed to Start")
@@ -237,6 +259,30 @@ func (s *SystrayApp) handleMenuEvents(mRefreshDevices, mQuit *systray.MenuItem) 
 			s.handleStopAgent()
 		case <-mRefreshDevices.ClickedCh:
 			s.updateDeviceList()
+		case <-s.mCopyInputURL.ClickedCh:
+			if url := s.getInputURL(); url != "" {
+				if err := copyToClipboard(url); err != nil {
+					log.Printf("[systray] Failed to copy to clipboard: %v", err)
+				} else {
+					log.Printf("[systray] Copied InputServer URL to clipboard")
+				}
+			}
+		case <-s.mCopyConsumerURL.ClickedCh:
+			if url := s.getConsumerURL(); url != "" {
+				if err := copyToClipboard(url); err != nil {
+					log.Printf("[systray] Failed to copy to clipboard: %v", err)
+				} else {
+					log.Printf("[systray] Copied ConsumerServer URL to clipboard")
+				}
+			}
+		case <-s.mCopyBootstrapURL.ClickedCh:
+			if url := s.getBootstrapURL(); url != "" {
+				if err := copyToClipboard(url); err != nil {
+					log.Printf("[systray] Failed to copy to clipboard: %v", err)
+				} else {
+					log.Printf("[systray] Copied CA Certificate URL to clipboard")
+				}
+			}
 		case <-s.mReadWriteMode.ClickedCh:
 			s.handleModeSwitch(nfc.ModeReadWrite, "Read/Write")
 		case <-s.mReadMode.ClickedCh:
@@ -262,7 +308,7 @@ func (s *SystrayApp) handleMenuEvents(mRefreshDevices, mQuit *systray.MenuItem) 
 func (s *SystrayApp) handleStartAgent() {
 	if err := s.agent.Start(s.currentDevice); err == nil {
 		s.updateStatus("Running")
-		s.updateServerInfo()
+		s.updateURLs()
 		s.mStart.Disable()
 		s.mStop.Enable()
 	} else {
@@ -274,7 +320,7 @@ func (s *SystrayApp) handleStartAgent() {
 func (s *SystrayApp) handleStopAgent() {
 	s.agent.Stop()
 	s.updateStatus("Stopped")
-	s.mServerInfo.SetTitle("Server: Not running")
+	s.clearURLs()
 	s.mStop.Disable()
 	s.mStart.Enable()
 }
@@ -379,12 +425,12 @@ func (s *SystrayApp) switchDevice(deviceName string, menuItem *systray.MenuItem)
 		s.agent.Stop()
 		if err := s.agent.Start(s.currentDevice); err == nil {
 			s.updateStatus("Running")
-			s.updateServerInfo()
+			s.updateURLs()
 			s.mStop.Enable()
 			s.mStart.Disable()
 		} else {
 			s.updateStatus("Failed to Start")
-			s.mServerInfo.SetTitle("Server: Not running")
+			s.clearURLs()
 			s.mStart.Enable()
 			s.mStop.Disable()
 		}
@@ -464,24 +510,139 @@ func (s *SystrayApp) updateCardType(cardType string) {
 	}
 }
 
-// updateServerInfo updates the server address and port display
-func (s *SystrayApp) updateServerInfo() {
-	if s.agent.ConsumerServer == nil {
-		s.mServerInfo.SetTitle("Server: Not running")
-		return
+// updateURLs updates all server URL displays
+func (s *SystrayApp) updateURLs() {
+	ips := getLocalIPs()
+	ip := "localhost"
+	if len(ips) > 0 {
+		ip = ips[0]
 	}
 
-	port := s.agent.ConsumerPort
-	if port == 0 {
-		port = DEFAULT_CONSUMER_PORT
+	// Determine protocol based on TLS
+	tlsEnabled := s.agent.CertFile != "" && s.agent.KeyFile != ""
+	wsProto := "ws"
+	if tlsEnabled {
+		wsProto = "wss"
+	}
+
+	// Input server URL
+	inputPort := s.agent.InputPort
+	if inputPort == 0 {
+		inputPort = DEFAULT_INPUT_PORT
+	}
+	inputURL := fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, inputPort)
+	s.mInputURL.SetTitle(fmt.Sprintf("Input: %s", inputURL))
+
+	// Consumer server URL
+	consumerPort := s.agent.ConsumerPort
+	if consumerPort == 0 {
+		consumerPort = DEFAULT_CONSUMER_PORT
+	}
+	consumerURL := fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, consumerPort)
+	s.mConsumerURL.SetTitle(fmt.Sprintf("Consumer: %s", consumerURL))
+
+	// Bootstrap/CA URL (always HTTP, only if bootstrap port is set)
+	if s.bootstrapPort > 0 {
+		bootstrapURL := fmt.Sprintf("http://%s:%d", ip, s.bootstrapPort)
+		s.mBootstrapURL.SetTitle(fmt.Sprintf("CA Cert: %s", bootstrapURL))
+	} else {
+		s.mBootstrapURL.SetTitle("CA Cert: Disabled")
+	}
+}
+
+// clearURLs resets all URL displays to "Not running"
+func (s *SystrayApp) clearURLs() {
+	s.mInputURL.SetTitle("Input: Not running")
+	s.mConsumerURL.SetTitle("Consumer: Not running")
+	s.mBootstrapURL.SetTitle("CA Cert: Not running")
+}
+
+// getInputURL returns the current InputServer URL
+func (s *SystrayApp) getInputURL() string {
+	ips := getLocalIPs()
+	ip := "localhost"
+	if len(ips) > 0 {
+		ip = ips[0]
+	}
+
+	tlsEnabled := s.agent.CertFile != "" && s.agent.KeyFile != ""
+	wsProto := "ws"
+	if tlsEnabled {
+		wsProto = "wss"
+	}
+
+	inputPort := s.agent.InputPort
+	if inputPort == 0 {
+		inputPort = DEFAULT_INPUT_PORT
+	}
+	return fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, inputPort)
+}
+
+// getConsumerURL returns the current ConsumerServer URL
+func (s *SystrayApp) getConsumerURL() string {
+	ips := getLocalIPs()
+	ip := "localhost"
+	if len(ips) > 0 {
+		ip = ips[0]
+	}
+
+	tlsEnabled := s.agent.CertFile != "" && s.agent.KeyFile != ""
+	wsProto := "ws"
+	if tlsEnabled {
+		wsProto = "wss"
+	}
+
+	consumerPort := s.agent.ConsumerPort
+	if consumerPort == 0 {
+		consumerPort = DEFAULT_CONSUMER_PORT
+	}
+	return fmt.Sprintf("%s://%s:%d/ws", wsProto, ip, consumerPort)
+}
+
+// getBootstrapURL returns the CA certificate download URL
+func (s *SystrayApp) getBootstrapURL() string {
+	if s.bootstrapPort <= 0 {
+		return ""
 	}
 
 	ips := getLocalIPs()
-	if len(ips) == 0 {
-		s.mServerInfo.SetTitle(fmt.Sprintf("Server: localhost:%d", port))
-		return
+	ip := "localhost"
+	if len(ips) > 0 {
+		ip = ips[0]
 	}
 
-	// Show the first IP address with port
-	s.mServerInfo.SetTitle(fmt.Sprintf("Server: %s:%d", ips[0], port))
+	return fmt.Sprintf("http://%s:%d", ip, s.bootstrapPort)
+}
+
+// copyToClipboard copies text to the system clipboard
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "linux":
+		cmd = exec.Command("xclip", "-selection", "clipboard")
+	case "windows":
+		cmd = exec.Command("clip")
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	_, err = stdin.Write([]byte(text))
+	if err != nil {
+		return err
+	}
+
+	stdin.Close()
+	return cmd.Wait()
 }

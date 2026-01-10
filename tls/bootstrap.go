@@ -45,7 +45,15 @@ func (s *BootstrapServer) Start() error {
 	}
 
 	s.logger.Printf("CA Bootstrap server running on http://localhost:%d", s.port)
-	s.logger.Printf("Devices can download CA from: http://<your-ip>:%d/ca.pem", s.port)
+
+	// Log actual IPs
+	if hosts, err := GetAllHosts(); err == nil {
+		for _, h := range hosts {
+			if h != "localhost" {
+				s.logger.Printf("  http://%s:%d/ca.pem", h, s.port)
+			}
+		}
+	}
 
 	// Log fingerprint
 	if fingerprint, err := s.manager.GetCAFingerprint(); err == nil {
