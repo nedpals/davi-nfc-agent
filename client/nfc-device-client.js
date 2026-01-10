@@ -453,6 +453,38 @@ class NFCDeviceClient {
   }
 
   /**
+   * Infers card type from UID length and format
+   * WebNFC doesn't expose card type directly, so we use heuristics
+   * @private
+   * @param {string} uid - The card UID (colon-separated hex)
+   * @returns {string} Inferred card type
+   */
+  _inferCardType(uid) {
+    if (!uid) return 'Unknown';
+
+    // Count UID bytes (format: "XX:XX:XX:XX" or "XX-XX-XX-XX" or "XXXXXXXX")
+    const cleanUID = uid.replace(/[:-]/g, '');
+    const uidLength = cleanUID.length / 2; // Each byte is 2 hex chars
+
+    // Infer based on UID length
+    // See: https://www.nxp.com/docs/en/application-note/AN10927.pdf
+    switch (uidLength) {
+      case 4:
+        // 4-byte UID: Typically Mifare Classic 1K/4K, Mifare Mini
+        return 'Mifare Classic';
+      case 7:
+        // 7-byte UID: Mifare Ultralight, NTAG, Mifare DESFire, Mifare Plus
+        // Without more info, we can't distinguish between these
+        return 'Mifare Ultralight/NTAG';
+      case 10:
+        // 10-byte UID: Rare, some special Mifare cards
+        return 'Mifare (10-byte UID)';
+      default:
+        return 'NDEF';
+    }
+  }
+
+  /**
    * Handles WebNFC reading event
    * @private
    */
@@ -462,10 +494,13 @@ class NFCDeviceClient {
     // Convert NDEF message to our format
     const ndefMessage = this._convertNDEFMessage(event.message);
 
+    // Infer card type from UID
+    const cardType = this._inferCardType(uid);
+
     const tagData = {
       uid: uid,
-      technology: 'NFC',
-      type: 'NDEF',
+      technology: 'NFC-A', // WebNFC typically works with NFC-A (ISO14443A)
+      type: cardType,
       scannedAt: new Date().toISOString(),
       ndefMessage: ndefMessage,
       source: 'webnfc'
