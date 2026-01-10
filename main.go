@@ -5,6 +5,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 
 	"fyne.io/systray"
 
+	"github.com/nedpals/davi-nfc-agent/buildinfo"
 	"github.com/nedpals/davi-nfc-agent/nfc"
 	"github.com/nedpals/davi-nfc-agent/nfc/multimanager"
 	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
@@ -28,6 +30,7 @@ const (
 
 var (
 	// CLI flags
+	versionFlag       bool
 	devicePathFlag    string
 	inputPortFlag     int
 	consumerPortFlag  int
@@ -41,6 +44,7 @@ var (
 
 func main() {
 	// Command line flags
+	flag.BoolVar(&versionFlag, "version", false, "Print version information and exit")
 	flag.StringVar(&devicePathFlag, "device", "", "Path to NFC device (optional)")
 	flag.IntVar(&inputPortFlag, "input-port", DEFAULT_INPUT_PORT, "Port for input server (devices, readers)")
 	flag.IntVar(&consumerPortFlag, "consumer-port", DEFAULT_CONSUMER_PORT, "Port for consumer server (web clients)")
@@ -51,6 +55,14 @@ func main() {
 	flag.BoolVar(&autoTLSFlag, "auto-tls", true, "Automatically generate and manage TLS certificates")
 	flag.StringVar(&configDirFlag, "config-dir", "", "Config directory (default: platform-specific)")
 	flag.Parse()
+
+	// Handle --version flag
+	if versionFlag {
+		fmt.Println(buildinfo.BuildInfo())
+		os.Exit(0)
+	}
+
+	log.Printf("Starting %s %s", buildinfo.Name, buildinfo.FullVersion())
 
 	// Initialize auto-TLS if enabled (and no manual cert/key provided)
 	var tlsMgr *tls.Manager
@@ -123,5 +135,5 @@ func getDefaultConfigDir() string {
 		home, _ := os.UserHomeDir()
 		configDir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(configDir, "davi-nfc-agent")
+	return filepath.Join(configDir, buildinfo.DirName)
 }

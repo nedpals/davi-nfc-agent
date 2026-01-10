@@ -13,6 +13,17 @@ LIBUSB_VERSION="${LIBUSB_VERSION:-1.0.27}"
 LIBUSB_COMPAT_VERSION="${LIBUSB_COMPAT_VERSION:-0.1.8}"
 OPENSSL_VERSION="${OPENSSL_VERSION:-1.1.1w}"
 
+# Build info (can be overridden via environment variables)
+BUILD_VERSION="${BUILD_VERSION:-dev}"
+BUILD_COMMIT="${BUILD_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')}"
+BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+# Generate ldflags for buildinfo package
+get_buildinfo_ldflags() {
+    local pkg="github.com/nedpals/davi-nfc-agent/buildinfo"
+    echo "-X $pkg.Version=$BUILD_VERSION -X $pkg.Commit=$BUILD_COMMIT -X $pkg.BuildTime=$BUILD_TIME"
+}
+
 # Detect current OS and architecture
 detect_platform() {
     local os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -293,25 +304,27 @@ build_go_binary() {
     export GOARCH="$TARGET_ARCH"
     export CGO_CFLAGS="-I$BUILD_ROOT/include"
 
+    # Get buildinfo ldflags
+    BUILDINFO_LDFLAGS=$(get_buildinfo_ldflags)
+
     case "$TARGET_OS" in
         linux)
             export CGO_LDFLAGS="-L$BUILD_ROOT/lib -lcrypto -lusb-1.0 -static"
-            GO_LDFLAGS="-linkmode external -extldflags '-static'"
+            GO_LDFLAGS="-linkmode external -extldflags '-static' $BUILDINFO_LDFLAGS"
             ;;
         darwin)
             export CGO_LDFLAGS="-L$BUILD_ROOT/lib -lcrypto -lusb-1.0 -framework IOKit -framework CoreFoundation -framework Security"
-            GO_LDFLAGS=""
+            GO_LDFLAGS="$BUILDINFO_LDFLAGS"
             ;;
     esac
 
     BINARY_NAME="davi-nfc-agent-$TARGET_OS-$TARGET_ARCH"
 
     echo "Building $BINARY_NAME..."
-    if [ -n "$GO_LDFLAGS" ]; then
-        go build -v -ldflags="$GO_LDFLAGS" -o "$BINARY_NAME" .
-    else
-        go build -v -o "$BINARY_NAME" .
-    fi
+    echo "  Version: $BUILD_VERSION"
+    echo "  Commit: $BUILD_COMMIT"
+    echo "  Build Time: $BUILD_TIME"
+    go build -v -ldflags="$GO_LDFLAGS" -o "$BINARY_NAME" .
 
     echo "✓ Binary built: $BINARY_NAME"
     ls -lh "$BINARY_NAME"

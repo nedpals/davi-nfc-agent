@@ -12,6 +12,17 @@ LIBUSB_VERSION="${LIBUSB_VERSION:-1.0.27}"
 LIBUSB_COMPAT_VERSION="${LIBUSB_COMPAT_VERSION:-0.1.8}"
 OPENSSL_VERSION="${OPENSSL_VERSION:-1.1.1w}"
 
+# Build info (can be overridden via environment variables)
+BUILD_VERSION="${BUILD_VERSION:-dev}"
+BUILD_COMMIT="${BUILD_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')}"
+BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+# Generate ldflags for buildinfo package
+get_buildinfo_ldflags() {
+    local pkg="github.com/nedpals/davi-nfc-agent/buildinfo"
+    echo "-X $pkg.Version=$BUILD_VERSION -X $pkg.Commit=$BUILD_COMMIT -X $pkg.BuildTime=$BUILD_TIME"
+}
+
 TARGET_ARCH="${1:-amd64}"
 
 if [ "$TARGET_ARCH" != "amd64" ]; then
@@ -358,10 +369,16 @@ build_go_binary() {
     # Note: Order matters for static linking - dependencies must come after dependents
     export CGO_LDFLAGS="-L$BUILD_ROOT/lib -lnfc -lfreefare -lcrypto -lusb-1.0 -lws2_32 -lbcrypt -lgdi32 -ladvapi32 -lcrypt32 -luser32 -liphlpapi -static"
 
+    # Get buildinfo ldflags
+    BUILDINFO_LDFLAGS=$(get_buildinfo_ldflags)
+
     BINARY_NAME="davi-nfc-agent-windows-$TARGET_ARCH.exe"
 
     echo "Building $BINARY_NAME..."
-    go build -v -o "$BINARY_NAME" .
+    echo "  Version: $BUILD_VERSION"
+    echo "  Commit: $BUILD_COMMIT"
+    echo "  Build Time: $BUILD_TIME"
+    go build -v -ldflags="$BUILDINFO_LDFLAGS" -o "$BINARY_NAME" .
 
     echo "✓ Binary built: $BINARY_NAME"
     ls -lh "$BINARY_NAME"

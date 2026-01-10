@@ -1,16 +1,18 @@
 package server
 
+import "github.com/nedpals/davi-nfc-agent/buildinfo"
+
 // mDNS service discovery constants for legacy single-server mode
-const (
+var (
 	MDNSServiceType = "_nfc-agent._tcp"
-	MDNSServiceName = "DAVI NFC Agent"
+	MDNSServiceName = buildinfo.DisplayName
 	MDNSDomain      = "local."
 )
 
 // mDNS service discovery constants for input server
-const (
+var (
 	MDNSInputServiceType = "_nfc-input._tcp"
-	MDNSInputServiceName = "DAVI NFC Input"
+	MDNSInputServiceName = buildinfo.DisplayName + " Input"
 )
 
 // WebSocket message types for client-server communication

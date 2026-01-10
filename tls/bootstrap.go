@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/nedpals/davi-nfc-agent/buildinfo"
 )
 
 // BootstrapServer serves the CA certificate over plain HTTP for device setup.
@@ -102,12 +104,13 @@ func (s *BootstrapServer) handleInstructions(w http.ResponseWriter, r *http.Requ
 	// Get local IPs for display
 	hosts, _ := GetAllHosts()
 
+	appName := buildinfo.DisplayName
 	html := fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NFC Agent - Install CA Certificate</title>
+    <title>%s - Install CA Certificate</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -168,14 +171,14 @@ func (s *BootstrapServer) handleInstructions(w http.ResponseWriter, r *http.Requ
 <body>
     <div class="card">
         <h1>Install CA Certificate</h1>
-        <p>To connect securely to the NFC Agent, install this certificate authority on your device.</p>
+        <p>To connect securely to %s, install this certificate authority on your device.</p>
 
         <p style="text-align: center; margin: 24px 0;">
             <a href="/ca.pem" class="download-btn">Download CA Certificate</a>
         </p>
 
         <div class="warning">
-            <strong>Verify the fingerprint</strong> matches what's shown in the NFC Agent logs before trusting.
+            <strong>Verify the fingerprint</strong> matches what's shown in the %s logs before trusting.
         </div>
 
         <h2>CA Fingerprint (SHA256)</h2>
@@ -211,7 +214,7 @@ func (s *BootstrapServer) handleInstructions(w http.ResponseWriter, r *http.Requ
 %s        </p>
     </div>
 </body>
-</html>`, fingerprint, s.port, formatIPLinks(hosts, s.port))
+</html>`, appName, appName, appName, fingerprint, s.port, formatIPLinks(hosts, s.port))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))

@@ -10,6 +10,7 @@ import (
 
 	"fyne.io/systray"
 
+	"github.com/nedpals/davi-nfc-agent/buildinfo"
 	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
@@ -109,7 +110,7 @@ func (s *SystrayApp) onExit() {
 // setupUI initializes all menu items
 func (s *SystrayApp) setupUI() {
 	systray.SetIcon(iconData)
-	systray.SetTooltip("NFC Card Reader Agent")
+	systray.SetTooltip(buildinfo.DisplayName)
 
 	// Status section
 	s.mStatus = systray.AddMenuItem("Starting...", "Agent Status")
