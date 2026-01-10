@@ -1,3 +1,7 @@
+// ISO14443-4 Type 4 tag support.
+//
+// EXPERIMENTAL: Basic read operations work, but chunked reading/writing
+// for large payloads is not yet implemented. Use with caution.
 package nfc
 
 import (

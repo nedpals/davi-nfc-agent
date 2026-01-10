@@ -242,7 +242,7 @@ When a card is detected and read:
 | Field | Description |
 |-------|-------------|
 | `uid` | Card unique identifier (hex string) |
-| `type` | Card type: `MIFARE Classic 1K`, `MIFARE Classic 4K`, `MIFARE DESFire`, `MIFARE Ultralight`, `ISO14443-4 Type 4A` |
+| `type` | Card type: `MIFARE Classic 1K`, `MIFARE Classic 4K`, `MIFARE DESFire`, `MIFARE Ultralight`, `ISO14443-4 Type 4A` (experimental) |
 | `technology` | NFC technology standard (`ISO14443A`, `ISO14443B`, etc.) |
 | `scannedAt` | ISO 8601 timestamp |
 | `message` | Structured NDEF message data |

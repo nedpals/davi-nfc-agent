@@ -20,7 +20,7 @@ A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Re
 - Browsers with WebNFC (Chrome on Android)
 - Custom hardware or IoT devices
 
-**Card Types**: MIFARE Classic, DESFire, Ultralight, ISO14443-4 Type 4A
+**Card Types**: MIFARE Classic, DESFire, Ultralight, ISO14443-4 Type 4A (experimental)
 
 ## Quick Start
 
