@@ -96,6 +96,7 @@ func main() {
 	agent.APISecret = apiSecretFlag
 	agent.CertFile = certFileFlag
 	agent.KeyFile = keyFileFlag
+	agent.TLSManager = tlsMgr // For network change watching and cert regeneration
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)

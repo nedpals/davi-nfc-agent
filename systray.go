@@ -97,6 +97,7 @@ func (s *SystrayApp) onReady() {
 	s.setupUI()
 	s.autoStartAgent()
 	s.startCardInfoUpdater()
+	s.startServerRestartListener()
 	s.startEventHandler()
 }
 
@@ -240,6 +241,17 @@ func (s *SystrayApp) startCardInfoUpdater() {
 				s.updateCardType(cardType)
 				lastType = cardType
 			}
+		}
+	}()
+}
+
+// startServerRestartListener listens for server restart events from the Agent
+// and updates the displayed URLs accordingly.
+func (s *SystrayApp) startServerRestartListener() {
+	go func() {
+		for range s.agent.ServerRestarts() {
+			log.Printf("[systray] Server restart detected, updating URLs")
+			s.updateURLs()
 		}
 	}()
 }

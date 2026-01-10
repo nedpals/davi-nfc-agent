@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/nedpals/davi-nfc-agent/nfc"
@@ -11,6 +12,7 @@ import (
 	"github.com/nedpals/davi-nfc-agent/server"
 	"github.com/nedpals/davi-nfc-agent/server/consumerserver"
 	"github.com/nedpals/davi-nfc-agent/server/inputserver"
+	"github.com/nedpals/davi-nfc-agent/tls"
 )
 
 // GetAllCardTypeFilterNames returns all card type filter names from nfc package constants
@@ -43,18 +45,31 @@ type Agent struct {
 	ConsumerPort   int // Default: 9471
 
 	// TLS configuration (optional, shared by both servers)
-	CertFile string // Path to TLS certificate file
-	KeyFile  string // Path to TLS private key file
+	CertFile   string       // Path to TLS certificate file
+	KeyFile    string       // Path to TLS private key file
+	TLSManager *tls.Manager // TLS manager for auto-TLS and network watching
+
+	// Internal state
+	devicePath          string        // Current device path
+	serversMu           sync.Mutex    // Protects server restart operations
+	serverRestartChan   chan struct{} // Signals when servers are restarted
 }
 
 func NewAgent(nfcManager nfc.Manager) *Agent {
 	return &Agent{
-		Logger:           log.New(os.Stderr, "[agent] ", log.LstdFlags),
-		Manager:          nfcManager,
-		AllowedCardTypes: make(map[string]bool),
-		InputPort:        9470,
-		ConsumerPort:     9471,
+		Logger:            log.New(os.Stderr, "[agent] ", log.LstdFlags),
+		Manager:           nfcManager,
+		AllowedCardTypes:  make(map[string]bool),
+		InputPort:         9470,
+		ConsumerPort:      9471,
+		serverRestartChan: make(chan struct{}, 1),
 	}
+}
+
+// ServerRestarts returns a channel that signals when servers are restarted
+// due to network changes or certificate regeneration.
+func (a *Agent) ServerRestarts() <-chan struct{} {
+	return a.serverRestartChan
 }
 
 func (a *Agent) Start(devicePath string) error {
@@ -66,6 +81,9 @@ func (a *Agent) Start(devicePath string) error {
 		return errors.New("agent is already running")
 	}
 
+	// Store device path for potential restarts
+	a.devicePath = devicePath
+
 	// Create NFC reader with manager (supports both hardware and smartphone devices)
 	nfcReader, err := nfc.NewNFCReader(devicePath, a.Manager, 5*time.Second)
 	if err != nil {
@@ -75,47 +93,13 @@ func (a *Agent) Start(devicePath string) error {
 
 	a.Reader = nfcReader
 
-	// Create bridge for inter-server communication
-	a.Bridge = server.NewServerBridge()
-
-	// Get device manager - try direct cast first, then check MultiManager
-	var deviceManager *remotenfc.Manager
-	if pm, ok := a.Manager.(*remotenfc.Manager); ok {
-		deviceManager = pm
-	} else if mm, ok := a.Manager.(interface{ GetManager(string) (nfc.Manager, bool) }); ok {
-		// MultiManager - get the smartphone manager
-		if mgr, exists := mm.GetManager(nfc.ManagerTypeSmartphone); exists {
-			if pm, ok := mgr.(*remotenfc.Manager); ok {
-				deviceManager = pm
-			}
-		}
+	// Start network watcher if TLS manager is configured
+	if a.TLSManager != nil {
+		go a.watchNetworkChanges()
 	}
 
-	// Create input server (handles devices via WebSocket, hardware readers)
-	a.InputServer = inputserver.New(inputserver.Config{
-		Reader:           a.Reader,
-		DeviceManager:    deviceManager,
-		Port:             a.InputPort,
-		APISecret:        a.APISecret,
-		AllowedCardTypes: a.AllowedCardTypes,
-		CertFile:         a.CertFile,
-		KeyFile:          a.KeyFile,
-	}, a.Bridge)
-
-	// Create consumer server (handles client connections)
-	a.ConsumerServer = consumerserver.New(consumerserver.Config{
-		Port:      a.ConsumerPort,
-		APISecret: a.APISecret,
-		CertFile:  a.CertFile,
-		KeyFile:   a.KeyFile,
-	}, a.Bridge)
-
-	// Start both servers
-	go a.InputServer.Start()
-	go a.ConsumerServer.Start()
-
-	a.Logger.Printf("Input server on port %d, Consumer server on port %d", a.InputPort, a.ConsumerPort)
-	return nil
+	// Start the servers using shared code
+	return a.startServers()
 }
 
 func (a *Agent) Stop() {
@@ -152,6 +136,118 @@ func (a *Agent) Stop() {
 	}
 
 	a.Logger.Println("Agent stopped successfully")
+}
+
+// watchNetworkChanges listens for network changes from TLS manager and restarts servers.
+func (a *Agent) watchNetworkChanges() {
+	if a.TLSManager == nil {
+		return
+	}
+
+	ch := a.TLSManager.WatchNetworkChanges()
+	for range ch {
+		a.Logger.Println("Network change detected, restarting servers with new certificates...")
+		if err := a.RestartServers(); err != nil {
+			a.Logger.Printf("Failed to restart servers: %v", err)
+		}
+	}
+}
+
+// RestartServers stops and restarts the HTTP/WebSocket servers with current TLS configuration.
+// The NFC reader continues running during the restart.
+func (a *Agent) RestartServers() error {
+	a.serversMu.Lock()
+	defer a.serversMu.Unlock()
+
+	a.Logger.Println("Restarting servers...")
+
+	// Stop servers
+	a.stopServers()
+
+	// Brief pause to allow ports to be released
+	time.Sleep(100 * time.Millisecond)
+
+	// Restart servers
+	if err := a.startServers(); err != nil {
+		return err
+	}
+
+	a.Logger.Println("Servers restarted successfully")
+
+	// Notify listeners of server restart
+	select {
+	case a.serverRestartChan <- struct{}{}:
+	default:
+		// Channel full, skip
+	}
+
+	return nil
+}
+
+// stopServers stops only the HTTP/WebSocket servers (not the NFC reader).
+func (a *Agent) stopServers() {
+	if a.ConsumerServer != nil {
+		a.ConsumerServer.Stop()
+		a.ConsumerServer = nil
+	}
+
+	if a.InputServer != nil {
+		a.InputServer.Stop()
+		a.InputServer = nil
+	}
+
+	if a.Bridge != nil {
+		a.Bridge.Close()
+		a.Bridge = nil
+	}
+}
+
+// startServers starts the HTTP/WebSocket servers.
+func (a *Agent) startServers() error {
+	if a.Reader == nil {
+		return errors.New("reader not initialized")
+	}
+
+	// Create bridge for inter-server communication
+	a.Bridge = server.NewServerBridge()
+
+	// Get device manager
+	var deviceManager *remotenfc.Manager
+	if pm, ok := a.Manager.(*remotenfc.Manager); ok {
+		deviceManager = pm
+	} else if mm, ok := a.Manager.(interface{ GetManager(string) (nfc.Manager, bool) }); ok {
+		if mgr, exists := mm.GetManager(nfc.ManagerTypeSmartphone); exists {
+			if pm, ok := mgr.(*remotenfc.Manager); ok {
+				deviceManager = pm
+			}
+		}
+	}
+
+	// Create input server
+	a.InputServer = inputserver.New(inputserver.Config{
+		Reader:           a.Reader,
+		DeviceManager:    deviceManager,
+		Port:             a.InputPort,
+		APISecret:        a.APISecret,
+		AllowedCardTypes: a.AllowedCardTypes,
+		CertFile:         a.CertFile,
+		KeyFile:          a.KeyFile,
+	}, a.Bridge)
+
+	// Create consumer server
+	a.ConsumerServer = consumerserver.New(consumerserver.Config{
+		Port:      a.ConsumerPort,
+		APISecret: a.APISecret,
+		CertFile:  a.CertFile,
+		KeyFile:   a.KeyFile,
+	}, a.Bridge)
+
+	// Start both servers
+	go a.InputServer.Start()
+	go a.ConsumerServer.Start()
+
+	a.Logger.Printf("Servers started: Input on port %d, Consumer on port %d", a.InputPort, a.ConsumerPort)
+	return nil
 }
 
 func (a *Agent) SetAllowCardType(cardType string, allow bool) {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jittering/truststore"
 )
@@ -25,6 +26,11 @@ type Manager struct {
 	keyFile    string
 	hostsFile  string
 	logger     *log.Logger
+
+	// Network change watching
+	networkChangeChan chan struct{}
+	stopWatchChan     chan struct{}
+	lastHosts         []string
 }
 
 // NewManager creates a new TLS manager with the given config directory.
@@ -260,4 +266,91 @@ func (m *Manager) GetCAFingerprint() (string, error) {
 // ReadCACert reads and returns the CA certificate PEM data.
 func (m *Manager) ReadCACert() ([]byte, error) {
 	return os.ReadFile(m.caCertFile)
+}
+
+// WatchNetworkChanges starts watching for network changes and returns a channel
+// that signals when certificates have been regenerated due to IP changes.
+// The channel receives a signal after new certificates are ready.
+func (m *Manager) WatchNetworkChanges() <-chan struct{} {
+	if m.networkChangeChan != nil {
+		return m.networkChangeChan
+	}
+
+	m.networkChangeChan = make(chan struct{}, 1)
+	m.stopWatchChan = make(chan struct{})
+
+	// Initialize with current hosts
+	m.lastHosts, _ = GetAllHosts()
+
+	go m.watchNetworkLoop()
+
+	return m.networkChangeChan
+}
+
+// StopWatching stops the network change watcher.
+func (m *Manager) StopWatching() {
+	if m.stopWatchChan != nil {
+		close(m.stopWatchChan)
+		m.stopWatchChan = nil
+	}
+}
+
+// watchNetworkLoop monitors for network changes and regenerates certificates.
+func (m *Manager) watchNetworkLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopWatchChan:
+			return
+		case <-ticker.C:
+			currentHosts, err := GetAllHosts()
+			if err != nil {
+				continue
+			}
+
+			if m.hostsChanged(currentHosts) {
+				m.logger.Printf("Network change detected: %v -> %v", m.lastHosts, currentHosts)
+				m.lastHosts = currentHosts
+
+				// Regenerate certificates
+				if err := m.RegenerateCertificates(); err != nil {
+					m.logger.Printf("Failed to regenerate certificates: %v", err)
+					continue
+				}
+
+				// Notify listeners
+				select {
+				case m.networkChangeChan <- struct{}{}:
+				default:
+					// Channel full, skip
+				}
+			}
+		}
+	}
+}
+
+// RegenerateCertificates regenerates server certificates for the current hosts.
+func (m *Manager) RegenerateCertificates() error {
+	hosts, err := GetAllHosts()
+	if err != nil {
+		m.logger.Printf("Warning: failed to get hosts: %v", err)
+		hosts = []string{"localhost", "127.0.0.1"}
+	}
+
+	m.logger.Printf("Regenerating certificates for hosts: %v", hosts)
+
+	if err := m.generateCertificates(hosts); err != nil {
+		return fmt.Errorf("failed to regenerate certificates: %w", err)
+	}
+
+	m.logger.Println("Certificates regenerated successfully")
+	return nil
+}
+
+// GetCurrentHosts returns the current list of hosts the certificate is valid for.
+func (m *Manager) GetCurrentHosts() []string {
+	hosts, _ := m.readCachedHosts()
+	return hosts
 }
