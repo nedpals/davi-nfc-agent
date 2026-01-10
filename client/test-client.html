@@ -692,10 +692,12 @@
 
                 let deviceClient = null;
 
-                // WebNFC state
+                // WebNFC state (implemented directly in test client as example)
                 const webNFCSupported = ref(false);
                 const nfcScanning = ref(false);
                 const nfcError = ref('');
+                let nfcReader = null;
+                let nfcAbortController = null;
 
                 // Manual tag input
                 const manualTag = reactive({
@@ -852,6 +854,7 @@
                         deviceClient = new NFCDeviceClient(deviceUrl.value, {
                             deviceName: deviceName.value,
                             platform: 'web',
+                            nfcType: 'webnfc',
                             canRead: true,
                             canWrite: true
                         });
@@ -867,7 +870,7 @@
                             deviceState.value = 'disconnected';
                             deviceID.value = '';
                             serverInfo.value = null;
-                            nfcScanning.value = false;
+                            stopNFCScanning();
                         });
 
                         deviceClient.on('error', (err) => {
@@ -880,16 +883,6 @@
                             writeRequests.value.unshift(req);
                         });
 
-                        deviceClient.on('nfcReading', (tagData) => {
-                            addToScanLog(tagData.uid, 'webnfc');
-                            lastScannedUID.value = tagData.uid;
-                        });
-
-                        deviceClient.on('nfcReadingError', (err) => {
-                            nfcError.value = err.error?.message || 'NFC reading error';
-                            setTimeout(() => { nfcError.value = ''; }, 5000);
-                        });
-
                         await deviceClient.connect();
                     } catch (err) {
                         console.error('Device connection failed:', err);
@@ -899,6 +892,7 @@
                 }
 
                 async function disconnectDevice() {
+                    stopNFCScanning();
                     if (deviceClient) {
                         await deviceClient.disconnect();
                         deviceClient = null;
@@ -906,26 +900,106 @@
                     deviceState.value = 'disconnected';
                     deviceID.value = '';
                     serverInfo.value = null;
-                    nfcScanning.value = false;
                 }
 
+                // WebNFC integration example - implemented directly in test client
                 async function startNFCScanning() {
-                    if (!deviceClient) return;
+                    if (!deviceClient || !deviceClient.isConnected()) {
+                        nfcError.value = 'Not connected to server';
+                        return;
+                    }
+
+                    if (!('NDEFReader' in window)) {
+                        nfcError.value = 'WebNFC is not supported in this browser';
+                        return;
+                    }
 
                     try {
                         nfcError.value = '';
-                        await deviceClient.startNFCScanning();
+                        nfcReader = new NDEFReader();
+                        nfcAbortController = new AbortController();
+
+                        nfcReader.onreading = async (event) => {
+                            const uid = event.serialNumber || '';
+                            const ndefMessage = convertNDEFMessage(event.message);
+                            const cardType = inferCardType(uid);
+
+                            // Send to server via NFCDeviceClient
+                            try {
+                                await deviceClient.scanTag({
+                                    uid: uid,
+                                    technology: 'NFC-A',
+                                    type: cardType,
+                                    ndefMessage: ndefMessage
+                                });
+                                addToScanLog(uid, 'webnfc');
+                                lastScannedUID.value = uid;
+                            } catch (err) {
+                                console.error('Failed to send tag to server:', err);
+                            }
+                        };
+
+                        nfcReader.onreadingerror = (error) => {
+                            nfcError.value = 'NFC reading error';
+                            setTimeout(() => { nfcError.value = ''; }, 5000);
+                        };
+
+                        await nfcReader.scan({ signal: nfcAbortController.signal });
                         nfcScanning.value = true;
                     } catch (err) {
                         console.error('Failed to start NFC scanning:', err);
                         nfcError.value = err.message || 'Failed to start NFC scanning';
+                        nfcScanning.value = false;
                     }
                 }
 
                 function stopNFCScanning() {
-                    if (!deviceClient) return;
-                    deviceClient.stopNFCScanning();
+                    if (nfcAbortController) {
+                        nfcAbortController.abort();
+                        nfcAbortController = null;
+                    }
+                    nfcReader = null;
                     nfcScanning.value = false;
+                }
+
+                // Helper: Convert WebNFC NDEFMessage to protocol format
+                function convertNDEFMessage(ndefMessage) {
+                    if (!ndefMessage || !ndefMessage.records) return null;
+
+                    const records = [];
+                    for (const record of ndefMessage.records) {
+                        const converted = {
+                            recordType: record.recordType,
+                            language: record.lang || 'en'
+                        };
+
+                        if (record.recordType === 'text') {
+                            const decoder = new TextDecoder(record.encoding || 'utf-8');
+                            converted.content = decoder.decode(record.data);
+                        } else if (record.recordType === 'url') {
+                            converted.recordType = 'uri';
+                            const decoder = new TextDecoder();
+                            converted.content = decoder.decode(record.data);
+                        }
+
+                        records.push(converted);
+                    }
+
+                    return { records };
+                }
+
+                // Helper: Infer card type from UID length
+                function inferCardType(uid) {
+                    if (!uid) return 'Unknown';
+                    const cleanUID = uid.replace(/[:-]/g, '');
+                    const uidLength = cleanUID.length / 2;
+
+                    switch (uidLength) {
+                        case 4: return 'MIFARE Classic';
+                        case 7: return 'MIFARE Ultralight/NTAG';
+                        case 10: return 'MIFARE (10-byte UID)';
+                        default: return 'NDEF';
+                    }
                 }
 
                 async function sendManualScan() {
@@ -1012,7 +1086,7 @@
 
                 // Check WebNFC support on mount
                 onMounted(() => {
-                    webNFCSupported.value = NFCDeviceClient.isWebNFCSupported();
+                    webNFCSupported.value = 'NDEFReader' in window;
                 });
 
                 return {

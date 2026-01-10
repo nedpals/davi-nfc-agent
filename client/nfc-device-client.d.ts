@@ -3,18 +3,29 @@
  */
 
 /**
+ * WebSocket constructor type
+ */
+export type WebSocketConstructor = new (url: string) => WebSocket;
+
+/**
  * Configuration options for NFCDeviceClient constructor
  */
 export interface NFCDeviceClientOptions {
   /**
+   * Custom WebSocket class. Required in Node.js, optional in browser.
+   * In Node.js, pass the 'ws' package: `WebSocket: require('ws')`
+   */
+  WebSocket?: WebSocketConstructor;
+
+  /**
    * Device name for registration
-   * @default 'Web NFC Device'
+   * @default 'NFC Device'
    */
   deviceName?: string;
 
   /**
-   * Platform identifier
-   * @default 'web'
+   * Platform identifier (e.g., 'web', 'ios', 'android', 'node')
+   * @default 'unknown'
    */
   platform?: string;
 
@@ -35,6 +46,12 @@ export interface NFCDeviceClientOptions {
    * @default false
    */
   canWrite?: boolean;
+
+  /**
+   * NFC library type (e.g., 'webnfc', 'react-native-nfc', 'custom')
+   * @default 'custom'
+   */
+  nfcType?: string;
 
   /**
    * Automatically send heartbeats
@@ -171,17 +188,19 @@ export interface WriteRequestEvent {
  */
 export interface DeviceTagData {
   /**
-   * Tag UID (hex format)
+   * Tag UID (hex format, e.g., '04:AB:CD:EF:12:34:56')
    */
   uid: string;
 
   /**
-   * NFC technology (e.g., 'ISO14443A', 'NFC')
+   * NFC technology (e.g., 'ISO14443A', 'ISO14443B')
+   * @default 'ISO14443A'
    */
   technology?: string;
 
   /**
-   * Tag type (e.g., 'MIFARE Classic 1K', 'NDEF')
+   * Tag type (e.g., 'MIFARE Classic 1K', 'NTAG215')
+   * @default 'Unknown'
    */
   type?: string;
 
@@ -204,31 +223,6 @@ export interface DeviceTagData {
    * Raw tag data (base64 encoded)
    */
   rawData?: string | null;
-
-  /**
-   * Source of the scan ('webnfc' or 'manual')
-   */
-  source?: 'webnfc' | 'manual';
-}
-
-/**
- * NFC reading event from WebNFC
- */
-export interface NFCReadingEvent extends DeviceTagData {
-  /**
-   * Source is always 'webnfc' for this event
-   */
-  source: 'webnfc';
-}
-
-/**
- * NFC reading error event
- */
-export interface NFCReadingErrorEvent {
-  /**
-   * Error object
-   */
-  error: Error | DOMException;
 }
 
 /**
@@ -256,8 +250,6 @@ export interface DeviceErrorEvent {
  */
 export type RegisteredHandler = (event: RegisteredEvent) => void;
 export type WriteRequestHandler = (event: WriteRequestEvent) => void;
-export type NFCReadingHandler = (event: NFCReadingEvent) => void;
-export type NFCReadingErrorHandler = (event: NFCReadingErrorEvent) => void;
 export type DeviceConnectedHandler = () => void;
 export type DeviceDisconnectedHandler = () => void;
 export type DeviceErrorHandler = (error: DeviceErrorEvent) => void;
@@ -265,7 +257,7 @@ export type DeviceErrorHandler = (error: DeviceErrorEvent) => void;
 /**
  * Event name types
  */
-export type DeviceEventName = 'registered' | 'writeRequest' | 'nfcReading' | 'nfcReadingError' | 'connected' | 'disconnected' | 'error';
+export type DeviceEventName = 'registered' | 'writeRequest' | 'connected' | 'disconnected' | 'error';
 
 /**
  * Event handler type map
@@ -273,8 +265,6 @@ export type DeviceEventName = 'registered' | 'writeRequest' | 'nfcReading' | 'nf
 export interface DeviceEventHandlerMap {
   registered: RegisteredHandler;
   writeRequest: WriteRequestHandler;
-  nfcReading: NFCReadingHandler;
-  nfcReadingError: NFCReadingErrorHandler;
   connected: DeviceConnectedHandler;
   disconnected: DeviceDisconnectedHandler;
   error: DeviceErrorHandler;
@@ -283,46 +273,51 @@ export interface DeviceEventHandlerMap {
 /**
  * NFC Device Client
  *
- * A JavaScript client for connecting to the NFC Agent InputServer as a device.
- * Supports WebNFC integration for real browser-based NFC scanning.
+ * A universal JavaScript client for connecting to the Davi NFC Agent Device Server.
+ * Works in both Node.js and browser environments. NFC source agnostic - integrate
+ * with any NFC library (WebNFC, React Native NFC, etc.) by calling scanTag().
  *
- * @example
+ * @example Browser
  * ```typescript
  * const client = new NFCDeviceClient('ws://localhost:9470', {
- *   deviceName: 'Browser NFC Device',
+ *   deviceName: 'My NFC Device',
  *   platform: 'web'
  * });
+ * await client.connect();
+ * ```
  *
+ * @example Node.js (pass your own WebSocket class)
+ * ```typescript
+ * import WebSocket from 'ws';
+ * const client = new NFCDeviceClient('ws://localhost:9470', {
+ *   WebSocket: WebSocket as any,
+ *   deviceName: 'My NFC Device',
+ *   platform: 'node'
+ * });
+ * await client.connect();
+ * ```
+ *
+ * @example Sending tag data
+ * ```typescript
  * client.on('registered', ({ deviceID }) => {
  *   console.log('Registered as device:', deviceID);
  * });
  *
- * client.on('writeRequest', ({ requestID, ndefMessage }) => {
- *   console.log('Write request received:', requestID);
- *   client.respondToWrite(requestID, true);
+ * // When your NFC library detects a tag, call scanTag()
+ * await client.scanTag({
+ *   uid: '04:AB:CD:EF:12:34:56',
+ *   type: 'MIFARE Classic 1K'
  * });
- *
- * await client.connect();
- *
- * if (NFCDeviceClient.isWebNFCSupported()) {
- *   await client.startNFCScanning();
- * }
  * ```
  */
 export class NFCDeviceClient {
   /**
    * Creates a new NFC Device client instance
    *
-   * @param serverUrl - Base URL of the InputServer (e.g., 'ws://localhost:9470')
+   * @param serverUrl - Base URL of the Device Server (e.g., 'ws://localhost:9470')
    * @param options - Configuration options
    */
   constructor(serverUrl: string, options?: NFCDeviceClientOptions);
-
-  /**
-   * Check if WebNFC is supported in the current browser
-   * @returns True if WebNFC is supported
-   */
-  static isWebNFCSupported(): boolean;
 
   /**
    * Registers an event handler
@@ -354,26 +349,7 @@ export class NFCDeviceClient {
   disconnect(): Promise<void>;
 
   /**
-   * Start WebNFC scanning. Tags detected will be automatically sent to the server.
-   *
-   * @returns Promise that resolves when scanning starts
-   * @throws {Error} If WebNFC is not supported or permission denied
-   */
-  startNFCScanning(): Promise<void>;
-
-  /**
-   * Stop WebNFC scanning
-   */
-  stopNFCScanning(): void;
-
-  /**
-   * Check if currently scanning with WebNFC
-   * @returns True if scanning
-   */
-  isNFCScanning(): boolean;
-
-  /**
-   * Manually send a tag scan event to the server
+   * Send a tag scan event to the server. Call this when your NFC library detects a tag.
    *
    * @param tagData - Tag data to send
    * @returns Promise that resolves when sent
@@ -382,7 +358,7 @@ export class NFCDeviceClient {
   scanTag(tagData: DeviceTagData): Promise<void>;
 
   /**
-   * Send a tag removed event to the server
+   * Send a tag removed event to the server. Call this when a tag leaves the reader.
    *
    * @param uid - UID of the removed tag
    * @returns Promise that resolves when sent
