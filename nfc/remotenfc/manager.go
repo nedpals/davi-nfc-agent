@@ -20,6 +20,7 @@ type Manager struct {
 	inactivityTimeout time.Duration      // Device timeout duration
 	closed            bool               // Whether Close() has been called
 	dataChan          chan nfc.NFCData   // Channel for broadcasting tag data to server
+	deviceChangeChan  chan struct{}      // Channel for device registration/unregistration events
 }
 
 // NewManager creates a new smartphone manager.
@@ -33,6 +34,7 @@ func NewManager(inactivityTimeout time.Duration) *Manager {
 		inactivityTimeout: inactivityTimeout,
 		stopCleanup:       make(chan struct{}),
 		dataChan:          make(chan nfc.NFCData, 10), // Buffered to prevent blocking
+		deviceChangeChan:  make(chan struct{}, 1),    // Buffered to prevent blocking
 	}
 
 	// Start cleanup routine
@@ -103,6 +105,9 @@ func (m *Manager) RegisterDevice(req DeviceRegistrationRequest) (*Device, error)
 
 	log.Printf("[smartphone] Device registered: %s (%s, %s)", device.String(), req.Platform, req.AppVersion)
 
+	// Notify listeners
+	m.notifyDeviceChange()
+
 	return device, nil
 }
 
@@ -125,6 +130,9 @@ func (m *Manager) UnregisterDevice(deviceID string) error {
 	}
 
 	log.Printf("[smartphone] Device unregistered: %s", device.String())
+
+	// Notify listeners
+	m.notifyDeviceChange()
 
 	return nil
 }
@@ -259,9 +267,9 @@ func (m *Manager) startCleanupRoutine() {
 // cleanupInactiveDevices removes devices that exceeded inactivity timeout.
 func (m *Manager) cleanupInactiveDevices() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	now := time.Now()
+	removedCount := 0
 	for deviceID, device := range m.devices {
 		timeSinceLastSeen := now.Sub(device.LastSeen())
 		if timeSinceLastSeen > m.inactivityTimeout {
@@ -272,7 +280,14 @@ func (m *Manager) cleanupInactiveDevices() {
 				log.Printf("[smartphone] Error closing device %s: %v", deviceID, err)
 			}
 			delete(m.devices, deviceID)
+			removedCount++
 		}
+	}
+	m.mu.Unlock()
+
+	// Notify listeners if any devices were removed
+	if removedCount > 0 {
+		m.notifyDeviceChange()
 	}
 }
 
@@ -295,4 +310,18 @@ func (m *Manager) GetActiveDeviceCount() int {
 		}
 	}
 	return count
+}
+
+// DeviceChanges returns a channel that signals when devices are registered or unregistered.
+func (m *Manager) DeviceChanges() <-chan struct{} {
+	return m.deviceChangeChan
+}
+
+// notifyDeviceChange signals a device change event.
+func (m *Manager) notifyDeviceChange() {
+	select {
+	case m.deviceChangeChan <- struct{}{}:
+	default:
+		// Channel full, skip (previous notification not yet consumed)
+	}
 }

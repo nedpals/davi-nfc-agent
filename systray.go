@@ -162,6 +162,9 @@ func (s *SystrayApp) setupUI() {
 
 // autoStartAgent starts the agent automatically
 func (s *SystrayApp) autoStartAgent() {
+	// Set up device change listener
+	s.setupDeviceChangeListener()
+
 	go func() {
 		if err := s.agent.Start(s.currentDevice); err == nil {
 			s.updateStatus("Running")
@@ -172,6 +175,21 @@ func (s *SystrayApp) autoStartAgent() {
 			s.mStart.Enable()
 		}
 		s.updateDeviceList()
+	}()
+}
+
+// setupDeviceChangeListener sets up automatic device list refresh on device changes
+func (s *SystrayApp) setupDeviceChangeListener() {
+	notifier, ok := s.agent.Manager.(nfc.DeviceChangeNotifier)
+	if !ok {
+		return
+	}
+
+	go func() {
+		for range notifier.DeviceChanges() {
+			log.Printf("[systray] Device change detected, refreshing device list")
+			s.updateDeviceList()
+		}
 	}()
 }
 

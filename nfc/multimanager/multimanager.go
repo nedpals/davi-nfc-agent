@@ -13,9 +13,11 @@ import (
 
 // MultiManager aggregates multiple Manager implementations.
 type MultiManager struct {
-	managers     map[string]nfc.Manager // managerName -> Manager instance
-	managerOrder []string               // Ordered list of manager names (for fallback)
-	mu           sync.RWMutex           // Protects managers map
+	managers         map[string]nfc.Manager // managerName -> Manager instance
+	managerOrder     []string               // Ordered list of manager names (for fallback)
+	mu               sync.RWMutex           // Protects managers map
+	deviceChangeChan chan struct{}          // Aggregated device change channel
+	stopForward      chan struct{}          // Stop channel forwarding
 }
 
 // ManagerEntry represents a named manager for MultiManager initialization.
@@ -35,8 +37,10 @@ type ManagerEntry struct {
 //	)
 func NewMultiManager(entries ...ManagerEntry) *MultiManager {
 	mm := &MultiManager{
-		managers:     make(map[string]nfc.Manager),
-		managerOrder: []string{},
+		managers:         make(map[string]nfc.Manager),
+		managerOrder:     []string{},
+		deviceChangeChan: make(chan struct{}, 1),
+		stopForward:      make(chan struct{}),
 	}
 
 	for _, entry := range entries {
@@ -53,6 +57,11 @@ func NewMultiManager(entries ...ManagerEntry) *MultiManager {
 		mm.managers[entry.Name] = entry.Manager
 		mm.managerOrder = append(mm.managerOrder, entry.Name)
 		log.Printf("[multi] Manager registered: %s", entry.Name)
+
+		// Start forwarding device changes from child managers
+		if notifier, ok := entry.Manager.(nfc.DeviceChangeNotifier); ok {
+			go mm.forwardDeviceChanges(notifier.DeviceChanges())
+		}
 	}
 
 	return mm
@@ -246,6 +255,9 @@ func (mm *MultiManager) GetManagerNames() []string {
 // Close implements server.ServerHandlerCloser interface.
 // It propagates Close() to all registered managers that support it.
 func (mm *MultiManager) Close() {
+	// Stop forwarding goroutines
+	close(mm.stopForward)
+
 	mm.mu.RLock()
 	defer mm.mu.RUnlock()
 
@@ -253,6 +265,32 @@ func (mm *MultiManager) Close() {
 		if closer, ok := manager.(server.ServerHandlerCloser); ok {
 			log.Printf("[multi] Closing manager: %s", name)
 			closer.Close()
+		}
+	}
+}
+
+// DeviceChanges returns a channel that signals when devices are registered or unregistered
+// in any of the child managers.
+func (mm *MultiManager) DeviceChanges() <-chan struct{} {
+	return mm.deviceChangeChan
+}
+
+// forwardDeviceChanges forwards device change events from a child manager to the aggregated channel.
+func (mm *MultiManager) forwardDeviceChanges(ch <-chan struct{}) {
+	for {
+		select {
+		case <-mm.stopForward:
+			return
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Forward to aggregated channel
+			select {
+			case mm.deviceChangeChan <- struct{}{}:
+			default:
+				// Channel full, skip
+			}
 		}
 	}
 }
