@@ -72,9 +72,6 @@ func SearchSectorKey(tag ClassicTag, sector byte, foundKey *[6]byte, foundKeyTyp
 // ab0, ab1, ab2, abTb: 3-bit access conditions for data blocks 0, 1, 2 and sector trailer respectively.
 // gpb: General Purpose Byte.
 func MifareClassicTrailerBlock(trailer *[16]byte, keyA [6]byte, ab0, ab1, ab2, abTb uint8, gpb uint8, keyB [6]byte) {
-	if len(trailer) < 16 {
-		panic("trailer block must be 16 bytes")
-	}
 	copy(trailer[0:6], keyA[:])
 
 	// Convert 3-bit control values (abX) into the 12-bit access_bits format
@@ -113,9 +110,6 @@ func MifareClassicTrailerBlock(trailer *[16]byte, keyA [6]byte, ab0, ab1, ab2, a
 // accByte6, accByte7, accByte8 are the literal access bytes (trailer[6], trailer[7], trailer[8]).
 // gpb is trailer[9]. This is used when the exact byte values for access conditions are known.
 func MifareClassicTrailerBlock2(trailer *[16]byte, keyA [6]byte, accByte6, accByte7, accByte8, gpb uint8, keyB [6]byte) {
-	if len(trailer) < 16 {
-		panic("trailer block must be 16 bytes")
-	}
 	copy(trailer[0:6], keyA[:])
 	trailer[6] = accByte6
 	trailer[7] = accByte7
