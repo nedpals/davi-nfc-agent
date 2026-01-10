@@ -6,10 +6,10 @@ This guide explains how to add support for new NFC readers or tag types to the d
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      MultiManager                            │
-│  Aggregates multiple managers, routes device requests        │
+│                      MultiManager                           │
+│     Aggregates multiple managers, routes device requests    │
 ├──────────────────┬──────────────────┬───────────────────────┤
-│  HardwareManager │ SmartphoneManager│   YourManager         │
+│  HardwareManager │ remotenfc.Manager│   YourManager         │
 │  (libnfc/ACR122) │ (WebNFC/mobile)  │   (custom)            │
 └────────┬─────────┴────────┬─────────┴──────────┬────────────┘
          │                  │                    │
@@ -232,6 +232,35 @@ func main() {
 }
 ```
 
+## Dynamic Device Discovery
+
+Implement `DeviceChangeNotifier` to notify the system when devices are added or removed:
+
+```go
+type MyManager struct {
+    devices     map[string]*MyDevice
+    devicesChan chan struct{}
+    mu          sync.RWMutex
+}
+
+// DeviceChanges returns a channel that signals when devices change.
+// Implements nfc.DeviceChangeNotifier.
+func (m *MyManager) DeviceChanges() <-chan struct{} {
+    return m.devicesChan
+}
+
+// Call this when a device is added or removed
+func (m *MyManager) notifyDeviceChange() {
+    select {
+    case m.devicesChan <- struct{}{}:
+    default:
+        // Channel full, skip notification
+    }
+}
+```
+
+The `MultiManager` automatically listens to managers that implement `DeviceChangeNotifier` and forwards change notifications.
+
 ## Capability-Based Implementation
 
 You don't need to implement all methods if your device doesn't support them. Use capabilities to advertise what's supported:
@@ -262,6 +291,53 @@ if caps.CanWrite {
     log.Println("Tag does not support writing")
 }
 ```
+
+### Capability Helper Functions
+
+Use these convenience functions for common capability checks:
+
+```go
+// Check tag capabilities
+if nfc.CanTagRead(tag) {
+    data, _ := tag.ReadData()
+}
+
+if nfc.CanTagWrite(tag) {
+    tag.WriteData(data)
+}
+
+if nfc.CanTagTransceive(tag) {
+    resp, _ := tag.Transceive(apdu)
+}
+
+if nfc.CanTagLock(tag) {
+    tag.MakeReadOnly()
+}
+```
+
+### DeviceCapabilities
+
+Use `GetDeviceCapabilities()` to inspect device capabilities:
+
+```go
+caps := nfc.GetDeviceCapabilities(device)
+
+// DeviceCapabilities struct:
+// - CanTransceive: bool      // Device supports raw transceive
+// - CanPoll: bool            // Device supports polling for tags
+// - SupportedTagTypes: []string  // e.g., ["MIFARE Classic", "NTAG"]
+// - DeviceType: string       // e.g., "libnfc", "smartphone"
+// - MaxBaudRate: int         // Max baud rate in bps
+// - SupportsEvents: bool     // Tag arrival/removal events
+
+if caps.SupportsEvents {
+    // Event-driven device (e.g., smartphone)
+} else if caps.CanPoll {
+    // Polling device (e.g., hardware reader)
+}
+```
+
+Capabilities are automatically built from optional interfaces the device implements (`DeviceInfoProvider`, `DeviceEventEmitter`).
 
 ## Error Handling
 
@@ -301,6 +377,44 @@ case nfc.ErrCodeTagRemoved:
     // Tag was removed, retry
 case nfc.ErrCodeReadFailed:
     // Read failed, handle error
+}
+```
+
+## Advanced Write Operations
+
+For tags that need special write handling, implement the `AdvancedWriter` interface:
+
+```go
+// TagWriteOptions controls write behavior
+type TagWriteOptions struct {
+    // ForceInitialize wipes and reinitializes the tag before writing.
+    // WARNING: This erases all existing data.
+    ForceInitialize bool
+}
+
+// AdvancedWriter is an optional interface for tags supporting write options.
+// Implement WriteDataWithOptions to handle special write cases.
+func (t *MyTag) WriteDataWithOptions(data []byte, opts nfc.TagWriteOptions) error {
+    if opts.ForceInitialize {
+        // Wipe and reinitialize the tag
+        if err := t.format(); err != nil {
+            return err
+        }
+    }
+    return t.WriteData(data)
+}
+```
+
+The `NFCReader` automatically uses `WriteDataWithOptions` when available:
+
+```go
+// Writing with force initialization
+opts := nfc.TagWriteOptions{ForceInitialize: true}
+if writer, ok := tag.(nfc.AdvancedWriter); ok {
+    err := writer.WriteDataWithOptions(data, opts)
+} else {
+    // Fallback to standard write
+    err := tag.WriteData(data)
 }
 ```
 
@@ -438,10 +552,12 @@ func (d *PN532Device) GetTags() ([]nfc.Tag, error) {
 | Method | Interface | Purpose |
 |--------|-----------|---------|
 | `Capabilities()` | TagCapabilityProvider | Runtime tag capability discovery |
+| `DeviceChanges()` | DeviceChangeNotifier | Device add/remove notifications |
 | `DeviceType()` | DeviceInfoProvider | Device type identifier ("libnfc", "smartphone") |
 | `SupportedTagTypes()` | DeviceInfoProvider | List of supported tag types |
 | `SupportsEvents()` | DeviceEventEmitter | Whether device emits tag events |
 | `IsHealthy()` | DeviceHealthChecker | Connection health validation |
+| `WriteDataWithOptions()` | AdvancedWriter | Write with initialization options |
 | `Register()` | server.ServerHandler | WebSocket integration |
 | `Close()` | server.ServerHandlerCloser | Cleanup on shutdown |
 
