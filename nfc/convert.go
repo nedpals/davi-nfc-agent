@@ -3,7 +3,7 @@ package nfc
 import (
 	"fmt"
 
-	"github.com/nedpals/davi-nfc-agent/protocol"
+	"github.com/dotside-studios/davi-nfc-agent/protocol"
 )
 
 // ConvertNDEFInput converts protocol NDEF format to internal NDEFMessage.

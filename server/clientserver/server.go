@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/protocol"
+	"github.com/dotside-studios/davi-nfc-agent/server"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/protocol"
-	"github.com/nedpals/davi-nfc-agent/server"
 )
 
 // Server handles client connections for consuming NFC data.

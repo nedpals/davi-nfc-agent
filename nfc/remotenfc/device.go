@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
 )
 
 // Device implements the nfc.Device interface for smartphone NFC scanning.

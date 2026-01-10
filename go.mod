@@ -1,4 +1,4 @@
-module github.com/nedpals/davi-nfc-agent
+module github.com/dotside-studios/davi-nfc-agent
 
 go 1.24.0
 

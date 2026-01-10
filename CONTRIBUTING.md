@@ -26,7 +26,7 @@ brew install libnfc libfreefare libusb
 ### Building
 
 ```bash
-git clone https://github.com/nedpals/davi-nfc-agent.git
+git clone https://github.com/dotside-studios/davi-nfc-agent.git
 cd davi-nfc-agent
 go build .
 ```

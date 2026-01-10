@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
 	"github.com/google/uuid"
-	"github.com/nedpals/davi-nfc-agent/nfc"
 )
 
 // Manager implements the nfc.Manager interface for managing smartphone connections.
@@ -34,7 +34,7 @@ func NewManager(inactivityTimeout time.Duration) *Manager {
 		inactivityTimeout: inactivityTimeout,
 		stopCleanup:       make(chan struct{}),
 		dataChan:          make(chan nfc.NFCData, 10), // Buffered to prevent blocking
-		deviceChangeChan:  make(chan struct{}, 1),    // Buffered to prevent blocking
+		deviceChangeChan:  make(chan struct{}, 1),     // Buffered to prevent blocking
 	}
 
 	// Start cleanup routine

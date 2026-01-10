@@ -248,7 +248,7 @@ package main
 import (
     "fmt"
     "io"
-    "github.com/nedpals/davi-nfc-agent/nfc"
+    "github.com/dotside-studios/davi-nfc-agent/nfc"
 )
 
 func main() {

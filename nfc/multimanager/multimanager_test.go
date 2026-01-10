@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
 )
 
 // mockManager is a mock Manager implementation for testing

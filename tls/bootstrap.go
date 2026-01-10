@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nedpals/davi-nfc-agent/buildinfo"
+	"github.com/dotside-studios/davi-nfc-agent/buildinfo"
 )
 
 // BootstrapServer serves the CA certificate over plain HTTP for device setup.

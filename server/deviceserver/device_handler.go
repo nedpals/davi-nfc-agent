@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc/remotenfc"
+	"github.com/dotside-studios/davi-nfc-agent/protocol"
+	"github.com/dotside-studios/davi-nfc-agent/server"
 	"github.com/gorilla/websocket"
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
-	"github.com/nedpals/davi-nfc-agent/protocol"
-	"github.com/nedpals/davi-nfc-agent/server"
 )
 
 // DeviceHandler handles all device WebSocket connections and management.

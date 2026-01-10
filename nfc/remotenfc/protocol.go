@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/protocol"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/protocol"
 )
 
 // DeviceCapabilities defines the capabilities of a smartphone NFC device.

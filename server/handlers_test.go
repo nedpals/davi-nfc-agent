@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
 )
 
 // TestBuildNDEFMessage tests NDEF message building logic

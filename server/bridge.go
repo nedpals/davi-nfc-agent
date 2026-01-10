@@ -1,6 +1,6 @@
 package server
 
-import "github.com/nedpals/davi-nfc-agent/nfc"
+import "github.com/dotside-studios/davi-nfc-agent/nfc"
 
 // ServerBridge facilitates communication between Device and Client servers.
 // All channels are buffered to prevent blocking.

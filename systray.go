@@ -10,8 +10,8 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/nedpals/davi-nfc-agent/buildinfo"
-	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/buildinfo"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
 )
 
 // cardTypeFilterItem holds a menu item and its associated card type

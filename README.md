@@ -24,10 +24,10 @@ A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Re
 
 ## Quick Start
 
-Download pre-built binaries from [releases](https://github.com/nedpals/davi-nfc-agent/releases), or build from source:
+Download pre-built binaries from [releases](https://github.com/dotside-studios/davi-nfc-agent/releases), or build from source:
 
 ```bash
-git clone https://github.com/nedpals/davi-nfc-agent.git
+git clone https://github.com/dotside-studios/davi-nfc-agent.git
 cd davi-nfc-agent
 go build .
 ./davi-nfc-agent

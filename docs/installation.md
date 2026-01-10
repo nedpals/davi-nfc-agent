@@ -12,12 +12,12 @@ This guide covers installing the NFC Agent and its dependencies.
 
 ### Pre-built Binaries
 
-Pre-built binaries for various platforms are available in the [releases](https://github.com/nedpals/davi-nfc-agent/releases) section.
+Pre-built binaries for various platforms are available in the [releases](https://github.com/dotside-studios/davi-nfc-agent/releases) section.
 
 ### Building from Source
 
 ```bash
-git clone https://github.com/nedpals/davi-nfc-agent.git
+git clone https://github.com/dotside-studios/davi-nfc-agent.git
 cd davi-nfc-agent
 go build -o davi-nfc-agent .
 ```

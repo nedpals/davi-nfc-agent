@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
-	"github.com/nedpals/davi-nfc-agent/server"
-	"github.com/nedpals/davi-nfc-agent/server/clientserver"
-	"github.com/nedpals/davi-nfc-agent/server/deviceserver"
-	"github.com/nedpals/davi-nfc-agent/tls"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc/remotenfc"
+	"github.com/dotside-studios/davi-nfc-agent/server"
+	"github.com/dotside-studios/davi-nfc-agent/server/clientserver"
+	"github.com/dotside-studios/davi-nfc-agent/server/deviceserver"
+	"github.com/dotside-studios/davi-nfc-agent/tls"
 )
 
 // GetAllCardTypeFilterNames returns all card type filter names from nfc package constants
@@ -50,9 +50,9 @@ type Agent struct {
 	TLSManager *tls.Manager // TLS manager for auto-TLS and network watching
 
 	// Internal state
-	devicePath          string        // Current device path
-	serversMu           sync.Mutex    // Protects server restart operations
-	serverRestartChan   chan struct{} // Signals when servers are restarted
+	devicePath        string        // Current device path
+	serversMu         sync.Mutex    // Protects server restart operations
+	serverRestartChan chan struct{} // Signals when servers are restarted
 }
 
 func NewAgent(nfcManager nfc.Manager) *Agent {
@@ -215,7 +215,9 @@ func (a *Agent) startServers() error {
 	var deviceManager *remotenfc.Manager
 	if pm, ok := a.Manager.(*remotenfc.Manager); ok {
 		deviceManager = pm
-	} else if mm, ok := a.Manager.(interface{ GetManager(string) (nfc.Manager, bool) }); ok {
+	} else if mm, ok := a.Manager.(interface {
+		GetManager(string) (nfc.Manager, bool)
+	}); ok {
 		if mgr, exists := mm.GetManager(nfc.ManagerTypeSmartphone); exists {
 			if pm, ok := mgr.(*remotenfc.Manager); ok {
 				deviceManager = pm

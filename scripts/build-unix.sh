@@ -20,7 +20,7 @@ BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 # Generate ldflags for buildinfo package
 get_buildinfo_ldflags() {
-    local pkg="github.com/nedpals/davi-nfc-agent/buildinfo"
+    local pkg="github.com/dotside-studios/davi-nfc-agent/buildinfo"
     echo "-X $pkg.Version=$BUILD_VERSION -X $pkg.Commit=$BUILD_COMMIT -X $pkg.BuildTime=$BUILD_TIME"
 }
 

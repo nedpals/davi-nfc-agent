@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/server"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/server"
 )
 
 // NFCHandler handles NFC reader operations for the device server.

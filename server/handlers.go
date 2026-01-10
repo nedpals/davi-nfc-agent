@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
 )
 
 // WriteRecord represents a single NDEF record in the write request

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dotside-studios/davi-nfc-agent/protocol"
 	"github.com/gorilla/websocket"
-	"github.com/nedpals/davi-nfc-agent/protocol"
 )
 
 // mockHandlerFunc is a mock implementation of HandlerFunc for testing

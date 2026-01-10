@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
 )
 
 func TestDeviceCreation(t *testing.T) {

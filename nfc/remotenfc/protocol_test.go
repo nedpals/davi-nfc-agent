@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/protocol"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/protocol"
 )
 
 func TestParseUID(t *testing.T) {

@@ -35,7 +35,7 @@ This guide explains how to add support for new NFC readers or tag types to the d
 ```go
 package myreader
 
-import "github.com/nedpals/davi-nfc-agent/nfc"
+import "github.com/dotside-studios/davi-nfc-agent/nfc"
 
 type MyManager struct {
     // Your connection state (USB, serial, network, etc.)
@@ -217,8 +217,8 @@ In your main.go or initialization code:
 
 ```go
 import (
-    "github.com/nedpals/davi-nfc-agent/nfc"
-    "github.com/nedpals/davi-nfc-agent/nfc/multimanager"
+    "github.com/dotside-studios/davi-nfc-agent/nfc"
+    "github.com/dotside-studios/davi-nfc-agent/nfc/multimanager"
     "myproject/myreader"
 )
 
@@ -344,7 +344,7 @@ Capabilities are automatically built from optional interfaces the device impleme
 Use the structured error types for consistent error handling:
 
 ```go
-import "github.com/nedpals/davi-nfc-agent/nfc"
+import "github.com/dotside-studios/davi-nfc-agent/nfc"
 
 // For unsupported operations
 return nfc.NewNotSupportedError("Transceive")
@@ -423,7 +423,7 @@ if writer, ok := tag.(nfc.AdvancedWriter); ok {
 If your device needs WebSocket handlers (like smartphone NFC):
 
 ```go
-import "github.com/nedpals/davi-nfc-agent/server"
+import "github.com/dotside-studios/davi-nfc-agent/server"
 
 // Implement server.ServerHandler
 func (m *MyManager) Register(s server.HandlerServer) {

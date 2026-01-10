@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/protocol"
 	"github.com/gorilla/websocket"
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/protocol"
 )
 
 // HandlerFunc is a function type for handling websocket messages.

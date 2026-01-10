@@ -1,8 +1,8 @@
 package deviceserver
 
 import (
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc/remotenfc"
 )
 
 // Config holds configuration for the Device Server.

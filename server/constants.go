@@ -1,6 +1,6 @@
 package server
 
-import "github.com/nedpals/davi-nfc-agent/buildinfo"
+import "github.com/dotside-studios/davi-nfc-agent/buildinfo"
 
 // mDNS service discovery constants for legacy single-server mode
 var (

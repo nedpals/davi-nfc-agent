@@ -15,11 +15,11 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/nedpals/davi-nfc-agent/buildinfo"
-	"github.com/nedpals/davi-nfc-agent/nfc"
-	"github.com/nedpals/davi-nfc-agent/nfc/multimanager"
-	"github.com/nedpals/davi-nfc-agent/nfc/remotenfc"
-	"github.com/nedpals/davi-nfc-agent/tls"
+	"github.com/dotside-studios/davi-nfc-agent/buildinfo"
+	"github.com/dotside-studios/davi-nfc-agent/nfc"
+	"github.com/dotside-studios/davi-nfc-agent/nfc/multimanager"
+	"github.com/dotside-studios/davi-nfc-agent/nfc/remotenfc"
+	"github.com/dotside-studios/davi-nfc-agent/tls"
 )
 
 const (

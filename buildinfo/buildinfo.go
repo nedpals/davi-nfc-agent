@@ -2,14 +2,14 @@
 //
 // For release builds, use ldflags to set the version:
 //
-//	go build -ldflags "-X github.com/nedpals/davi-nfc-agent/buildinfo.Version=1.0.0"
+//	go build -ldflags "-X github.com/dotside-studios/davi-nfc-agent/buildinfo.Version=1.0.0"
 //
 // Or set multiple values:
 //
 //	go build -ldflags "\
-//	  -X github.com/nedpals/davi-nfc-agent/buildinfo.Version=1.0.0 \
-//	  -X github.com/nedpals/davi-nfc-agent/buildinfo.Commit=$(git rev-parse --short HEAD) \
-//	  -X github.com/nedpals/davi-nfc-agent/buildinfo.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//	  -X github.com/dotside-studios/davi-nfc-agent/buildinfo.Version=1.0.0 \
+//	  -X github.com/dotside-studios/davi-nfc-agent/buildinfo.Commit=$(git rev-parse --short HEAD) \
+//	  -X github.com/dotside-studios/davi-nfc-agent/buildinfo.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 package buildinfo
 
 import (
