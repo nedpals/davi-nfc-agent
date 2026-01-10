@@ -2,6 +2,32 @@
 
 A framework-agnostic JavaScript client for integrating with the NFC Agent.
 
+## Table of Contents
+
+- [NFCClient (Client Server)](#nfcclient-client-server)
+  - [Installation](#installation)
+  - [Quick Start](#quick-start)
+  - [API Reference](#api-reference)
+  - [Examples](#examples)
+  - [TypeScript Support](#typescript-support)
+- [NFCDeviceClient (Device Input)](#nfcdeviceclient-device-input)
+  - [Installation](#installation-1)
+  - [Quick Start](#quick-start-1)
+  - [API Reference](#api-reference-1)
+  - [NFC Integration Examples](#nfc-integration-examples)
+    - [WebNFC (Browser)](#webnfc-browser)
+    - [React Native NFC Manager](#react-native-nfc-manager)
+    - [Node.js with External Reader](#nodejs-with-external-reader)
+  - [TypeScript Support](#typescript-support-1)
+  - [mDNS / Bonjour Discovery](#mdns--bonjour-discovery)
+    - [Node.js](#nodejs)
+    - [React Native](#react-native)
+    - [Electron](#electron)
+
+---
+
+## NFCClient (Client Server)
+
 ## Installation
 
 Copy the client files to your project:
@@ -237,27 +263,43 @@ See `client/nfc-client.d.ts` for full type definitions.
 
 # NFCDeviceClient (Device Input)
 
-Use `NFCDeviceClient` to connect to the **Device Server** (port 9470) as an NFC device. This allows browsers with WebNFC support to act as NFC readers.
+Use `NFCDeviceClient` to connect to the **Device Server** (port 9470) as an NFC device. This is a universal library that works in both Node.js and browser environments, allowing any NFC-capable device to act as a reader.
+
+The library is **NFC-source agnostic** - integrate with any NFC library (WebNFC, React Native NFC Manager, etc.) by calling `scanTag()` when your NFC library detects a tag.
 
 ## Installation
 
-```bash
-cp client/nfc-device-client.js your-project/
-cp client/nfc-device-client.d.ts your-project/  # For TypeScript
-```
-
-Or include directly in HTML:
+### Browser
 
 ```html
 <script src="nfc-device-client.js"></script>
+```
+
+### Node.js
+
+```bash
+cp client/nfc-device-client.js your-project/
+npm install ws  # Or any WebSocket-compatible package
+```
+
+```javascript
+const NFCDeviceClient = require('./nfc-device-client');
+const WebSocket = require('ws');
+
+const client = new NFCDeviceClient('ws://localhost:9470', {
+  WebSocket: WebSocket,  // Pass your WebSocket class
+  deviceName: 'Node.js Reader',
+  platform: 'node'
+});
 ```
 
 ## Quick Start
 
 ```javascript
 const client = new NFCDeviceClient('ws://localhost:9470', {
-  deviceName: 'Browser NFC Reader',
-  platform: 'web'
+  deviceName: 'My NFC Reader',
+  platform: 'web',
+  nfcType: 'webnfc'  // Describe your NFC source
 });
 
 // Listen for registration
@@ -268,17 +310,19 @@ client.on('registered', ({ deviceID }) => {
 // Listen for write requests from server
 client.on('writeRequest', ({ requestID, ndefMessage }) => {
   console.log('Write request:', ndefMessage);
-  // Handle write, then respond
+  // Handle write with your NFC library, then respond
   client.respondToWrite(requestID, true);
 });
 
 // Connect to server
 await client.connect();
 
-// Start WebNFC scanning (if supported)
-if (NFCDeviceClient.isWebNFCSupported()) {
-  await client.startNFCScanning();
-}
+// When your NFC library detects a tag, call scanTag()
+await client.scanTag({
+  uid: '04:AB:CD:EF:12:34:56',
+  type: 'MIFARE Classic 1K',
+  ndefMessage: { type: 'ndef', records: [...] }
+});
 ```
 
 ## API Reference
@@ -292,26 +336,17 @@ new NFCDeviceClient(serverUrl, options?)
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `serverUrl` | string | Device Server URL (e.g., `ws://localhost:9470`) |
-| `options.deviceName` | string | Device name for registration (default: `'Web NFC Device'`) |
-| `options.platform` | string | Platform identifier (default: `'web'`) |
+| `options.WebSocket` | class | Custom WebSocket class (required in Node.js, optional in browser) |
+| `options.deviceName` | string | Device name for registration (default: `'NFC Device'`) |
+| `options.platform` | string | Platform identifier: `'web'`, `'ios'`, `'android'`, `'node'` (default: `'unknown'`) |
 | `options.appVersion` | string | App version (default: `'1.0.0'`) |
 | `options.canRead` | boolean | Device can read tags (default: `true`) |
 | `options.canWrite` | boolean | Device can write tags (default: `false`) |
+| `options.nfcType` | string | NFC library type: `'webnfc'`, `'react-native-nfc'`, `'custom'` (default: `'custom'`) |
 | `options.autoHeartbeat` | boolean | Send heartbeats automatically (default: `true`) |
 | `options.heartbeatInterval` | number | Heartbeat interval in ms (default: `30000`) |
 | `options.autoReconnect` | boolean | Auto-reconnect on disconnect (default: `true`) |
-
-### Static Methods
-
-#### `NFCDeviceClient.isWebNFCSupported()`
-
-Check if WebNFC is available in the current browser.
-
-```javascript
-if (NFCDeviceClient.isWebNFCSupported()) {
-  // Can use startNFCScanning()
-}
-```
+| `options.reconnectDelay` | number | Delay before reconnecting in ms (default: `3000`) |
 
 ### Methods
 
@@ -331,50 +366,31 @@ Disconnect from the server.
 await client.disconnect();
 ```
 
-#### `startNFCScanning()`
-
-Start WebNFC scanning. Detected tags are automatically sent to the server.
-
-```javascript
-await client.startNFCScanning();
-```
-
-#### `stopNFCScanning()`
-
-Stop WebNFC scanning.
-
-```javascript
-client.stopNFCScanning();
-```
-
-#### `isNFCScanning()`
-
-Check if currently scanning.
-
-```javascript
-if (client.isNFCScanning()) {
-  // Currently scanning
-}
-```
-
 #### `scanTag(tagData)`
 
-Manually send a tag scan event (for non-WebNFC sources).
+Send a tag scan event to the server. Call this when your NFC library detects a tag.
 
 ```javascript
 await client.scanTag({
-  uid: '04A1B2C3D4E5F6',
-  type: 'MIFARE Classic',
-  ndefMessage: { records: [...] }
+  uid: '04:AB:CD:EF:12:34:56',
+  technology: 'ISO14443A',        // Optional, default: 'ISO14443A'
+  type: 'MIFARE Classic 1K',      // Optional, default: 'Unknown'
+  atr: '',                        // Optional
+  scannedAt: new Date().toISOString(),  // Optional, auto-set if not provided
+  ndefMessage: {                  // Optional
+    type: 'ndef',
+    records: [{ type: 'T', text: 'Hello', language: 'en' }]
+  },
+  rawData: null                   // Optional, base64 encoded
 });
 ```
 
 #### `removeTag(uid)`
 
-Notify server that a tag was removed.
+Notify server that a tag was removed from the reader.
 
 ```javascript
-await client.removeTag('04A1B2C3D4E5F6');
+await client.removeTag('04:AB:CD:EF:12:34:56');
 ```
 
 #### `respondToWrite(requestID, success, error?)`
@@ -384,7 +400,7 @@ Respond to a write request from the server.
 ```javascript
 client.respondToWrite(requestID, true);
 // or on failure:
-client.respondToWrite(requestID, false, 'Write failed');
+client.respondToWrite(requestID, false, 'Write failed: card removed');
 ```
 
 #### `getDeviceID()`
@@ -393,6 +409,15 @@ Get assigned device ID after registration.
 
 ```javascript
 const deviceID = client.getDeviceID();
+```
+
+#### `getServerInfo()`
+
+Get server info received during registration.
+
+```javascript
+const serverInfo = client.getServerInfo();
+// { version: '1.0.0', supportedNFC: ['ndef', 'mifare'] }
 ```
 
 #### `isConnected()`
@@ -411,78 +436,247 @@ if (client.isConnected()) {
 |-------|---------|-------------|
 | `registered` | `{ deviceID, serverInfo }` | Successfully registered with server |
 | `writeRequest` | `{ requestID, deviceID, ndefMessage }` | Server requests a write operation |
-| `nfcReading` | Tag data object | WebNFC detected a tag |
-| `nfcReadingError` | `{ error }` | WebNFC reading error |
-| `connected` | - | WebSocket connected |
-| `disconnected` | - | WebSocket disconnected |
-| `error` | `{ error, phase }` | Error occurred |
+| `connected` | `{}` | WebSocket connected |
+| `disconnected` | `{}` | WebSocket disconnected |
+| `error` | `{ error, phase?, code? }` | Error occurred |
 
 ```javascript
 client.on('registered', ({ deviceID }) => { /* ... */ });
 client.on('writeRequest', ({ requestID, ndefMessage }) => { /* ... */ });
-client.on('nfcReading', (tagData) => { /* ... */ });
+client.on('connected', () => { /* ... */ });
+client.on('disconnected', () => { /* ... */ });
 client.on('error', ({ error, phase }) => { /* ... */ });
 ```
 
-## Examples
+---
 
-### WebNFC Browser Reader
+## NFC Integration Examples
+
+The `NFCDeviceClient` is NFC-source agnostic. Below are examples of integrating with popular NFC libraries.
+
+### WebNFC (Browser)
+
+WebNFC is available in Chrome on Android. Implement NFC scanning in your application code:
 
 ```javascript
 const client = new NFCDeviceClient('ws://localhost:9470', {
   deviceName: 'Chrome NFC Reader',
+  platform: 'web',
+  nfcType: 'webnfc',
   canWrite: true
 });
 
-client.on('registered', ({ deviceID }) => {
-  console.log('Device ID:', deviceID);
-  document.getElementById('status').textContent = 'Connected';
-});
+let nfcReader = null;
+let nfcAbortController = null;
 
-client.on('nfcReading', (tagData) => {
-  console.log('Scanned:', tagData.uid);
-  document.getElementById('lastTag').textContent = tagData.uid;
-});
+// Check WebNFC support
+function isWebNFCSupported() {
+  return 'NDEFReader' in window;
+}
 
+// Start WebNFC scanning
+async function startNFCScanning() {
+  if (!isWebNFCSupported()) {
+    throw new Error('WebNFC not supported');
+  }
+
+  nfcAbortController = new AbortController();
+  nfcReader = new NDEFReader();
+
+  nfcReader.onreading = async (event) => {
+    const { serialNumber, message } = event;
+
+    // Convert NDEF message to protocol format
+    const records = [];
+    for (const record of message.records) {
+      const recordData = {
+        type: record.recordType,
+        mediaType: record.mediaType
+      };
+
+      if (record.recordType === 'text') {
+        const decoder = new TextDecoder(record.encoding || 'utf-8');
+        recordData.text = decoder.decode(record.data);
+        recordData.language = record.lang;
+      } else if (record.recordType === 'url') {
+        const decoder = new TextDecoder();
+        recordData.uri = decoder.decode(record.data);
+      }
+
+      records.push(recordData);
+    }
+
+    // Send to server
+    await client.scanTag({
+      uid: serialNumber.replace(/:/g, ''),
+      technology: 'NFC',
+      type: 'NDEF',
+      ndefMessage: { type: 'ndef', records }
+    });
+  };
+
+  nfcReader.onreadingerror = (error) => {
+    console.error('NFC reading error:', error);
+  };
+
+  await nfcReader.scan({ signal: nfcAbortController.signal });
+}
+
+// Stop scanning
+function stopNFCScanning() {
+  if (nfcAbortController) {
+    nfcAbortController.abort();
+    nfcAbortController = null;
+  }
+  nfcReader = null;
+}
+
+// Handle write requests
 client.on('writeRequest', async ({ requestID, ndefMessage }) => {
   try {
-    // Write using WebNFC
     const writer = new NDEFReader();
-    await writer.write(ndefMessage);
+    const records = ndefMessage.records.map(r => {
+      if (r.type === 'text' || r.type === 'T') {
+        return { recordType: 'text', data: r.text || r.content, lang: r.language || 'en' };
+      } else if (r.type === 'uri' || r.type === 'U') {
+        return { recordType: 'url', data: r.uri || r.content };
+      }
+      return r;
+    });
+    await writer.write({ records });
     client.respondToWrite(requestID, true);
   } catch (err) {
     client.respondToWrite(requestID, false, err.message);
   }
 });
 
+// Connect and start scanning
 await client.connect();
-
-if (NFCDeviceClient.isWebNFCSupported()) {
-  await client.startNFCScanning();
-} else {
-  alert('WebNFC not supported in this browser');
+if (isWebNFCSupported()) {
+  await startNFCScanning();
 }
 ```
 
-### Manual Tag Input (No WebNFC)
+### React Native NFC Manager
+
+For React Native apps using [react-native-nfc-manager](https://github.com/revtel/react-native-nfc-manager):
 
 ```javascript
+import NfcManager, { NfcTech, Ndef } from 'react-native-nfc-manager';
+import NFCDeviceClient from './nfc-device-client';
+
+const client = new NFCDeviceClient('ws://your-server:9470', {
+  deviceName: 'React Native App',
+  platform: Platform.OS,  // 'ios' or 'android'
+  nfcType: 'react-native-nfc',
+  canWrite: true
+});
+
+// Initialize NFC
+async function initNFC() {
+  await NfcManager.start();
+  await client.connect();
+}
+
+// Read NFC tags
+async function scanTag() {
+  try {
+    await NfcManager.requestTechnology(NfcTech.Ndef);
+
+    const tag = await NfcManager.getTag();
+    const ndefRecords = await NfcManager.ndefHandler.getNdefMessage();
+
+    // Convert to protocol format
+    const records = ndefRecords?.map(record => {
+      const decoded = Ndef.text.decodePayload(record.payload);
+      return {
+        type: record.tnf === Ndef.TNF_WELL_KNOWN ? 'T' : 'unknown',
+        text: decoded,
+        language: 'en'
+      };
+    }) || [];
+
+    // Send to server
+    await client.scanTag({
+      uid: tag.id,
+      technology: tag.techTypes?.[0] || 'NfcA',
+      type: tag.type || 'Unknown',
+      ndefMessage: { type: 'ndef', records }
+    });
+
+  } finally {
+    NfcManager.cancelTechnologyRequest();
+  }
+}
+
+// Handle write requests
+client.on('writeRequest', async ({ requestID, ndefMessage }) => {
+  try {
+    await NfcManager.requestTechnology(NfcTech.Ndef);
+
+    const bytes = ndefMessage.records.map(r => {
+      if (r.type === 'text' || r.type === 'T') {
+        return Ndef.textRecord(r.text || r.content, r.language || 'en');
+      } else if (r.type === 'uri' || r.type === 'U') {
+        return Ndef.uriRecord(r.uri || r.content);
+      }
+    }).filter(Boolean);
+
+    await NfcManager.ndefHandler.writeNdefMessage(bytes);
+    client.respondToWrite(requestID, true);
+
+  } catch (err) {
+    client.respondToWrite(requestID, false, err.message);
+  } finally {
+    NfcManager.cancelTechnologyRequest();
+  }
+});
+```
+
+### Node.js with External Reader
+
+For Node.js applications using external NFC readers (e.g., via serial port or USB):
+
+```javascript
+const NFCDeviceClient = require('./nfc-device-client');
+const WebSocket = require('ws');
+
 const client = new NFCDeviceClient('ws://localhost:9470', {
-  deviceName: 'Manual Input Device'
+  WebSocket: WebSocket,
+  deviceName: 'Node.js NFC Reader',
+  platform: 'node',
+  nfcType: 'custom'
+});
+
+// Your NFC reader library
+const nfcReader = require('your-nfc-library');
+
+client.on('registered', ({ deviceID }) => {
+  console.log('Registered as:', deviceID);
+});
+
+client.on('error', ({ error }) => {
+  console.error('Client error:', error);
 });
 
 await client.connect();
 
-// Simulate tag scan from other source
-document.getElementById('scanBtn').onclick = async () => {
-  const uid = document.getElementById('uidInput').value;
+// When your reader detects a tag
+nfcReader.on('tag', async (tag) => {
   await client.scanTag({
-    uid: uid,
-    type: 'Manual',
-    scannedAt: new Date().toISOString()
+    uid: tag.uid,
+    type: tag.type,
+    technology: 'ISO14443A',
+    ndefMessage: tag.ndef ? { type: 'ndef', records: tag.ndef.records } : null
   });
-};
+});
+
+nfcReader.on('removed', async (uid) => {
+  await client.removeTag(uid);
+});
 ```
+
+---
 
 ## TypeScript Support
 
@@ -491,11 +685,155 @@ TypeScript definitions are provided in `nfc-device-client.d.ts`:
 ```typescript
 import { NFCDeviceClient, DeviceTagData, WriteRequestEvent } from './nfc-device-client';
 
-const client = new NFCDeviceClient('ws://localhost:9470');
+const client = new NFCDeviceClient('ws://localhost:9470', {
+  deviceName: 'TypeScript Client',
+  nfcType: 'custom'
+});
 
 client.on('writeRequest', (event: WriteRequestEvent) => {
   console.log(event.requestID);
 });
+
+const tagData: DeviceTagData = {
+  uid: '04:AB:CD:EF:12:34:56',
+  type: 'MIFARE Classic 1K'
+};
+
+await client.scanTag(tagData);
 ```
 
 See `client/nfc-device-client.d.ts` for full type definitions.
+
+---
+
+## mDNS / Bonjour Discovery
+
+The Device Server advertises itself via mDNS/Bonjour, allowing clients to discover the server on the local network without knowing the IP address.
+
+**Service Details:**
+- **Service Type:** `_nfc-device._tcp`
+- **Domain:** `local.`
+
+### Node.js
+
+Using [bonjour-service](https://github.com/onlxltd/bonjour-service):
+
+```javascript
+const { Bonjour } = require('bonjour-service');
+const NFCDeviceClient = require('./nfc-device-client');
+const WebSocket = require('ws');
+
+const bonjour = new Bonjour();
+
+// Find NFC Agent servers on the network
+const browser = bonjour.find({ type: 'nfc-device' }, (service) => {
+  console.log('Found NFC Agent:', service.name);
+  console.log('  Host:', service.host);
+  console.log('  Port:', service.port);
+  console.log('  Addresses:', service.addresses);
+
+  // Connect to the discovered server
+  const serverUrl = `ws://${service.addresses[0]}:${service.port}`;
+
+  const client = new NFCDeviceClient(serverUrl, {
+    WebSocket: WebSocket,
+    deviceName: 'Auto-discovered Client',
+    platform: 'node'
+  });
+
+  client.on('registered', ({ deviceID }) => {
+    console.log('Connected to:', service.name, 'as', deviceID);
+  });
+
+  client.connect();
+});
+
+// Stop browsing after 10 seconds
+setTimeout(() => {
+  browser.stop();
+  bonjour.destroy();
+}, 10000);
+```
+
+### React Native
+
+Using [react-native-zeroconf](https://github.com/balthazar/react-native-zeroconf):
+
+```javascript
+import Zeroconf from 'react-native-zeroconf';
+import NFCDeviceClient from './nfc-device-client';
+
+const zeroconf = new Zeroconf();
+
+// Start scanning for NFC Agent servers
+zeroconf.scan('nfc-device', 'tcp', 'local.');
+
+zeroconf.on('resolved', (service) => {
+  console.log('Found NFC Agent:', service.name);
+
+  const serverUrl = `ws://${service.addresses[0]}:${service.port}`;
+
+  const client = new NFCDeviceClient(serverUrl, {
+    deviceName: 'React Native App',
+    platform: Platform.OS
+  });
+
+  client.on('registered', ({ deviceID }) => {
+    console.log('Connected as:', deviceID);
+    // Stop scanning once connected
+    zeroconf.stop();
+  });
+
+  client.connect();
+});
+
+zeroconf.on('error', (err) => {
+  console.error('Zeroconf error:', err);
+});
+
+// Stop scanning after 30 seconds if no server found
+setTimeout(() => zeroconf.stop(), 30000);
+```
+
+### Electron
+
+For Electron apps, you can use Node.js mDNS libraries in the main process:
+
+```javascript
+// main.js (main process)
+const { Bonjour } = require('bonjour-service');
+const { ipcMain } = require('electron');
+
+const bonjour = new Bonjour();
+
+ipcMain.handle('discover-nfc-servers', () => {
+  return new Promise((resolve) => {
+    const servers = [];
+
+    const browser = bonjour.find({ type: 'nfc-device' }, (service) => {
+      servers.push({
+        name: service.name,
+        host: service.host,
+        port: service.port,
+        addresses: service.addresses
+      });
+    });
+
+    setTimeout(() => {
+      browser.stop();
+      resolve(servers);
+    }, 5000);
+  });
+});
+
+// renderer.js (renderer process)
+const servers = await window.electronAPI.discoverNFCServers();
+if (servers.length > 0) {
+  const server = servers[0];
+  const client = new NFCDeviceClient(`ws://${server.addresses[0]}:${server.port}`, {
+    deviceName: 'Electron App',
+    platform: 'electron'
+  });
+  await client.connect();
+}
+```
