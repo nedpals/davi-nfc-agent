@@ -1,6 +1,6 @@
 # Davi NFC Agent
 
-A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Reads and writes NDEF formatted data from NFC tags and broadcasts to connected clients in real-time.
+A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Reads and writes NDEF formatted data from NFC tags and broadcasts to connected clients in real-time. This is for use for the NFC-related functionality integrated into the [Davi](https://davi.social) platform.
 
 ## Features
 
@@ -148,3 +148,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, cross-compilation,
 ## License
 
 [MIT License](LICENSE)
+
+<hr />
+
+Copyright © 2026 Ned Palacios and Dotside Studios. All rights reserved.
