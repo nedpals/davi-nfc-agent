@@ -6,15 +6,14 @@ toolchain go1.24.2
 
 require (
 	fyne.io/systray v1.11.0
-	github.com/clausecker/freefare v0.3.2
-	github.com/clausecker/nfc/v2 v2.2.0
+	github.com/ebfe/scard v0.0.0-20241214075232-7af069cabc25
 	github.com/gorilla/websocket v1.5.3
 	github.com/grandcat/zeroconf v1.0.0
+	github.com/jittering/truststore v1.4.4-lib
 )
 
 require (
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
-	github.com/jittering/truststore v1.4.4-lib // indirect
 	github.com/miekg/dns v1.1.27 // indirect
 	golang.org/x/crypto v0.44.0 // indirect
 	golang.org/x/net v0.47.0 // indirect

@@ -1,6 +1,6 @@
 # NFC Package
 
-A Go package providing a unified, high-level abstraction for NFC operations across multiple card types. Built on top of libnfc and libfreefare.
+A Go package providing a unified, high-level abstraction for NFC operations across multiple card types. Built on top of PC/SC via ebfe/scard.
 
 ## Overview
 
@@ -47,8 +47,8 @@ The `nfc` package provides a modular architecture for working with NFC tags, abs
                    │
                    ↓
 ┌─────────────────────────────────────────┐
-│     Native Libraries (CGO bindings)     │
-│        libnfc + libfreefare             │
+│         PC/SC API (ebfe/scard)          │
+│     System: pcsclite / WinSCard         │
 └─────────────────────────────────────────┘
 ```
 
@@ -70,7 +70,7 @@ device, err := manager.OpenDevice(devices[0])
 defer device.Close()
 ```
 
-**File**: `manager.go`, `manager_default.go`
+**File**: `manager.go`, `manager_pcsc.go`
 
 ### Device
 
@@ -87,7 +87,7 @@ connStr := device.Connection()
 device.Close()
 ```
 
-**Files**: `device.go`, `device_libnfc.go`
+**Files**: `device.go`, `device_pcsc.go`
 
 ### Tag
 
@@ -422,30 +422,35 @@ The package is **not thread-safe**. If you need concurrent access:
 
 ## Dependencies
 
-- **libnfc** (v1.8.0+): NFC device communication
-- **libfreefare** (v0.4.0+): MIFARE card operations
-- **github.com/clausecker/freefare**: Go bindings for libfreefare
+- **github.com/ebfe/scard**: Go bindings for PC/SC
+- PC/SC runtime (built into macOS/Windows, `pcsclite` on Linux)
 
 ## Files Reference
 
 | File | Purpose |
 |------|---------|
 | `manager.go` | Manager interface |
-| `manager_default.go` | Default manager implementation |
+| `manager_pcsc.go` | PC/SC manager implementation |
 | `device.go` | Device interface |
-| `device_libnfc.go` | libnfc device implementation |
+| `device_pcsc.go` | PC/SC device implementation |
 | `tag.go` | Tag interface and base types |
+| `tag_base.go` | Shared base tag struct |
 | `tag_classic.go` | MIFARE Classic implementation |
 | `tag_desfire.go` | MIFARE DESFire implementation |
 | `tag_ultralight.go` | MIFARE Ultralight implementation |
+| `tag_ntag.go` | NTAG implementation |
 | `tag_iso14443.go` | ISO14443-4 Type 4 implementation |
+| `tagdetect.go` | ATR/UID-based tag detection |
+| `apdu.go` | APDU command construction |
+| `tlv.go` | TLV encode/decode utilities |
 | `card.go` | High-level Card abstraction |
 | `message.go` | Message interface and types |
 | `ndef.go` | NDEF encoding/decoding |
-| `mifare.go` | MIFARE-specific constants and utilities |
+| `constants.go` | Card type and key constants |
 | `keys.go` | Key management utilities |
 | `cache.go` | Tag caching for debouncing |
-| `common.go` | Shared types and utilities |
+| `capabilities.go` | Tag capability detection |
+| `errors.go` | Error types and handling |
 | `*_test.go` | Unit tests |
 | `*_mock.go` | Test mocks |
 

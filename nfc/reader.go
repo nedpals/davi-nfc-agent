@@ -239,6 +239,15 @@ func (r *NFCReader) handleDeviceErrors(err error) bool {
 	r.isWriting = false
 	r.statusMux.Unlock()
 
+	// Handle card removal specially - close device to allow reconnection
+	if IsCardRemovedError(err) {
+		log.Println("Card was removed, closing device for reconnection")
+		r.deviceManager.Close()
+		r.setCardPresent(false)
+		r.broadcastDeviceStatus("Card removed, waiting for new card")
+		return true
+	}
+
 	// Delegate error handling to DeviceManager (retry logic is now managed internally)
 	needsCooldown := r.deviceManager.HandleError(err, r.stopChan)
 
@@ -293,6 +302,14 @@ func (r *NFCReader) handleTagPolling(tags []Tag) {
 		// Create Card wrapper
 		card := NewCard(tag)
 		if _, err := card.ReadMessage(); err != nil {
+			// Check if this is a card removal error - if so, close the device
+			if IsCardRemovedError(err) {
+				log.Println("Card was removed during read, closing device for reconnection")
+				r.deviceManager.Close()
+				r.setCardPresent(false)
+				r.broadcastDeviceStatus("Card removed, waiting for new card")
+				return
+			}
 			log.Printf("Error reading data for card UID %s (Type: %s): %v", uid, card.Type, err)
 			// Send card with error
 			r.dataChan <- NFCData{Card: card, Err: err}
@@ -313,9 +330,11 @@ func (r *NFCReader) worker() {
 	defer log.Println("NFCReader worker stopped.")
 
 	r.cardCheckTicker = r.clock.NewTicker(CardCheckTickerInterval)
+	pollTicker := r.clock.NewTicker(DefaultPollingInterval)
 
 	defer func() {
 		r.cardCheckTicker.Stop()
+		pollTicker.Stop()
 		r.deviceManager.Close()
 		r.broadcastDeviceStatus("Worker stopped, device disconnected.")
 		r.workerWg.Done()
@@ -333,35 +352,77 @@ func (r *NFCReader) worker() {
 		case <-r.cardCheckTicker.C():
 			r.handleCardCheck()
 
-		default:
-			hasDev := r.deviceManager.HasDevice()
-			inCool := r.deviceManager.InCooldown()
+		case <-pollTicker.C():
+			r.pollOnce()
+		}
+	}
+}
 
-			r.statusMux.RLock()
-			isWrite := r.isWriting
-			r.statusMux.RUnlock()
+// pollOnce performs a single polling iteration for device connection and tag reading.
+// It runs the actual polling in a goroutine with a timeout to prevent blocking shutdown.
+func (r *NFCReader) pollOnce() {
+	// Check if we're stopping before starting any work
+	select {
+	case <-r.stopChan:
+		return
+	default:
+	}
 
-			if !hasDev || inCool {
-				r.clock.Sleep(DeviceIdleCheckInterval)
-				continue
-			}
-			if isWrite {
-				r.clock.Sleep(WriteCheckInterval)
-				continue
-			}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.doPoll()
+	}()
 
-			tags, err := r.GetTags()
-			if err != nil {
-				if !r.handleDeviceErrors(err) {
-					return // Stop signal received during error handling
-				}
-				continue
-			}
+	// Wait for poll to complete or stop signal
+	select {
+	case <-done:
+		// Poll completed normally
+	case <-r.stopChan:
+		// Stop signal received - don't wait for poll to complete
+		return
+	case <-r.clock.After(5 * time.Second):
+		// Poll taking too long - continue anyway to stay responsive
+		log.Println("Poll operation taking longer than expected")
+	}
+}
 
-			if len(tags) > 0 {
-				r.handleTagPolling(tags)
+// doPoll performs the actual polling work.
+func (r *NFCReader) doPoll() {
+	hasDev := r.deviceManager.HasDevice()
+	inCool := r.deviceManager.InCooldown()
+
+	r.statusMux.RLock()
+	isWrite := r.isWriting
+	r.statusMux.RUnlock()
+
+	if inCool {
+		return
+	}
+
+	// Try to connect if no device
+	if !hasDev {
+		if err := r.deviceManager.TryConnect(); err != nil {
+			// No card present is normal - just wait and retry
+			if !IsNoCardError(err) {
+				log.Printf("Connection attempt failed: %v", err)
 			}
 		}
+		return
+	}
+
+	if isWrite {
+		return
+	}
+
+	tags, err := r.GetTags()
+	if err != nil {
+		r.handleDeviceErrors(err)
+		return
+	}
+
+	if len(tags) > 0 {
+		r.handleTagPolling(tags)
 	}
 }
 

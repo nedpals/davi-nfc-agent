@@ -23,11 +23,11 @@ type DeviceChangeNotifier interface {
 	DeviceChanges() <-chan struct{}
 }
 
-// NewManager creates a new Manager using the default libnfc/freefare implementation.
+// NewManager creates a new Manager using the PC/SC implementation.
 //
 // Example:
 //
 //	manager := nfc.NewManager()
 func NewManager() Manager {
-	return &defaultManager{}
+	return newPCSCManager()
 }

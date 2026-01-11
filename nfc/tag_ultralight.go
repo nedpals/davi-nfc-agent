@@ -3,323 +3,153 @@ package nfc
 import (
 	"fmt"
 	"log"
-
-	"github.com/clausecker/freefare"
 )
 
-// UltralightTag wraps a MIFARE Ultralight tag with NFC operations.
-//
-// UltralightTag provides page-based read/write operations for Ultralight cards.
-//
-// Example:
-//
-//	tags, _ := device.GetTags()
-//	for _, tag := range tags {
-//	    if ultralight, ok := tag.(*UltralightTag); ok {
-//	        data, _ := ultralight.ReadPage(4)
-//	        ultralight.WritePage(5, [4]byte{0x01, 0x02, 0x03, 0x04})
-//	    }
-//	}
-type UltralightTag struct {
-	tag freefare.UltralightTag
+type pcscUltralightTag struct {
+	pcscBaseTag
+	isC bool
 }
 
-// NewUltralightTag creates a new Ultralight tag wrapper.
-func NewUltralightTag(tag freefare.UltralightTag) *UltralightTag {
-	return &UltralightTag{tag: tag}
-}
-
-func (u *UltralightTag) UID() string {
-	return u.tag.UID()
-}
-
-func (u *UltralightTag) Type() string {
-	switch u.tag.Type() {
-	case freefare.Ultralight:
-		return "MIFARE Ultralight"
-	case freefare.UltralightC:
-		return "MIFARE Ultralight C"
-	default:
-		return fmt.Sprintf("MIFARE Ultralight (type %d)", u.tag.Type())
+func newPCSCUltralightTag(dev *pcscDevice, uid string, tagType DetectedTagType) *pcscUltralightTag {
+	return &pcscUltralightTag{
+		pcscBaseTag: pcscBaseTag{
+			device:       dev,
+			uid:          uid,
+			detectedType: tagType,
+		},
+		isC: tagType == DetectedUltralightC,
 	}
 }
 
-func (u *UltralightTag) NumericType() int {
-	return int(u.tag.Type())
+func (t *pcscUltralightTag) Type() string {
+	return CardTypeMifareUltralight
 }
 
-func (u *UltralightTag) GetFreefareTag() freefare.Tag {
-	return u.tag
+func (t *pcscUltralightTag) NumericType() int {
+	return detectedTypeNumeric(t.detectedType)
 }
 
-// Capabilities returns the capabilities of this Ultralight tag.
-func (u *UltralightTag) Capabilities() TagCapabilities {
-	caps := TagCapabilities{
-		CanRead:       true,
-		CanWrite:      true,
-		CanTransceive: false,
-		CanLock:       true,
-		TagFamily:     "MIFARE Ultralight",
-		Technology:    "ISO14443A",
-		SupportsNDEF:  true,
-	}
-	switch u.tag.Type() {
-	case freefare.UltralightC:
-		caps.MemorySize = 192
-		caps.MaxNDEFSize = 137
-		caps.SupportsCrypto = true
-	default:
-		caps.MemorySize = 64
-		caps.MaxNDEFSize = 46
-	}
-	return caps
+func (t *pcscUltralightTag) Capabilities() TagCapabilities {
+	return InferTagCapabilities(t.Type())
 }
 
-func (u *UltralightTag) Connect() error {
-	return u.tag.Connect()
+func (t *pcscUltralightTag) Transceive(data []byte) ([]byte, error) {
+	return nil, fmt.Errorf("Transceive not supported for Ultralight")
 }
 
-func (u *UltralightTag) Disconnect() error {
-	return u.tag.Disconnect()
+// readPage reads 4 bytes from the specified page
+func (t *pcscUltralightTag) readPage(page byte) ([]byte, error) {
+	cmd := ReadBinaryAPDU(page, 4)
+	return t.transceive(cmd)
 }
 
-func (u *UltralightTag) Transceive(data []byte) ([]byte, error) {
-	return nil, NewNotSupportedError("Transceive")
+// writePage writes 4 bytes to the specified page
+func (t *pcscUltralightTag) writePage(page byte, data []byte) error {
+	if len(data) != 4 {
+		return fmt.Errorf("page data must be 4 bytes")
+	}
+	cmd := UpdateBinaryAPDU(page, data)
+	_, err := t.transceive(cmd)
+	return err
 }
 
-// ReadPage reads a 4-byte page from the Ultralight tag.
-func (u *UltralightTag) ReadPage(page byte) ([4]byte, error) {
-	if err := u.tag.Connect(); err != nil {
-		return [4]byte{}, fmt.Errorf("UltralightTag.ReadPage connect error: %w", err)
-	}
-	defer u.tag.Disconnect()
-
-	data, err := u.tag.ReadPage(page)
-	if err != nil {
-		return [4]byte{}, fmt.Errorf("UltralightTag.ReadPage error: %w", err)
-	}
-	return data, nil
-}
-
-// WritePage writes a 4-byte page to the Ultralight tag.
-func (u *UltralightTag) WritePage(page byte, data [4]byte) error {
-	if err := u.tag.Connect(); err != nil {
-		return fmt.Errorf("UltralightTag.WritePage connect error: %w", err)
-	}
-	defer u.tag.Disconnect()
-
-	if err := u.tag.WritePage(page, data); err != nil {
-		return fmt.Errorf("UltralightTag.WritePage error: %w", err)
-	}
-	return nil
-}
-
-// ReadData reads NDEF data from the Ultralight tag.
-func (u *UltralightTag) ReadData() ([]byte, error) {
-	if err := u.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("UltralightTag.ReadData connect error: %w", err)
-	}
-	defer u.tag.Disconnect()
-
-	// Ultralight NDEF starts at page 4 (pages 0-3 are header/config)
-	// Page 4 contains the NDEF TLV
-	startPage := byte(4)
-	maxPages := byte(16) // Ultralight has 16 pages (64 bytes total)
-
-	// For Ultralight C, there are more pages
-	if u.tag.Type() == freefare.UltralightC {
-		maxPages = 48 // Ultralight C has 48 pages (192 bytes)
-	}
-
+func (t *pcscUltralightTag) ReadData() ([]byte, error) {
+	// Read pages 4 onwards (user data area)
 	var allData []byte
-	for page := startPage; page < maxPages; page++ {
-		pageData, err := u.tag.ReadPage(page)
+	var lastError error
+	maxPages := byte(16) // Ultralight has 16 pages
+	if t.isC {
+		maxPages = 48 // Ultralight C has 48 pages
+	}
+
+	for page := byte(4); page < maxPages; page++ {
+		data, err := t.readPage(page)
 		if err != nil {
-			log.Printf("UltralightTag.ReadData: error reading page %d: %v", page, err)
+			// If card was removed, propagate that error immediately
+			if IsCardRemovedError(err) {
+				return nil, err
+			}
+			log.Printf("Error reading page %d: %v", page, err)
+			lastError = err
 			break
 		}
-		allData = append(allData, pageData[:]...)
+		allData = append(allData, data...)
 	}
 
 	if len(allData) == 0 {
-		return nil, nil
+		// Check if error was due to card removal (APDU errors when card is gone)
+		if lastError != nil && !t.device.IsCardPresent() {
+			return nil, NewCardRemovedError(fmt.Errorf("card removed during read"))
+		}
+		if lastError != nil {
+			return nil, fmt.Errorf("failed to read any data: %w", lastError)
+		}
+		return nil, fmt.Errorf("failed to read any data")
 	}
 
-	// Parse TLV structure (same as Classic)
-	offset := 0
-	for offset < len(allData) {
-		if offset+1 > len(allData) {
-			return nil, fmt.Errorf("TLV structure error at offset %d (type missing)", offset)
-		}
-		tlvType := allData[offset]
-
-		if tlvType == 0x00 {
-			offset++
-			continue
-		}
-		if tlvType == 0xFE {
-			break
-		}
-
-		lenFieldStart := offset + 1
-		if lenFieldStart >= len(allData) {
-			return nil, fmt.Errorf("TLV type 0x%X at offset %d: length field missing", tlvType, offset)
-		}
-
-		var msgLength int
-		var lengthFieldSize int
-
-		if allData[lenFieldStart] == 0xFF {
-			if lenFieldStart+2 >= len(allData) {
-				return nil, fmt.Errorf("TLV type 0x%X at offset %d: long format length bytes missing", tlvType, offset)
-			}
-			msgLength = int(allData[lenFieldStart+1])<<8 | int(allData[lenFieldStart+2])
-			lengthFieldSize = 3
-		} else {
-			msgLength = int(allData[lenFieldStart])
-			lengthFieldSize = 1
-		}
-
-		valueStart := lenFieldStart + lengthFieldSize
-		if valueStart+msgLength > len(allData) {
-			return nil, fmt.Errorf("TLV type 0x%X at offset %d: value (len %d) exceeds buffer bounds", tlvType, offset, msgLength)
-		}
-
-		message := allData[valueStart : valueStart+msgLength]
-
-		if tlvType == 0x03 {
-			return message, nil
-		}
-		offset = valueStart + msgLength
+	// Parse TLV to find NDEF message
+	ndefData, found := TLVFindNDEF(allData)
+	if !found {
+		return nil, fmt.Errorf("no NDEF message found")
 	}
 
-	log.Println("UltralightTag.ReadData: No NDEF Message TLV (type 0x03) found.")
-	return nil, nil
+	return ndefData, nil
 }
 
-// WriteData writes NDEF data to the Ultralight tag.
-func (u *UltralightTag) WriteData(data []byte) error {
-	if err := u.tag.Connect(); err != nil {
-		return fmt.Errorf("UltralightTag.WriteData connect error: %w", err)
+func (t *pcscUltralightTag) WriteData(data []byte) error {
+	// Build TLV payload
+	tlvPayload := TLVEncode(data, TLVNDEF)
+
+	// Calculate required pages
+	totalBytes := len(tlvPayload)
+	requiredPages := (totalBytes + 3) / 4
+
+	// Check if it fits
+	maxPages := 12 // Pages 4-15 for Ultralight
+	if t.isC {
+		maxPages = 36 // Pages 4-39 for Ultralight C (excluding auth pages)
 	}
-	defer u.tag.Disconnect()
-
-	// Build TLV structure
-	var tlvPayload []byte
-	ndefMsgLen := len(data)
-
-	tlvPayload = append(tlvPayload, 0x03) // NDEF Message TLV
-	if ndefMsgLen < 255 {
-		tlvPayload = append(tlvPayload, byte(ndefMsgLen))
-	} else {
-		tlvPayload = append(tlvPayload, 0xFF)
-		tlvPayload = append(tlvPayload, byte(ndefMsgLen>>8))
-		tlvPayload = append(tlvPayload, byte(ndefMsgLen&0xFF))
-	}
-	tlvPayload = append(tlvPayload, data...)
-	tlvPayload = append(tlvPayload, 0xFE) // Terminator TLV
-
-	// Ultralight NDEF starts at page 4
-	startPage := byte(4)
-	maxPages := byte(16)
-
-	if u.tag.Type() == freefare.UltralightC {
-		maxPages = 48
+	if requiredPages > maxPages {
+		return fmt.Errorf("data too large: need %d pages, have %d", requiredPages, maxPages)
 	}
 
-	// Calculate how many pages we need
-	pagesNeeded := (len(tlvPayload) + 3) / 4 // Round up to nearest page
-
-	if startPage+byte(pagesNeeded) > maxPages {
-		return fmt.Errorf("UltralightTag.WriteData: NDEF message too large (%d bytes, needs %d pages, only %d available)", len(data), pagesNeeded, maxPages-startPage)
+	// Pad to 4-byte boundary
+	for len(tlvPayload)%4 != 0 {
+		tlvPayload = append(tlvPayload, 0x00)
 	}
 
-	// Write data page by page
-	offset := 0
-	for page := startPage; offset < len(tlvPayload); page++ {
-		var pageData [4]byte
-		for i := 0; i < 4 && offset < len(tlvPayload); i++ {
-			pageData[i] = tlvPayload[offset]
-			offset++
+	// Write pages starting at page 4
+	for i := 0; i < len(tlvPayload); i += 4 {
+		page := byte(4 + i/4)
+		if err := t.writePage(page, tlvPayload[i:i+4]); err != nil {
+			return fmt.Errorf("failed to write page %d: %w", page, err)
 		}
-
-		if err := u.tag.WritePage(page, pageData); err != nil {
-			return fmt.Errorf("UltralightTag.WriteData: error writing page %d: %w", page, err)
-		}
-		log.Printf("UltralightTag.WriteData: Wrote page %d", page)
 	}
 
-	log.Printf("UltralightTag.WriteData: Successfully wrote %d bytes", len(data))
 	return nil
 }
 
-// IsWritable checks if the Ultralight tag is writable.
-func (u *UltralightTag) IsWritable() (bool, error) {
-	if err := u.tag.Connect(); err != nil {
-		return false, fmt.Errorf("UltralightTag.IsWritable connect error: %w", err)
-	}
-	defer u.tag.Disconnect()
+func (t *pcscUltralightTag) IsWritable() (bool, error) {
+	// Try to read page 4
+	_, err := t.readPage(4)
+	return err == nil, nil
+}
 
-	// Try to read page 4 to check if tag is accessible
-	_, err := u.tag.ReadPage(4)
-	if err != nil {
-		return false, nil
-	}
-
-	// Ultralight tags are generally writable unless locked
-	// We could check the lock bytes (page 2, bytes 2-3) but for now assume writable
+func (t *pcscUltralightTag) CanMakeReadOnly() (bool, error) {
 	return true, nil
 }
 
-// CanMakeReadOnly checks if the Ultralight tag can be made read-only.
-func (u *UltralightTag) CanMakeReadOnly() (bool, error) {
-	// Ultralight tags have lock bits that can permanently lock pages
-	// Check if they're not already locked
-	if err := u.tag.Connect(); err != nil {
-		return false, fmt.Errorf("UltralightTag.CanMakeReadOnly connect error: %w", err)
-	}
-	defer u.tag.Disconnect()
-
-	// Read lock bytes from page 2
-	lockPage, err := u.tag.ReadPage(2)
+func (t *pcscUltralightTag) MakeReadOnly() error {
+	// Write lock bytes to page 2
+	// Bytes 2-3 of page 2 are lock bytes
+	page2, err := t.readPage(2)
 	if err != nil {
-		return false, fmt.Errorf("UltralightTag.CanMakeReadOnly: error reading lock bytes: %w", err)
+		return fmt.Errorf("failed to read page 2: %w", err)
 	}
 
-	// Check if lock bits are already set
-	// Bytes 2-3 of page 2 contain lock bits
-	if lockPage[2] == 0xFF && lockPage[3] == 0xFF {
-		return false, nil // Already locked
-	}
+	// Set lock bytes to 0xFF to lock all pages
+	page2[2] = 0xFF
+	page2[3] = 0xFF
 
-	return true, nil
-}
-
-// MakeReadOnly makes the Ultralight tag read-only by setting lock bits.
-func (u *UltralightTag) MakeReadOnly() error {
-	if err := u.tag.Connect(); err != nil {
-		return fmt.Errorf("UltralightTag.MakeReadOnly connect error: %w", err)
-	}
-	defer u.tag.Disconnect()
-
-	// Set lock bits in page 2
-	// WARNING: This is permanent and cannot be undone!
-	lockData := [4]byte{0x00, 0x00, 0xFF, 0xFF}
-
-	// Read current page 2 data first to preserve other bytes
-	currentPage, err := u.tag.ReadPage(2)
-	if err != nil {
-		return fmt.Errorf("UltralightTag.MakeReadOnly: error reading page 2: %w", err)
-	}
-
-	// Preserve first 2 bytes, set lock bits in bytes 2-3
-	lockData[0] = currentPage[0]
-	lockData[1] = currentPage[1]
-
-	if err := u.tag.WritePage(2, lockData); err != nil {
-		return fmt.Errorf("UltralightTag.MakeReadOnly: error writing lock bits: %w", err)
-	}
-
-	log.Println("UltralightTag.MakeReadOnly: Tag locked to read-only mode")
-	return nil
+	return t.writePage(2, page2)
 }

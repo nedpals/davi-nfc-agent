@@ -218,10 +218,8 @@ func (dm *DeviceManager) TryConnect() error {
 			return fmt.Errorf("no NFC devices found by manager")
 		}
 		devicePathToConnect = devices[0]
-		log.Printf("No specific device path, trying first available: %s", devicePathToConnect)
 	}
 
-	log.Printf("Attempting to connect to device: %s", devicePathToConnect)
 	newDevice, errOpen := dm.manager.OpenDevice(devicePathToConnect)
 	if errOpen != nil {
 		return fmt.Errorf("failed to open device %s: %w", devicePathToConnect, errOpen)
@@ -375,6 +373,12 @@ func (dm *DeviceManager) Close() {
 // HandleError processes device errors and determines the appropriate recovery action.
 // Returns whether a cooldown was initiated. Retry state is now managed internally.
 func (dm *DeviceManager) HandleError(err error, stopChan <-chan struct{}) (needsCooldown bool) {
+	// "No card present" is a normal condition for NFC readers, not a device error.
+	// Don't log it as an error - the caller will simply retry.
+	if IsNoCardError(err) {
+		return false
+	}
+
 	log.Printf("Device error: %v", err)
 
 	// Handle IO/Config errors

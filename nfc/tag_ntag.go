@@ -3,274 +3,162 @@ package nfc
 import (
 	"fmt"
 	"log"
-
-	"github.com/clausecker/freefare"
 )
 
-// NTAG215 memory layout constants
-const (
-	ntag215TotalPages    = 135 // Total pages (540 bytes)
-	ntag215UserStartPage = 4   // First user data page
-	ntag215UserEndPage   = 129 // Last user data page (inclusive)
-	ntag215UserPages     = 126 // Pages 4-129 (504 bytes user data)
-	ntag215ConfigStart   = 130 // Configuration pages start
-)
-
-// NtagTag wraps an NTAG21x tag (NTAG213, NTAG215, NTAG216) with NFC operations.
-//
-// NtagTag provides page-based read/write operations for NTAG tags which are
-// detected by freefare as Ultralight tags but have larger memory.
-//
-// Example:
-//
-//	tags, _ := device.GetTags()
-//	for _, tag := range tags {
-//	    if ntag, ok := tag.(*NtagTag); ok {
-//	        data, _ := ntag.ReadPage(4)
-//	        ntag.WritePage(5, [4]byte{0x01, 0x02, 0x03, 0x04})
-//	    }
-//	}
-type NtagTag struct {
-	tag freefare.UltralightTag
+type pcscNtagTag struct {
+	pcscBaseTag
+	maxPages byte
 }
 
-// NewNtagTag creates a new NTAG tag wrapper.
-func NewNtagTag(tag freefare.UltralightTag) *NtagTag {
-	return &NtagTag{tag: tag}
-}
+func newPCSCNtagTag(dev *pcscDevice, uid string, tagType DetectedTagType) *pcscNtagTag {
+	maxPages := byte(45) // NTAG213
+	switch tagType {
+	case DetectedNTAG215:
+		maxPages = 135
+	case DetectedNTAG216:
+		maxPages = 231
+	}
 
-func (n *NtagTag) UID() string {
-	return n.tag.UID()
-}
-
-func (n *NtagTag) Type() string {
-	return CardTypeNtag215
-}
-
-func (n *NtagTag) NumericType() int {
-	// Use a distinct numeric type for NTAG215
-	// freefare uses 0=Ultralight, 1=UltralightC, so we use 100+ for NTAG variants
-	return 100
-}
-
-func (n *NtagTag) GetFreefareTag() freefare.Tag {
-	return n.tag
-}
-
-// Capabilities returns the capabilities of this NTAG tag.
-func (n *NtagTag) Capabilities() TagCapabilities {
-	return TagCapabilities{
-		CanRead:       true,
-		CanWrite:      true,
-		CanTransceive: false,
-		CanLock:       true,
-		TagFamily:     "NTAG",
-		Technology:    "ISO14443A",
-		MemorySize:    540, // NTAG215
-		MaxNDEFSize:   504,
-		SupportsNDEF:  true,
+	return &pcscNtagTag{
+		pcscBaseTag: pcscBaseTag{
+			device:       dev,
+			uid:          uid,
+			detectedType: tagType,
+		},
+		maxPages: maxPages,
 	}
 }
 
-func (n *NtagTag) Connect() error {
-	return n.tag.Connect()
+func (t *pcscNtagTag) Type() string {
+	switch t.detectedType {
+	case DetectedNTAG213:
+		return CardTypeNtag213
+	case DetectedNTAG215:
+		return CardTypeNtag215
+	case DetectedNTAG216:
+		return CardTypeNtag216
+	default:
+		return CardTypeNtag215 // Default
+	}
 }
 
-func (n *NtagTag) Disconnect() error {
-	return n.tag.Disconnect()
+func (t *pcscNtagTag) NumericType() int {
+	return detectedTypeNumeric(t.detectedType)
 }
 
-func (n *NtagTag) Transceive(data []byte) ([]byte, error) {
-	return nil, NewNotSupportedError("Transceive")
+func (t *pcscNtagTag) Capabilities() TagCapabilities {
+	return InferTagCapabilities(t.Type())
 }
 
-// ReadPage reads a 4-byte page from the NTAG tag.
-func (n *NtagTag) ReadPage(page byte) ([4]byte, error) {
-	if err := n.tag.Connect(); err != nil {
-		return [4]byte{}, fmt.Errorf("NtagTag.ReadPage connect error: %w", err)
-	}
-	defer n.tag.Disconnect()
-
-	data, err := n.tag.ReadPage(page)
-	if err != nil {
-		return [4]byte{}, fmt.Errorf("NtagTag.ReadPage error: %w", err)
-	}
-	return data, nil
+func (t *pcscNtagTag) Transceive(data []byte) ([]byte, error) {
+	return nil, fmt.Errorf("Transceive not supported for NTAG")
 }
 
-// WritePage writes a 4-byte page to the NTAG tag.
-func (n *NtagTag) WritePage(page byte, data [4]byte) error {
-	if err := n.tag.Connect(); err != nil {
-		return fmt.Errorf("NtagTag.WritePage connect error: %w", err)
-	}
-	defer n.tag.Disconnect()
-
-	if err := n.tag.WritePage(page, data); err != nil {
-		return fmt.Errorf("NtagTag.WritePage error: %w", err)
-	}
-	return nil
+// readPage reads 4 bytes from the specified page
+func (t *pcscNtagTag) readPage(page byte) ([]byte, error) {
+	cmd := ReadBinaryAPDU(page, 4)
+	return t.transceive(cmd)
 }
 
-// ReadData reads NDEF data from the NTAG tag.
-func (n *NtagTag) ReadData() ([]byte, error) {
-	if err := n.tag.Connect(); err != nil {
-		return nil, fmt.Errorf("NtagTag.ReadData connect error: %w", err)
+// writePage writes 4 bytes to the specified page
+func (t *pcscNtagTag) writePage(page byte, data []byte) error {
+	if len(data) != 4 {
+		return fmt.Errorf("page data must be 4 bytes")
 	}
-	defer n.tag.Disconnect()
+	cmd := UpdateBinaryAPDU(page, data)
+	_, err := t.transceive(cmd)
+	return err
+}
 
-	// NTAG215 NDEF starts at page 4, user data ends at page 129
+func (t *pcscNtagTag) ReadData() ([]byte, error) {
+	// Read pages 4 to maxPages-5 (user data area, excluding config pages)
 	var allData []byte
-	for page := byte(ntag215UserStartPage); page <= ntag215UserEndPage; page++ {
-		pageData, err := n.tag.ReadPage(page)
+	var lastError error
+	userPages := t.maxPages - 5 // Leave room for config pages at end
+
+	for page := byte(4); page < userPages; page++ {
+		data, err := t.readPage(page)
 		if err != nil {
-			log.Printf("NtagTag.ReadData: error reading page %d: %v", page, err)
+			// If card was removed, propagate that error immediately
+			if IsCardRemovedError(err) {
+				return nil, err
+			}
+			log.Printf("Error reading page %d: %v", page, err)
+			lastError = err
 			break
 		}
-		allData = append(allData, pageData[:]...)
+		allData = append(allData, data...)
 	}
 
 	if len(allData) == 0 {
-		return nil, nil
+		// Check if error was due to card removal (APDU errors when card is gone)
+		if lastError != nil && !t.device.IsCardPresent() {
+			return nil, NewCardRemovedError(fmt.Errorf("card removed during read"))
+		}
+		if lastError != nil {
+			return nil, fmt.Errorf("failed to read any data: %w", lastError)
+		}
+		return nil, fmt.Errorf("failed to read any data")
 	}
 
-	// Parse TLV structure - skip null TLVs and find NDEF message (type 0x03)
-	offset := 0
-	for offset < len(allData) {
-		tlvType := allData[offset]
-
-		if tlvType == 0x00 {
-			// Null TLV, skip
-			offset++
-			continue
-		}
-		if tlvType == 0xFE {
-			// Terminator
-			break
-		}
-
-		if offset+1 >= len(allData) {
-			return nil, fmt.Errorf("TLV structure error: length field missing")
-		}
-
-		fls, fvs := freefare.TLVrecordLength(allData[offset:])
-		if offset+1+fls+fvs > len(allData) {
-			return nil, fmt.Errorf("TLV structure error: value exceeds buffer")
-		}
-
-		if tlvType == 0x03 {
-			// NDEF Message TLV - use freefare's decoder
-			data, _ := freefare.TLVdecode(allData[offset:])
-			return data, nil
-		}
-
-		// Skip this TLV and move to next
-		offset += 1 + fls + fvs
+	// Parse TLV to find NDEF message
+	ndefData, found := TLVFindNDEF(allData)
+	if !found {
+		return nil, fmt.Errorf("no NDEF message found")
 	}
 
-	log.Println("NtagTag.ReadData: No NDEF Message TLV (type 0x03) found.")
-	return nil, nil
+	return ndefData, nil
 }
 
-// WriteData writes NDEF data to the NTAG tag.
-func (n *NtagTag) WriteData(data []byte) error {
-	if err := n.tag.Connect(); err != nil {
-		return fmt.Errorf("NtagTag.WriteData connect error: %w", err)
-	}
-	defer n.tag.Disconnect()
+func (t *pcscNtagTag) WriteData(data []byte) error {
+	// Build TLV payload
+	tlvPayload := TLVEncode(data, TLVNDEF)
 
-	// Build TLV structure using freefare's encoder (type 0x03 = NDEF Message)
-	tlvPayload := freefare.TLVencode(data, 0x03)
-	if tlvPayload == nil {
-		return fmt.Errorf("NtagTag.WriteData: NDEF message too large (max 65534 bytes)")
-	}
+	// Calculate required pages
+	totalBytes := len(tlvPayload)
+	requiredPages := (totalBytes + 3) / 4
 
-	// Calculate how many pages we need
-	pagesNeeded := (len(tlvPayload) + 3) / 4 // Round up to nearest page
-	availablePages := ntag215UserPages
-
-	if pagesNeeded > availablePages {
-		return fmt.Errorf("NtagTag.WriteData: NDEF message too large (%d bytes, needs %d pages, only %d available)",
-			len(data), pagesNeeded, availablePages)
+	// Check if it fits
+	userPages := int(t.maxPages) - 5 - 4 // Subtract config pages and reserved pages
+	if requiredPages > userPages {
+		return fmt.Errorf("data too large: need %d pages, have %d", requiredPages, userPages)
 	}
 
-	// Write data page by page
-	offset := 0
-	for page := byte(ntag215UserStartPage); offset < len(tlvPayload); page++ {
-		var pageData [4]byte
-		for i := 0; i < 4 && offset < len(tlvPayload); i++ {
-			pageData[i] = tlvPayload[offset]
-			offset++
+	// Pad to 4-byte boundary
+	for len(tlvPayload)%4 != 0 {
+		tlvPayload = append(tlvPayload, 0x00)
+	}
+
+	// Write pages starting at page 4
+	for i := 0; i < len(tlvPayload); i += 4 {
+		page := byte(4 + i/4)
+		if err := t.writePage(page, tlvPayload[i:i+4]); err != nil {
+			return fmt.Errorf("failed to write page %d: %w", page, err)
 		}
-
-		if err := n.tag.WritePage(page, pageData); err != nil {
-			return fmt.Errorf("NtagTag.WriteData: error writing page %d: %w", page, err)
-		}
-		log.Printf("NtagTag.WriteData: Wrote page %d", page)
 	}
 
-	log.Printf("NtagTag.WriteData: Successfully wrote %d bytes", len(data))
 	return nil
 }
 
-// IsWritable checks if the NTAG tag is writable.
-func (n *NtagTag) IsWritable() (bool, error) {
-	if err := n.tag.Connect(); err != nil {
-		return false, fmt.Errorf("NtagTag.IsWritable connect error: %w", err)
-	}
-	defer n.tag.Disconnect()
+func (t *pcscNtagTag) IsWritable() (bool, error) {
+	// Try to read page 4
+	_, err := t.readPage(4)
+	return err == nil, nil
+}
 
-	// Try to read page 4 to check if tag is accessible
-	_, err := n.tag.ReadPage(ntag215UserStartPage)
-	if err != nil {
-		return false, nil
-	}
-
+func (t *pcscNtagTag) CanMakeReadOnly() (bool, error) {
 	return true, nil
 }
 
-// CanMakeReadOnly checks if the NTAG tag can be made read-only.
-func (n *NtagTag) CanMakeReadOnly() (bool, error) {
-	if err := n.tag.Connect(); err != nil {
-		return false, fmt.Errorf("NtagTag.CanMakeReadOnly connect error: %w", err)
-	}
-	defer n.tag.Disconnect()
-
-	// Read lock bytes from page 2
-	lockPage, err := n.tag.ReadPage(2)
+func (t *pcscNtagTag) MakeReadOnly() error {
+	// Write lock bytes to page 2
+	page2, err := t.readPage(2)
 	if err != nil {
-		return false, fmt.Errorf("NtagTag.CanMakeReadOnly: error reading lock bytes: %w", err)
+		return fmt.Errorf("failed to read page 2: %w", err)
 	}
 
-	// Check if lock bits are already set (bytes 2-3 of page 2)
-	if lockPage[2] == 0xFF && lockPage[3] == 0xFF {
-		return false, nil // Already locked
-	}
+	page2[2] = 0xFF
+	page2[3] = 0xFF
 
-	return true, nil
+	return t.writePage(2, page2)
 }
-
-// MakeReadOnly makes the NTAG tag read-only by setting lock bits.
-func (n *NtagTag) MakeReadOnly() error {
-	if err := n.tag.Connect(); err != nil {
-		return fmt.Errorf("NtagTag.MakeReadOnly connect error: %w", err)
-	}
-	defer n.tag.Disconnect()
-
-	// Read current page 2 data first to preserve other bytes
-	currentPage, err := n.tag.ReadPage(2)
-	if err != nil {
-		return fmt.Errorf("NtagTag.MakeReadOnly: error reading page 2: %w", err)
-	}
-
-	// Set lock bits in bytes 2-3 (preserve first 2 bytes)
-	// WARNING: This is permanent and cannot be undone!
-	lockData := [4]byte{currentPage[0], currentPage[1], 0xFF, 0xFF}
-
-	if err := n.tag.WritePage(2, lockData); err != nil {
-		return fmt.Errorf("NtagTag.MakeReadOnly: error writing lock bits: %w", err)
-	}
-
-	log.Println("NtagTag.MakeReadOnly: Tag locked to read-only mode")
-	return nil
-}
-

@@ -3,8 +3,6 @@ package nfc
 import (
 	"fmt"
 	"sync"
-
-	"github.com/clausecker/freefare"
 )
 
 // MockTag is a test implementation of Tag that simulates NFC tag behavior.
@@ -351,9 +349,6 @@ type MockClassicTag struct {
 	// WriteError, if set, will be returned by Write()
 	WriteError error
 
-	// FreefareTag is the mock freefare tag (can be nil)
-	FreefareTag freefare.Tag
-
 	mu sync.Mutex
 }
 
@@ -413,14 +408,6 @@ func (m *MockClassicTag) Write(sector, block uint8, data []byte, key []byte, key
 	m.BlockData[blockKey] = make([]byte, len(data))
 	copy(m.BlockData[blockKey], data)
 	return nil
-}
-
-// GetFreefareTag returns the mock freefare tag.
-func (m *MockClassicTag) GetFreefareTag() freefare.Tag {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	return m.FreefareTag
 }
 
 // SetBlockData sets the data for a specific sector/block combination.

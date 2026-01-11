@@ -1,7 +1,5 @@
 package nfc
 
-import "github.com/clausecker/freefare"
-
 // TagIdentifier provides basic tag identification.
 // All tags implement this interface.
 type TagIdentifier interface {
@@ -87,13 +85,6 @@ type Tag interface {
 	TagLocker
 }
 
-// FreefareTagProvider provides access to the underlying freefare.Tag object.
-// This is used for advanced operations that require direct access to the
-// freefare library.
-type FreefareTagProvider interface {
-	GetFreefareTag() freefare.Tag
-}
-
 // TagWriteOptions defines options for tag write operations.
 type TagWriteOptions struct {
 	// ForceInitialize forces reinitialization of the tag even if it contains existing data.
@@ -107,4 +98,42 @@ type TagWriteOptions struct {
 // will use WriteDataWithOptions instead of WriteData when options are provided.
 type AdvancedWriter interface {
 	WriteDataWithOptions(data []byte, opts TagWriteOptions) error
+}
+
+// ClassicTag provides MIFARE Classic specific operations.
+// This interface extends Tag with sector/block-level access using authentication keys.
+//
+// MIFARE Classic tags have a sector-based memory structure:
+//   - Classic 1K: 16 sectors × 4 blocks (64 blocks total)
+//   - Classic 4K: 32 sectors × 4 blocks + 8 sectors × 16 blocks (256 blocks total)
+//
+// Each sector has a trailer block containing keys and access conditions.
+// Blocks are 16 bytes each.
+//
+// Example:
+//
+//	if classic, ok := tag.(nfc.ClassicTag); ok {
+//	    key := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+//	    data, err := classic.Read(1, 0, key, nfc.KeyTypeA)
+//	    if err != nil {
+//	        log.Fatal(err)
+//	    }
+//	}
+type ClassicTag interface {
+	Tag
+
+	// Read reads a 16-byte block from the specified sector using the provided key.
+	// sector: sector number (0-15 for 1K, 0-39 for 4K)
+	// block: block within sector (0-2 for data blocks, 3 is sector trailer)
+	// key: 6-byte authentication key
+	// keyType: KeyTypeA or KeyTypeB
+	Read(sector, block uint8, key []byte, keyType int) ([]byte, error)
+
+	// Write writes 16 bytes to the specified block using the provided key.
+	// sector: sector number (0-15 for 1K, 0-39 for 4K)
+	// block: block within sector (0-2 for data blocks, 3 is sector trailer)
+	// data: exactly 16 bytes to write
+	// key: 6-byte authentication key
+	// keyType: KeyTypeA or KeyTypeB
+	Write(sector, block uint8, data []byte, key []byte, keyType int) error
 }

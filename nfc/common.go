@@ -61,6 +61,67 @@ var (
 	ErrACR122Specific = errors.New("ACR122 device error")
 )
 
+// noCardError is returned when attempting to connect to a reader with no card present.
+// This is a normal condition for NFC readers and should not be treated as a device error.
+type noCardError struct {
+	ReaderName string
+}
+
+func (e *noCardError) Error() string {
+	return "no card present in reader " + e.ReaderName
+}
+
+// IsNoCardError checks if an error indicates no card is present in the reader.
+// This is a normal condition and should not be logged as a device error.
+func IsNoCardError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check for typed error
+	var noCard *noCardError
+	if errors.As(err, &noCard) {
+		return true
+	}
+	// Fallback to string matching for legacy errors
+	errLower := strings.ToLower(err.Error())
+	return strings.Contains(errLower, "no card present") ||
+		strings.Contains(errLower, "no smart card") ||
+		strings.Contains(errLower, "card is not present")
+}
+
+// cardRemovedError indicates the card was removed during operation.
+// This requires the device connection to be closed and reopened.
+type cardRemovedError struct {
+	Cause error
+}
+
+func (e *cardRemovedError) Error() string {
+	if e.Cause != nil {
+		return "card was removed: " + e.Cause.Error()
+	}
+	return "card was removed"
+}
+
+func (e *cardRemovedError) Unwrap() error {
+	return e.Cause
+}
+
+// NewCardRemovedError creates a card removed error.
+func NewCardRemovedError(cause error) error {
+	return &cardRemovedError{Cause: cause}
+}
+
+// IsCardRemovedError checks if an error indicates the card was removed during operation.
+// This requires device reconnection to detect new cards.
+// All card removal errors are created via NewCardRemovedError() at the device layer.
+func IsCardRemovedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var cardRemoved *cardRemovedError
+	return errors.As(err, &cardRemoved)
+}
+
 // Error checking helper functions
 // These functions check for both typed errors and legacy string-based errors
 // for backward compatibility during the transition period.

@@ -13,7 +13,7 @@ A lightweight NFC card reader agent with WebSocket broadcasting capabilities. Re
 
 ## Supported Devices
 
-**Hardware Readers**: PN532, ACR122U, and other libnfc-compatible devices
+**Hardware Readers**: ACR122U, ACR1252U, and other PC/SC-compatible readers
 
 **Remote Devices**: Any NFC-capable device that connects via the [Device Server API](docs/api.md#device-server-api), including:
 - Smartphones (iPhone 7+/iOS 13+, Android 4.4+)
@@ -33,7 +33,7 @@ go build .
 ./davi-nfc-agent
 ```
 
-Building requires libnfc and libfreefare. See the [Installation Guide](docs/installation.md) for platform-specific setup and troubleshooting.
+See the [Installation Guide](docs/installation.md) for platform-specific setup and troubleshooting.
 
 ### Command-line Options
 
@@ -139,7 +139,7 @@ ws.send(JSON.stringify({
 
 ## Extending
 
-The agent's modular NFC layer supports adding custom readers and tag types beyond the built-in libnfc and smartphone support. See [Extending NFC Support](docs/extending-nfc-support.md) to integrate your own hardware or protocols.
+The agent's modular NFC layer supports adding custom readers and tag types beyond the built-in PC/SC and smartphone support. See [Extending NFC Support](docs/extending-nfc-support.md) to integrate your own hardware or protocols.
 
 ## Contributing
 

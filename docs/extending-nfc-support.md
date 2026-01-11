@@ -10,7 +10,7 @@ This guide explains how to add support for new NFC readers or tag types to the d
 │     Aggregates multiple managers, routes device requests    │
 ├──────────────────┬──────────────────┬───────────────────────┤
 │  HardwareManager │ remotenfc.Manager│   YourManager         │
-│  (libnfc/ACR122) │ (WebNFC/mobile)  │   (custom)            │
+│  (PC/SC readers) │ (WebNFC/mobile)  │   (custom)            │
 └────────┬─────────┴────────┬─────────┴──────────┬────────────┘
          │                  │                    │
          ▼                  ▼                    ▼

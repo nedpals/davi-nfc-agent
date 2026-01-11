@@ -6,22 +6,17 @@ Thanks for your interest in contributing to the NFC Agent!
 
 ### Requirements
 
-- Go 1.21 or later
-- libnfc development libraries
-- libfreefare development libraries
-- libusb
+- Go 1.24 or later
+- PC/SC library (for running with hardware)
 
 ### Installing Dependencies
 
-**Linux (Debian/Ubuntu):**
+**Linux:**
 ```bash
-sudo apt install -y libnfc-dev libfreefare-dev libusb-1.0-0-dev
+sudo apt install pcscd libpcsclite-dev
 ```
 
-**macOS:**
-```bash
-brew install libnfc libfreefare libusb
-```
+No additional dependencies needed for **macOS** and **Windows**.
 
 ### Building
 
@@ -39,101 +34,24 @@ go test ./...
 
 ## Advanced Building
 
-For cross-compilation and production builds, use the automated build scripts instead of `go build`.
-
-### Quick Start
+### Cross-Platform Builds
 
 ```bash
-# Build for your current platform (auto-detected)
-./scripts/build-unix.sh
+# Build for current platform
+./scripts/build.sh
 
-# Cross-compile for specific platforms
-./scripts/build-unix.sh linux amd64
-./scripts/build-unix.sh linux arm64
-./scripts/build-unix.sh darwin amd64
-./scripts/build-unix.sh darwin arm64
-
-# Cross-compile for Windows (from Linux)
-./scripts/build-windows.sh amd64
+# Build for specific platform
+./scripts/build.sh linux amd64
+./scripts/build.sh linux arm64
+./scripts/build.sh darwin amd64
+./scripts/build.sh darwin arm64
+./scripts/build.sh windows amd64
 ```
 
-### Prerequisites
-
-**Required Tools:**
-- Go 1.24.2+
-- autotools: autoconf, automake, libtool
-- pkg-config
-- wget
-
-**For Cross-Compilation:**
-- Zig 0.11.0 (used as C cross-compiler)
-
-**Install Zig:**
+### Build with Version Info
 
 ```bash
-# macOS
-brew install zig
-
-# Linux
-wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
-tar xf zig-linux-x86_64-0.11.0.tar.xz
-sudo mv zig-linux-x86_64-0.11.0 /usr/local/zig
-export PATH="/usr/local/zig:$PATH"
-```
-
-### What the Scripts Do
-
-The build scripts automatically:
-
-1. Download and compile all C dependencies (libusb, libnfc, libfreefare, OpenSSL)
-2. Apply platform-specific patches
-3. Configure cross-compilation toolchains
-4. Build the Go binary with proper CGO flags
-5. Install dependencies to `~/cross-build/[os]-[arch]/`
-
-### Platform Support
-
-| Platform | Script | Architectures |
-|----------|--------|---------------|
-| Linux | `build-unix.sh` | amd64, arm64 |
-| macOS | `build-unix.sh` | amd64, arm64 |
-| Windows | `build-windows.sh` | amd64 |
-
-### Examples
-
-**Build for Current Platform:**
-
-```bash
-./scripts/build-unix.sh
-# Output: davi-nfc-agent-darwin-arm64 (or linux-amd64, etc.)
-```
-
-**Cross-Compile from macOS to Linux ARM64:**
-
-```bash
-./scripts/build-unix.sh linux arm64
-# Takes ~10-15 minutes (first time, then cached)
-# Output: davi-nfc-agent-linux-arm64
-```
-
-**Build All Platforms:**
-
-```bash
-# macOS/Linux builds
-for os in linux darwin; do
-  for arch in amd64 arm64; do
-    ./scripts/build-unix.sh $os $arch
-  done
-done
-
-# Windows (from Linux)
-./scripts/build-windows.sh amd64
-```
-
-**Build with Version Info:**
-
-```bash
-BUILD_VERSION=1.0.0 ./scripts/build-unix.sh darwin arm64
+BUILD_VERSION=1.0.0 ./scripts/build.sh
 ```
 
 ### Build Artifacts
@@ -145,8 +63,6 @@ Binaries are created in the current directory:
 - `davi-nfc-agent-darwin-amd64`
 - `davi-nfc-agent-darwin-arm64`
 - `davi-nfc-agent-windows-amd64.exe`
-
-Dependencies are cached in `~/cross-build/` and reused on subsequent builds.
 
 ### CI/CD
 
@@ -164,37 +80,6 @@ git tag v1.0.0
 git push origin v1.0.0
 
 # CI will build with BUILD_VERSION=v1.0.0
-```
-
-### Build Troubleshooting
-
-**Build Fails with CGO Errors:**
-
-Ensure all dependencies are installed:
-
-```bash
-# Linux
-sudo apt install autoconf automake libtool pkg-config
-
-# macOS
-brew install autoconf automake libtool pkg-config
-```
-
-**Zig Not Found:**
-
-Add Zig to your PATH:
-
-```bash
-export PATH="/usr/local/zig:$PATH"
-```
-
-**Clean Build:**
-
-Remove cached dependencies and rebuild:
-
-```bash
-rm -rf ~/cross-build/
-./scripts/build-unix.sh
 ```
 
 ## Project Architecture
@@ -225,7 +110,7 @@ davi-nfc-agent/
 ### Key Components
 
 **NFC Layer** (`nfc/`)
-- Abstraction over libnfc/libfreefare
+- Abstraction over PC/SC (ebfe/scard)
 - Modular design supporting hardware and smartphone readers
 - See [nfc/README.md](nfc/README.md) for details
 
