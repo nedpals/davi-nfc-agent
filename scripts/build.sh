@@ -31,12 +31,32 @@ echo "  Version: $BUILD_VERSION"
 echo "  Commit: $BUILD_COMMIT"
 echo "  Build Time: $BUILD_TIME"
 
-# Set up cross-compilation with Zig if ZIG_TARGET is set
-if [ -n "$ZIG_TARGET" ]; then
-    echo "  Cross-compiling with Zig target: $ZIG_TARGET"
+# Determine if we need cross-compilation setup
+CURRENT_OS=$(go env GOOS)
+CURRENT_ARCH=$(go env GOARCH)
+
+if [ "$TARGET_OS" != "$CURRENT_OS" ] || [ "$TARGET_ARCH" != "$CURRENT_ARCH" ]; then
+    echo "  Cross-compiling from $CURRENT_OS/$CURRENT_ARCH to $TARGET_OS/$TARGET_ARCH"
     export CGO_ENABLED=1
-    export CC="zig cc -target $ZIG_TARGET"
-    export CXX="zig c++ -target $ZIG_TARGET"
+
+    # Use Zig for Linux cross-compilation if ZIG_TARGET is set
+    if [ -n "$ZIG_TARGET" ]; then
+        echo "  Using Zig target: $ZIG_TARGET"
+        export CC="zig cc -target $ZIG_TARGET"
+        export CXX="zig c++ -target $ZIG_TARGET"
+    fi
+
+    # macOS can cross-compile between arm64/amd64 with native clang
+    if [ "$TARGET_OS" = "darwin" ] && [ "$CURRENT_OS" = "darwin" ]; then
+        echo "  Using native clang for macOS cross-compilation"
+        if [ "$TARGET_ARCH" = "arm64" ]; then
+            export CC="clang -arch arm64"
+            export CXX="clang++ -arch arm64"
+        elif [ "$TARGET_ARCH" = "amd64" ]; then
+            export CC="clang -arch x86_64"
+            export CXX="clang++ -arch x86_64"
+        fi
+    fi
 fi
 
 GOOS=$TARGET_OS GOARCH=$TARGET_ARCH go build -ldflags="$LDFLAGS" -o "$BINARY_NAME" .
