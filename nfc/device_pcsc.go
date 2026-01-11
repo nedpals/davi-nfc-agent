@@ -30,6 +30,12 @@ type pcscDevice struct {
 
 // newPCSCDevice creates a new PC/SC device from a connected card
 func newPCSCDevice(ctx *scard.Context, card *scard.Card, readerName string) (*pcscDevice, error) {
+	// Validate protocol before any operations - the scard library panics on invalid protocol
+	proto := card.ActiveProtocol()
+	if proto != scard.ProtocolT0 && proto != scard.ProtocolT1 {
+		return nil, fmt.Errorf("unsupported card protocol: %d", proto)
+	}
+
 	dev := &pcscDevice{
 		ctx:        ctx,
 		card:       card,
@@ -249,6 +255,12 @@ func (d *pcscDevice) Transceive(txData []byte) ([]byte, error) {
 
 	if d.card == nil {
 		return nil, NewCardRemovedError(fmt.Errorf("device not connected"))
+	}
+
+	// Validate protocol before transmit - the scard library panics on invalid protocol
+	proto := d.card.ActiveProtocol()
+	if proto != scard.ProtocolT0 && proto != scard.ProtocolT1 {
+		return nil, NewCardRemovedError(fmt.Errorf("invalid card protocol"))
 	}
 
 	// Transmit APDU - let transmit errors indicate card removal
