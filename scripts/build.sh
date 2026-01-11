@@ -31,6 +31,14 @@ echo "  Version: $BUILD_VERSION"
 echo "  Commit: $BUILD_COMMIT"
 echo "  Build Time: $BUILD_TIME"
 
+# Set up cross-compilation with Zig if ZIG_TARGET is set
+if [ -n "$ZIG_TARGET" ]; then
+    echo "  Cross-compiling with Zig target: $ZIG_TARGET"
+    export CGO_ENABLED=1
+    export CC="zig cc -target $ZIG_TARGET"
+    export CXX="zig c++ -target $ZIG_TARGET"
+fi
+
 GOOS=$TARGET_OS GOARCH=$TARGET_ARCH go build -ldflags="$LDFLAGS" -o "$BINARY_NAME" .
 
 echo "✓ Built: $BINARY_NAME"

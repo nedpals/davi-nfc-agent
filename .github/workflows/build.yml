@@ -34,6 +34,8 @@ jobs:
           - os: ubuntu-latest
             goos: linux
             goarch: arm64
+            cross: true
+            zig_target: aarch64-linux-gnu
           - os: macos-latest
             goos: darwin
             goarch: amd64
@@ -53,10 +55,21 @@ jobs:
         with:
           go-version: '1.25.5'
 
+      - name: Install Zig (for cross-compilation)
+        if: matrix.cross
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.11.0
+
+      - name: Install PC/SC development libraries (Linux)
+        if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
+
       - name: Build
         env:
           BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
           BUILD_COMMIT: ${{ github.sha }}
+          ZIG_TARGET: ${{ matrix.zig_target }}
         shell: bash
         run: ./scripts/build.sh ${{ matrix.goos }} ${{ matrix.goarch }}
 
