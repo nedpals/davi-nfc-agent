@@ -248,6 +248,17 @@ func (r *NFCReader) handleDeviceErrors(err error) bool {
 		return true
 	}
 
+	// Handle unsupported tags - don't close device, just wait for card removal
+	// Closing would cause immediate reconnection to the same unsupported tag
+	if IsUnsupportedTagError(err) {
+		// Error is only returned once per card by the device, so just log it
+		log.Printf("Unsupported tag detected: %v - waiting for card removal", err)
+		r.setCardPresent(true) // Card is present, just not supported
+		r.broadcastDeviceStatus("Unsupported tag, please use a different card")
+		// Don't close - the card removal detection will handle when the card is removed
+		return true
+	}
+
 	// Delegate error handling to DeviceManager (retry logic is now managed internally)
 	needsCooldown := r.deviceManager.HandleError(err, r.stopChan)
 

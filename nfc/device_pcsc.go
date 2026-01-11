@@ -26,6 +26,9 @@ type pcscDevice struct {
 	// Background monitoring for card removal
 	stopMonitor chan struct{} // Signals the monitor goroutine to stop
 	cardRemoved chan struct{} // Signals that card was removed (detected by monitor)
+
+	// Tracks if unsupported tag error was already reported for current card
+	unsupportedReported bool
 }
 
 // newPCSCDevice creates a new PC/SC device from a connected card
@@ -332,6 +335,16 @@ func (d *pcscDevice) getUID() (string, error) {
 // GetTags returns the tags detected on this reader
 // For PC/SC, a card is already connected, so we detect its type and return it
 func (d *pcscDevice) GetTags() ([]Tag, error) {
+	// Quick check if background monitor detected removal (non-blocking)
+	// This is critical for detecting when an unsupported tag is removed
+	if d.cardRemoved != nil {
+		select {
+		case <-d.cardRemoved:
+			return nil, NewCardRemovedError(fmt.Errorf("card removed (detected by monitor)"))
+		default:
+		}
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -372,7 +385,12 @@ func (d *pcscDevice) GetTags() ([]Tag, error) {
 			if isISO14443_4Compatible(d.atr) {
 				tag = newPCSCISO14443Tag(d, d.uid)
 			} else {
-				log.Printf("Unknown tag type, ATR: %s", BytesToHex(d.atr))
+				// Return error only once per card session to avoid log spam
+				if !d.unsupportedReported {
+					d.unsupportedReported = true
+					return nil, NewUnsupportedTagError(BytesToHex(d.atr))
+				}
+				// Already reported, return nil to indicate no tags without error
 				return nil, nil
 			}
 		}

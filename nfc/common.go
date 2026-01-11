@@ -89,6 +89,30 @@ func IsNoCardError(err error) bool {
 		strings.Contains(errLower, "card is not present")
 }
 
+// unsupportedTagError is returned when a tag is present but its type is not supported.
+// This allows the system to wait for the card to be removed rather than retrying.
+type unsupportedTagError struct {
+	ATR string
+}
+
+func (e *unsupportedTagError) Error() string {
+	return "unsupported tag type (ATR: " + e.ATR + ")"
+}
+
+// NewUnsupportedTagError creates an unsupported tag error.
+func NewUnsupportedTagError(atr string) error {
+	return &unsupportedTagError{ATR: atr}
+}
+
+// IsUnsupportedTagError checks if an error indicates the tag type is not supported.
+func IsUnsupportedTagError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var unsupported *unsupportedTagError
+	return errors.As(err, &unsupported)
+}
+
 // cardRemovedError indicates the card was removed during operation.
 // This requires the device connection to be closed and reopened.
 type cardRemovedError struct {
