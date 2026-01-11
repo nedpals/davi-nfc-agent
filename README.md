@@ -151,4 +151,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, cross-compilation,
 
 <hr />
 
-Copyright © 2026 Ned Palacios and Dotside Studios. All rights reserved.
+Copyright © 2025-2026 Ned Palacios and Dotside Studios. All rights reserved.
