@@ -46,9 +46,19 @@ jobs:
         with:
           version: 0.11.0
 
-      - name: Install PC/SC development libraries (Linux)
-        if: matrix.goos == 'linux'
+      - name: Install PC/SC development libraries (Linux amd64)
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
+
+      - name: Install PC/SC development libraries (Linux arm64 cross-compile)
+        if: matrix.goos == 'linux' && matrix.goarch == 'arm64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y libpcsclite-dev:arm64
 
       - name: Build
         env:

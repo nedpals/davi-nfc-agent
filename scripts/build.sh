@@ -42,8 +42,19 @@ if [ "$TARGET_OS" != "$CURRENT_OS" ] || [ "$TARGET_ARCH" != "$CURRENT_ARCH" ]; t
     # Use Zig for Linux cross-compilation if ZIG_TARGET is set
     if [ -n "$ZIG_TARGET" ]; then
         echo "  Using Zig target: $ZIG_TARGET"
-        export CC="zig cc -target $ZIG_TARGET"
-        export CXX="zig c++ -target $ZIG_TARGET"
+
+        # Set library search paths for cross-compilation
+        if [ "$TARGET_ARCH" = "arm64" ] && [ "$TARGET_OS" = "linux" ]; then
+            SYSROOT="/usr/aarch64-linux-gnu"
+            LIB_PATH="/usr/lib/aarch64-linux-gnu"
+            export CC="zig cc -target $ZIG_TARGET --sysroot=$SYSROOT -I/usr/include -L$LIB_PATH"
+            export CXX="zig c++ -target $ZIG_TARGET --sysroot=$SYSROOT -I/usr/include -L$LIB_PATH"
+            export PKG_CONFIG_PATH="$LIB_PATH/pkgconfig"
+            export CGO_LDFLAGS="-L$LIB_PATH"
+        else
+            export CC="zig cc -target $ZIG_TARGET"
+            export CXX="zig c++ -target $ZIG_TARGET"
+        fi
     fi
 
     # macOS can cross-compile between arm64/amd64 with native clang
